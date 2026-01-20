@@ -122,6 +122,24 @@ pub struct SearchParams {
     pub ef: Option<usize>,
 }
 
+/// Batch search request for multiple queries
+///
+/// More efficient than calling search multiple times:
+/// ```json
+/// {
+///   "searches": [
+///     { "vector": [0.1, 0.2, ...], "limit": 10 },
+///     { "vector": [0.3, 0.4, ...], "limit": 10 }
+///   ]
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct BatchSearchRequest {
+    /// List of search requests to execute in parallel
+    pub searches: Vec<SearchRequest>,
+}
+
 fn default_true() -> bool {
     true
 }

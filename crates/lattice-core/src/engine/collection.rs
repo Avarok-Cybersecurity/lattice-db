@@ -340,6 +340,82 @@ impl CollectionEngine {
         Ok(results)
     }
 
+    /// Batch search for multiple queries (parallel processing)
+    ///
+    /// More efficient than calling `search` multiple times for many queries.
+    /// Uses rayon for parallel query processing on native platforms.
+    pub fn search_batch(
+        &self,
+        queries: Vec<SearchQuery>,
+    ) -> LatticeResult<Vec<Vec<SearchResult>>> {
+        if queries.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Validate all query dimensions upfront
+        for query in &queries {
+            if query.vector.len() != self.config.vectors.size {
+                return Err(LatticeError::DimensionMismatch {
+                    expected: self.config.vectors.size,
+                    actual: query.vector.len(),
+                });
+            }
+        }
+
+        // Extract vectors and params for batch search
+        let query_vectors: Vec<Vec<f32>> = queries.iter().map(|q| q.vector.clone()).collect();
+        let first_query = &queries[0];
+        let ef = first_query.ef.unwrap_or(self.config.hnsw.ef);
+        let limit = first_query.limit;
+
+        // Batch search on HNSW index
+        let batch_results = {
+            let index = self.index.read().unwrap();
+            index.search_batch(&query_vectors, limit, ef)
+        };
+
+        // Handle pending points for each query (parallel)
+        let pending_ids: Vec<PointId> = {
+            let pending = self.pending_index.read().unwrap();
+            pending.iter().copied().collect()
+        };
+
+        if !pending_ids.is_empty() {
+            use crate::index::distance::DistanceCalculator;
+            let pts = self.points.read().unwrap();
+            let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
+
+            // Process each query with pending points
+            let mut all_results: Vec<Vec<SearchResult>> = batch_results;
+            for (i, query) in queries.iter().enumerate() {
+                let pending_results: Vec<SearchResult> = pending_ids
+                    .par_iter()
+                    .filter_map(|&id| {
+                        pts.get(&id).map(|point| {
+                            let score = distance_calc.calculate(&query.vector, &point.vector);
+                            SearchResult {
+                                id,
+                                score,
+                                vector: None,
+                                payload: None,
+                            }
+                        })
+                    })
+                    .collect();
+
+                all_results[i].extend(pending_results);
+                all_results[i].sort_by(|a, b| {
+                    a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                all_results[i].truncate(query.limit);
+            }
+
+            return Ok(all_results);
+        }
+
+        Ok(batch_results)
+    }
+
     /// Scroll through points (paginated retrieval)
     pub fn scroll(&self, query: ScrollQuery) -> ScrollResult {
         let pts = self.points.read().unwrap();

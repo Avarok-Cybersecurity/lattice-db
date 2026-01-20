@@ -256,6 +256,51 @@ impl HnswIndex {
             .collect()
     }
 
+    /// Batch search for multiple queries
+    ///
+    /// More efficient than calling `search` multiple times due to:
+    /// - Parallel processing on native platforms (rayon)
+    /// - Better cache utilization across queries
+    ///
+    /// # Arguments
+    /// * `queries` - Vector of query vectors
+    /// * `k` - Number of results per query
+    /// * `ef` - Search queue size (higher = better recall, slower)
+    ///
+    /// # Returns
+    /// Vector of results for each query, in the same order as input
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn search_batch(
+        &self,
+        queries: &[Vec<f32>],
+        k: usize,
+        ef: usize,
+    ) -> Vec<Vec<SearchResult>> {
+        if queries.is_empty() || self.layers.is_empty() {
+            return vec![vec![]; queries.len()];
+        }
+
+        // Process queries in parallel using rayon
+        queries
+            .par_iter()
+            .map(|query| self.search(query, k, ef))
+            .collect()
+    }
+
+    /// Batch search for multiple queries (WASM version - sequential)
+    #[cfg(target_arch = "wasm32")]
+    pub fn search_batch(
+        &self,
+        queries: &[Vec<f32>],
+        k: usize,
+        ef: usize,
+    ) -> Vec<Vec<SearchResult>> {
+        queries
+            .iter()
+            .map(|query| self.search(query, k, ef))
+            .collect()
+    }
+
     /// Delete a point from the index
     pub fn delete(&mut self, id: PointId) -> bool {
         self.vectors.remove(&id);
@@ -827,5 +872,74 @@ mod tests {
 
             assert_eq!(results.len(), 10, "Failed for metric: {}", name);
         }
+    }
+
+    #[test]
+    fn test_search_batch() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        // Insert 100 points
+        for i in 0..100 {
+            let point = Point::new_vector(i, random_vector(32, i));
+            index.insert(&point);
+        }
+
+        // Create 10 batch queries
+        let queries: Vec<Vec<f32>> = (0..10)
+            .map(|i| random_vector(32, 1000 + i))
+            .collect();
+
+        // Batch search
+        let batch_results = index.search_batch(&queries, 5, 100);
+
+        // Verify we got results for each query
+        assert_eq!(batch_results.len(), 10);
+        for (i, results) in batch_results.iter().enumerate() {
+            assert_eq!(
+                results.len(),
+                5,
+                "Query {} returned {} results instead of 5",
+                i,
+                results.len()
+            );
+        }
+
+        // Verify batch results match individual search results
+        for (i, query) in queries.iter().enumerate() {
+            let individual_result = index.search(query, 5, 100);
+            assert_eq!(
+                batch_results[i].len(),
+                individual_result.len(),
+                "Batch result {} differs from individual search",
+                i
+            );
+            // Check IDs match (order might differ slightly due to parallel execution)
+            for (j, (batch_r, ind_r)) in batch_results[i]
+                .iter()
+                .zip(individual_result.iter())
+                .enumerate()
+            {
+                assert_eq!(
+                    batch_r.id, ind_r.id,
+                    "Query {} result {} mismatch: batch={}, individual={}",
+                    i, j, batch_r.id, ind_r.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_search_batch_empty() {
+        let index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        // Empty index
+        let queries: Vec<Vec<f32>> = vec![vec![0.1, 0.2, 0.3]];
+        let results = index.search_batch(&queries, 5, 100);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_empty());
+
+        // Empty queries
+        let results = index.search_batch(&[], 5, 100);
+        assert!(results.is_empty());
     }
 }

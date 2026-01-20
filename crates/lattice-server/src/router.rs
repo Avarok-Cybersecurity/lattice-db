@@ -3,8 +3,9 @@
 //! Maps Qdrant-compatible endpoints to internal handlers.
 
 use crate::dto::{
-    AddEdgeRequest, CreateCollectionRequest, DeletePointsRequest, GetPointsRequest,
-    QueryRequest, ScrollRequest, SearchRequest, TraverseRequest, UpsertPointsRequest,
+    AddEdgeRequest, BatchSearchRequest, CreateCollectionRequest, DeletePointsRequest,
+    GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest, TraverseRequest,
+    UpsertPointsRequest,
 };
 use crate::handlers::{collections, points, search};
 use lattice_core::{LatticeRequest, LatticeResponse};
@@ -101,6 +102,14 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
         ("POST", ["collections", name, "points", "search"]) => {
             match parse_body::<SearchRequest>(&request.body) {
                 Ok(req) => search::search_points(&state, name, req),
+                Err(e) => e,
+            }
+        }
+
+        // POST /collections/{name}/points/search/batch - Batch search
+        ("POST", ["collections", name, "points", "search", "batch"]) => {
+            match parse_body::<BatchSearchRequest>(&request.body) {
+                Ok(req) => search::search_batch(&state, name, req),
                 Err(e) => e,
             }
         }

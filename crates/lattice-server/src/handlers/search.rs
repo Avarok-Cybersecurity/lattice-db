@@ -3,8 +3,8 @@
 //! Handles search, scroll, and graph traversal operations.
 
 use crate::dto::{
-    ApiResponse, EdgeRecord, PointRecord, QueryResponse, ScoredPoint, ScrollRequest, ScrollResult,
-    SearchRequest, TraversalResult, TraverseRequest,
+    ApiResponse, BatchSearchRequest, EdgeRecord, PointRecord, QueryResponse, ScoredPoint,
+    ScrollRequest, ScrollResult, SearchRequest, TraversalResult, TraverseRequest,
 };
 #[cfg(feature = "openapi")]
 use crate::dto::{
@@ -81,6 +81,76 @@ pub fn search_points(
             json_response(&ApiResponse::ok(scored_points))
         }
         Err(e) => LatticeResponse::bad_request(&format!("Search failed: {}", e)),
+    }
+}
+
+/// Batch search for multiple queries (parallel processing)
+///
+/// More efficient than calling search multiple times.
+pub fn search_batch(
+    state: &AppState,
+    collection_name: &str,
+    request: BatchSearchRequest,
+) -> LatticeResponse {
+    let collections = state.collections.read().unwrap();
+
+    let engine = match collections.get(collection_name) {
+        Some(e) => e,
+        None => {
+            return LatticeResponse::not_found(&format!(
+                "Collection '{}' not found",
+                collection_name
+            ))
+        }
+    };
+
+    // Convert SearchRequest DTOs to SearchQuery
+    let queries: Vec<SearchQuery> = request
+        .searches
+        .iter()
+        .map(|req| {
+            let mut query = SearchQuery::new(req.vector.clone(), req.limit);
+            if req.with_payload {
+                query = query.include_payload();
+            }
+            if req.with_vector {
+                query = query.include_vector();
+            }
+            if let Some(threshold) = req.score_threshold {
+                query = query.with_score_threshold(threshold);
+            }
+            if let Some(ref params) = req.params {
+                if let Some(ef) = params.ef {
+                    query = query.with_ef(ef);
+                }
+            }
+            query
+        })
+        .collect();
+
+    // Execute batch search
+    match engine.search_batch(queries) {
+        Ok(all_results) => {
+            // Convert each result set to ScoredPoint
+            let batch_results: Vec<Vec<ScoredPoint>> = all_results
+                .into_iter()
+                .map(|results| {
+                    results
+                        .into_iter()
+                        .map(|r| ScoredPoint {
+                            id: r.id,
+                            version: 0,
+                            score: r.score,
+                            payload: r.payload.map(json_value_to_map),
+                            vector: r.vector,
+                        })
+                        .collect()
+                })
+                .collect();
+
+            json_response(&ApiResponse::ok(batch_results))
+        }
+        Err(e) => LatticeResponse::bad_request(&format!("Batch search failed: {}", e)),
     }
 }
 
