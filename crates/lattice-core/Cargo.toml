@@ -1,0 +1,51 @@
+[package]
+name = "lattice-core"
+description = "Core business logic for LatticeDB - pure computation, no I/O"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+simd = []
+
+[dependencies]
+# Serialization - zero-copy
+rkyv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Async traits (no runtime!)
+async-trait.workspace = true
+
+# Collections
+smallvec.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# CRITICAL: This crate must NOT depend on:
+# - tokio (I/O runtime)
+# - std::fs (filesystem I/O)
+# - tokio::net (network I/O)
+# - web-sys (browser I/O)
+# - Any HTTP client/server
+# All I/O is abstracted through traits defined here.
+
+# Native-only parallel processing (inherent, not a feature)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.10"
+
+[dev-dependencies]
+rand.workspace = true
+
+# Native-only test dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+# WASM-only test dependencies
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true
+getrandom.workspace = true

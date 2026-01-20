@@ -1,0 +1,189 @@
+# LatticeDB Build Configuration
+# Run with: cargo make <task>
+# Install cargo-make: cargo install cargo-make
+
+[config]
+default_to_workspace = false
+
+# =============================================================================
+# Test Tasks
+# =============================================================================
+
+[tasks.test]
+description = "Run all tests (native + WASM)"
+dependencies = ["test-native", "test-wasm"]
+
+[tasks.test-native]
+description = "Run native tests for all crates"
+command = "cargo"
+args = ["test", "--workspace"]
+
+[tasks.test-wasm]
+description = "Run WASM tests for all crates in headless Chrome"
+dependencies = ["test-wasm-core", "test-wasm-storage", "test-wasm-server"]
+
+[tasks.test-wasm-core]
+description = "Run lattice-core WASM tests"
+install_crate = { crate_name = "wasm-pack", binary = "wasm-pack", test_arg = "--version" }
+command = "wasm-pack"
+args = ["test", "--headless", "--chrome", "crates/lattice-core"]
+
+[tasks.test-wasm-storage]
+description = "Run lattice-storage WASM tests"
+install_crate = { crate_name = "wasm-pack", binary = "wasm-pack", test_arg = "--version" }
+command = "wasm-pack"
+args = ["test", "--headless", "--chrome", "crates/lattice-storage", "--no-default-features", "--features", "wasm"]
+
+[tasks.test-wasm-server]
+description = "Run lattice-server WASM tests"
+install_crate = { crate_name = "wasm-pack", binary = "wasm-pack", test_arg = "--version" }
+command = "wasm-pack"
+args = ["test", "--headless", "--chrome", "crates/lattice-server", "--no-default-features", "--features", "wasm"]
+
+[tasks.test-wasm-firefox]
+description = "Run WASM tests in headless Firefox"
+install_crate = { crate_name = "wasm-pack", binary = "wasm-pack", test_arg = "--version" }
+command = "wasm-pack"
+args = ["test", "--headless", "--firefox", "crates/lattice-core"]
+
+# =============================================================================
+# Build Tasks
+# =============================================================================
+
+[tasks.build]
+description = "Build all crates (native)"
+command = "cargo"
+args = ["build", "--workspace"]
+
+[tasks.build-release]
+description = "Build all crates in release mode"
+command = "cargo"
+args = ["build", "--workspace", "--release"]
+
+[tasks.build-wasm]
+description = "Build all crates for WASM"
+dependencies = ["build-wasm-core", "build-wasm-storage", "build-wasm-server"]
+
+[tasks.build-wasm-core]
+description = "Build lattice-core for WASM"
+command = "cargo"
+args = ["build", "-p", "lattice-core", "--target", "wasm32-unknown-unknown"]
+
+[tasks.build-wasm-storage]
+description = "Build lattice-storage for WASM"
+command = "cargo"
+args = ["build", "-p", "lattice-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+
+[tasks.build-wasm-server]
+description = "Build lattice-server for WASM"
+command = "cargo"
+args = ["build", "-p", "lattice-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+
+[tasks.build-wasm-release]
+description = "Build all crates for WASM in release mode"
+command = "cargo"
+args = ["build", "--target", "wasm32-unknown-unknown", "--release", "-p", "lattice-core", "-p", "lattice-storage", "-p", "lattice-server", "--no-default-features", "--features", "wasm"]
+
+# =============================================================================
+# Check Tasks
+# =============================================================================
+
+[tasks.check]
+description = "Check all crates compile"
+command = "cargo"
+args = ["check", "--workspace"]
+
+[tasks.check-wasm]
+description = "Check all crates compile for WASM"
+dependencies = ["check-wasm-core", "check-wasm-storage", "check-wasm-server"]
+
+[tasks.check-wasm-core]
+description = "Check lattice-core compiles for WASM"
+command = "cargo"
+args = ["check", "-p", "lattice-core", "--target", "wasm32-unknown-unknown"]
+
+[tasks.check-wasm-storage]
+description = "Check lattice-storage compiles for WASM"
+command = "cargo"
+args = ["check", "-p", "lattice-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+
+[tasks.check-wasm-server]
+description = "Check lattice-server compiles for WASM"
+command = "cargo"
+args = ["check", "-p", "lattice-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+
+[tasks.check-all]
+description = "Check compilation for native and WASM"
+dependencies = ["check", "check-wasm"]
+
+# =============================================================================
+# Lint Tasks
+# =============================================================================
+
+[tasks.clippy]
+description = "Run clippy lints"
+command = "cargo"
+args = ["clippy", "--workspace", "--", "-D", "warnings"]
+
+[tasks.fmt]
+description = "Format code"
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.fmt-check]
+description = "Check code formatting"
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.lint]
+description = "Run all lints (clippy + fmt-check)"
+dependencies = ["clippy", "fmt-check"]
+
+# =============================================================================
+# Server Tasks
+# =============================================================================
+
+[tasks.run]
+description = "Run the server"
+command = "cargo"
+args = ["run", "-p", "lattice-server"]
+
+[tasks.run-openapi]
+description = "Run the server with OpenAPI/Swagger UI"
+command = "cargo"
+args = ["run", "-p", "lattice-server", "--features", "openapi"]
+
+# =============================================================================
+# Documentation Tasks
+# =============================================================================
+
+[tasks.doc]
+description = "Generate documentation"
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps"]
+
+[tasks.doc-open]
+description = "Generate and open documentation"
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps", "--open"]
+
+# =============================================================================
+# CI Tasks
+# =============================================================================
+
+[tasks.ci]
+description = "Run full CI pipeline (lint, test-native, test-wasm)"
+dependencies = ["lint", "test-native", "test-wasm"]
+
+[tasks.ci-quick]
+description = "Quick CI check (fmt-check, check-all, test-native)"
+dependencies = ["fmt-check", "check-all", "test-native"]
+
+# =============================================================================
+# Clean Tasks
+# =============================================================================
+
+[tasks.clean]
+description = "Clean build artifacts"
+command = "cargo"
+args = ["clean"]

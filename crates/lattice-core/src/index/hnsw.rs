@@ -1,0 +1,664 @@
+//! HNSW (Hierarchical Navigable Small World) index implementation
+//!
+//! This implements the algorithm from the paper:
+//! "Efficient and robust approximate nearest neighbor search using Hierarchical
+//! Navigable Small World graphs" by Yu. A. Malkov, D. A. Yashunin
+//!
+//! # Architecture (SBIO)
+//!
+//! The index stores vectors in memory and uses the LatticeStorage trait
+//! for persistence. Core algorithm is pure computation - no I/O calls.
+
+use crate::index::distance::DistanceCalculator;
+use crate::index::layer::{HnswNode, LayerManager};
+use crate::types::collection::{Distance, HnswConfig};
+use crate::types::point::{Point, PointId, Vector};
+use crate::types::query::SearchResult;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
+// Native: parallel processing with rayon
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
+
+/// Candidate for search priority queue
+#[derive(Debug, Clone, PartialEq)]
+struct Candidate {
+    id: PointId,
+    distance: f32,
+}
+
+impl Eq for Candidate {}
+
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Default: min-heap by distance (closer = higher priority)
+        self.distance
+            .partial_cmp(&other.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+/// HNSW index for approximate nearest neighbor search
+///
+/// # Usage
+///
+/// ```ignore
+/// let config = HnswConfig { m: 16, m0: 32, ml: 0.36, ef: 100, ef_construction: 200 };
+/// let mut index = HnswIndex::new(config, Distance::Cosine);
+///
+/// // Insert points
+/// index.insert(&point);
+///
+/// // Search
+/// let results = index.search(&query_vector, 10, 100);
+/// ```
+pub struct HnswIndex {
+    /// HNSW configuration
+    config: HnswConfig,
+    /// Distance calculator
+    distance: DistanceCalculator,
+    /// Layer manager (graph structure)
+    layers: LayerManager,
+    /// Vector storage: point_id -> vector
+    vectors: HashMap<PointId, Vector>,
+    /// Random number generator state for layer selection
+    rng_state: u64,
+}
+
+impl HnswIndex {
+    /// Create a new HNSW index
+    pub fn new(config: HnswConfig, metric: Distance) -> Self {
+        Self {
+            config,
+            distance: DistanceCalculator::new(metric),
+            layers: LayerManager::new(),
+            vectors: HashMap::new(),
+            rng_state: 42, // Deterministic for testing
+        }
+    }
+
+    /// Set random seed (for reproducible tests)
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.rng_state = seed;
+        self
+    }
+
+    /// Insert a point into the index
+    pub fn insert(&mut self, point: &Point) {
+        let id = point.id;
+        let vector = point.vector.clone();
+
+        // Store vector
+        self.vectors.insert(id, vector.clone());
+
+        // Select random layer for this node
+        let level = self.random_level();
+        let mut node = HnswNode::new(id, level);
+
+        // If this is the first point, just insert it
+        if self.layers.is_empty() {
+            self.layers.insert_node(node);
+            return;
+        }
+
+        let entry_point = self.layers.entry_point().unwrap();
+        let mut current = entry_point;
+
+        // Phase 1: Traverse from top layer down to node's level + 1
+        // (greedy search, single nearest neighbor)
+        for layer in (level as usize + 1..=self.layers.max_layer() as usize).rev() {
+            current = self.search_layer_single(&vector, current, layer as u16);
+        }
+
+        // Phase 2: Insert at each layer from level down to 0
+        for layer in (0..=level as usize).rev() {
+            let layer = layer as u16;
+
+            // Find ef_construction nearest neighbors
+            let neighbors = self.search_layer(
+                &vector,
+                vec![current],
+                self.config.ef_construction,
+                layer,
+            );
+
+            // Select M best neighbors (M0 for layer 0)
+            let max_neighbors = if layer == 0 {
+                self.config.m0
+            } else {
+                self.config.m
+            };
+
+            let selected: Vec<PointId> = neighbors
+                .iter()
+                .take(max_neighbors)
+                .map(|c| c.id)
+                .collect();
+
+            // Add bidirectional connections
+            for &neighbor_id in &selected {
+                node.add_neighbor(layer, neighbor_id);
+
+                // Add reverse connection (may need pruning)
+                if let Some(neighbor_node) = self.layers.get_node_mut(neighbor_id) {
+                    neighbor_node.add_neighbor(layer, id);
+
+                    // Prune if over limit
+                    let neighbor_count = neighbor_node.neighbors_at(layer).len();
+                    if neighbor_count > max_neighbors {
+                        self.prune_neighbors(neighbor_id, layer, max_neighbors);
+                    }
+                }
+            }
+
+            // Update current for next layer
+            if !neighbors.is_empty() {
+                current = neighbors[0].id;
+            }
+        }
+
+        self.layers.insert_node(node);
+    }
+
+    /// Search for k nearest neighbors
+    ///
+    /// # Arguments
+    /// * `query` - Query vector
+    /// * `k` - Number of results
+    /// * `ef` - Search queue size (higher = better recall, slower)
+    ///
+    /// # Returns
+    /// Vector of search results sorted by distance (closest first)
+    pub fn search(&self, query: &[f32], k: usize, ef: usize) -> Vec<SearchResult> {
+        if self.layers.is_empty() {
+            return vec![];
+        }
+
+        let ef = ef.max(k); // ef must be >= k
+
+        let entry_point = self.layers.entry_point().unwrap();
+        let mut current = entry_point;
+
+        // Phase 1: Traverse from top layer down to layer 1
+        for layer in (1..=self.layers.max_layer() as usize).rev() {
+            current = self.search_layer_single(query, current, layer as u16);
+        }
+
+        // Phase 2: Search layer 0 with ef
+        let candidates = self.search_layer(query, vec![current], ef, 0);
+
+        // Return top k
+        candidates
+            .into_iter()
+            .take(k)
+            .map(|c| SearchResult::new(c.id, c.distance))
+            .collect()
+    }
+
+    /// Delete a point from the index
+    pub fn delete(&mut self, id: PointId) -> bool {
+        self.vectors.remove(&id);
+        self.layers.remove_node(id).is_some()
+    }
+
+    /// Get number of points in the index
+    pub fn len(&self) -> usize {
+        self.vectors.len()
+    }
+
+    /// Check if index is empty
+    pub fn is_empty(&self) -> bool {
+        self.vectors.is_empty()
+    }
+
+    /// Get a vector by ID
+    pub fn get_vector(&self, id: PointId) -> Option<&Vector> {
+        self.vectors.get(&id)
+    }
+
+    /// Get layer counts for debugging
+    pub fn layer_counts(&self) -> Vec<usize> {
+        self.layers.layer_counts()
+    }
+
+    // --- Private methods ---
+
+    /// Generate random level for new node
+    fn random_level(&mut self) -> u16 {
+        // Simple LCG random number generator
+        self.rng_state = self.rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let random = (self.rng_state >> 33) as f64 / (1u64 << 31) as f64;
+
+        // Level = floor(-ln(uniform) * ml)
+        let level = (-random.ln() * self.config.ml).floor() as u16;
+
+        // Cap at reasonable maximum (prevents runaway in edge cases)
+        level.min(16)
+    }
+
+    /// Search a single layer for the nearest neighbor (greedy)
+    fn search_layer_single(&self, query: &[f32], start: PointId, layer: u16) -> PointId {
+        let mut current = start;
+        let mut current_dist = self.calc_distance(query, current);
+
+        loop {
+            let mut changed = false;
+
+            if let Some(node) = self.layers.get_node(current) {
+                for &neighbor in node.neighbors_at(layer) {
+                    let dist = self.calc_distance(query, neighbor);
+                    if dist < current_dist {
+                        current = neighbor;
+                        current_dist = dist;
+                        changed = true;
+                    }
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        current
+    }
+
+    /// Search a layer for ef nearest neighbors
+    ///
+    /// On native builds, uses parallel distance calculations for better performance.
+    fn search_layer(
+        &self,
+        query: &[f32],
+        entry_points: Vec<PointId>,
+        ef: usize,
+        layer: u16,
+    ) -> Vec<Candidate> {
+        let mut visited: HashSet<PointId> = entry_points.iter().copied().collect();
+
+        // Min-heap: candidates to explore (closest first)
+        let mut candidates: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
+
+        // Max-heap: best results found (farthest first for easy pruning)
+        let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
+
+        // Initialize with entry points
+        for &ep in &entry_points {
+            let dist = self.calc_distance(query, ep);
+            candidates.push(Reverse(Candidate { id: ep, distance: dist }));
+            results.push(Candidate { id: ep, distance: dist });
+        }
+
+        while let Some(Reverse(current)) = candidates.pop() {
+            // Stop if current is farther than worst result and we have enough
+            if results.len() >= ef {
+                if let Some(worst) = results.peek() {
+                    if current.distance > worst.distance {
+                        break;
+                    }
+                }
+            }
+
+            // Explore neighbors - collect unvisited first, then calculate distances
+            if let Some(node) = self.layers.get_node(current.id) {
+                // Collect unvisited neighbors
+                let unvisited: Vec<PointId> = node
+                    .neighbors_at(layer)
+                    .iter()
+                    .copied()
+                    .filter(|&n| visited.insert(n))
+                    .collect();
+
+                if unvisited.is_empty() {
+                    continue;
+                }
+
+                // Calculate distances (parallel on native, sequential on WASM)
+                let neighbor_dists = self.calc_distances_batch(query, &unvisited);
+
+                // Process results
+                for (neighbor, dist) in neighbor_dists {
+                    let candidate = Candidate { id: neighbor, distance: dist };
+
+                    // Add to results if better than worst or room available
+                    let should_add = results.len() < ef
+                        || results.peek().map_or(true, |w| dist < w.distance);
+
+                    if should_add {
+                        candidates.push(Reverse(candidate.clone()));
+                        results.push(candidate);
+
+                        // Prune results to ef size
+                        while results.len() > ef {
+                            results.pop();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert to sorted vec (closest first)
+        let mut result_vec: Vec<Candidate> = results.into_vec();
+        result_vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        result_vec
+    }
+
+    /// Calculate distances to multiple points
+    ///
+    /// On native builds with large batches (>64), uses parallel processing.
+    /// For smaller batches, sequential is faster due to parallel overhead.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn calc_distances_batch(&self, query: &[f32], ids: &[PointId]) -> Vec<(PointId, f32)> {
+        // Parallel overhead is only worth it for larger batches
+        // Typical neighbor count is 16-32, so use sequential for small counts
+        const PARALLEL_THRESHOLD: usize = 64;
+
+        if ids.len() >= PARALLEL_THRESHOLD {
+            ids.par_iter()
+                .filter_map(|&id| {
+                    self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
+                })
+                .collect()
+        } else {
+            ids.iter()
+                .filter_map(|&id| {
+                    self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
+                })
+                .collect()
+        }
+    }
+
+    /// Calculate distances to multiple points (sequential on WASM)
+    #[cfg(target_arch = "wasm32")]
+    fn calc_distances_batch(&self, query: &[f32], ids: &[PointId]) -> Vec<(PointId, f32)> {
+        ids.iter()
+            .filter_map(|&id| {
+                self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
+            })
+            .collect()
+    }
+
+    /// Prune neighbors to keep best M (closest by distance)
+    ///
+    /// Maintains sorted order by PointId for efficient binary search lookups.
+    fn prune_neighbors(&mut self, node_id: PointId, layer: u16, max_neighbors: usize) {
+        // Get neighbors and their distances in one pass (avoid vector clone)
+        let neighbors_with_dist: Vec<(PointId, f32)> = {
+            let vector = match self.vectors.get(&node_id) {
+                Some(v) => v,
+                None => return,
+            };
+
+            let node = match self.layers.get_node(node_id) {
+                Some(n) => n,
+                None => return,
+            };
+
+            node.neighbors_at(layer)
+                .iter()
+                .filter_map(|&nid| {
+                    self.vectors.get(&nid).map(|neighbor_vec| {
+                        (nid, self.distance.calculate(vector, neighbor_vec))
+                    })
+                })
+                .collect()
+        };
+
+        // Sort by distance to find best M neighbors
+        let mut sorted = neighbors_with_dist;
+        sorted.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        sorted.truncate(max_neighbors);
+
+        // Extract IDs and sort by PointId (required for binary_search in add_neighbor)
+        let mut new_neighbors: Vec<PointId> = sorted.into_iter().map(|(id, _)| id).collect();
+        new_neighbors.sort_unstable();
+
+        // Update neighbors
+        if let Some(node) = self.layers.get_node_mut(node_id) {
+            if let Some(neighbors) = node.neighbors_at_mut(layer) {
+                *neighbors = new_neighbors;
+            }
+        }
+    }
+
+    /// Calculate distance between query and stored vector
+    fn calc_distance(&self, query: &[f32], id: PointId) -> f32 {
+        match self.vectors.get(&id) {
+            Some(vec) => self.distance.calculate(query, vec),
+            None => f32::MAX,
+        }
+    }
+
+    /// Calculate distance between a query vector and another vector
+    ///
+    /// This is used for brute-force search on pending (unindexed) points.
+    pub fn calc_distance_for_query(&self, query: &[f32], vector: &[f32]) -> f32 {
+        self.distance.calculate(query, vector)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    fn test_config() -> HnswConfig {
+        HnswConfig {
+            m: 16,
+            m0: 32,
+            ml: HnswConfig::recommended_ml(16),
+            ef: 100,
+            ef_construction: 200,
+        }
+    }
+
+    fn random_vector(dim: usize, seed: u64) -> Vector {
+        let mut rng = seed;
+        (0..dim)
+            .map(|_| {
+                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (rng as f64 / u64::MAX as f64) as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_empty_index() {
+        let index = HnswIndex::new(test_config(), Distance::Cosine);
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+
+        let results = index.search(&[0.1, 0.2], 10, 100);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_insert_single_point() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+        let point = Point::new_vector(1, vec![0.1, 0.2, 0.3]);
+
+        index.insert(&point);
+
+        assert_eq!(index.len(), 1);
+        assert!(!index.is_empty());
+        assert!(index.get_vector(1).is_some());
+    }
+
+    #[test]
+    fn test_insert_multiple_points() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        for i in 0..100 {
+            let point = Point::new_vector(i, random_vector(32, i));
+            index.insert(&point);
+        }
+
+        assert_eq!(index.len(), 100);
+
+        // Check layer distribution (should have multiple layers)
+        let counts = index.layer_counts();
+        assert!(!counts.is_empty());
+        assert_eq!(counts[0], 100); // All points in layer 0
+    }
+
+    #[test]
+    fn test_search_returns_k_results() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        for i in 0..50 {
+            let point = Point::new_vector(i, random_vector(32, i));
+            index.insert(&point);
+        }
+
+        let query = random_vector(32, 999);
+        let results = index.search(&query, 10, 100);
+
+        assert_eq!(results.len(), 10);
+    }
+
+    #[test]
+    fn test_search_returns_sorted_by_distance() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        for i in 0..100 {
+            let point = Point::new_vector(i, random_vector(32, i));
+            index.insert(&point);
+        }
+
+        let query = random_vector(32, 999);
+        let results = index.search(&query, 20, 100);
+
+        // Verify sorted by distance (ascending)
+        for i in 1..results.len() {
+            assert!(
+                results[i - 1].score <= results[i].score,
+                "Results not sorted: {} > {}",
+                results[i - 1].score,
+                results[i].score
+            );
+        }
+    }
+
+    #[test]
+    fn test_search_nearest_is_exact() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        // Insert points including the query itself
+        let query_vec = vec![0.5, 0.5, 0.5, 0.5];
+        let query_point = Point::new_vector(42, query_vec.clone());
+        index.insert(&query_point);
+
+        for i in 0..50 {
+            if i != 42 {
+                let point = Point::new_vector(i, random_vector(4, i));
+                index.insert(&point);
+            }
+        }
+
+        let results = index.search(&query_vec, 1, 100);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, 42);
+        assert!(results[0].score < 0.001); // Should be ~0
+    }
+
+    #[test]
+    fn test_delete_point() {
+        let mut index = HnswIndex::new(test_config(), Distance::Cosine);
+
+        let point = Point::new_vector(1, vec![0.1, 0.2, 0.3]);
+        index.insert(&point);
+        assert_eq!(index.len(), 1);
+
+        let deleted = index.delete(1);
+        assert!(deleted);
+        assert_eq!(index.len(), 0);
+        assert!(index.get_vector(1).is_none());
+    }
+
+    #[test]
+    fn test_recall_1k_vectors() {
+        // Test recall with 1000 vectors
+        let dim = 64;
+        let n = 1000;
+        let k = 10;
+
+        let mut index = HnswIndex::new(test_config(), Distance::Euclid).with_seed(12345);
+
+        // Generate and insert vectors
+        let vectors: Vec<Vector> = (0..n).map(|i| random_vector(dim, i)).collect();
+
+        for (i, vec) in vectors.iter().enumerate() {
+            let point = Point::new_vector(i as u64, vec.clone());
+            index.insert(&point);
+        }
+
+        // Test recall on 10 random queries
+        let mut total_recall = 0.0;
+        let num_queries = 10;
+
+        let distance = DistanceCalculator::new(Distance::Euclid);
+
+        for q in 0..num_queries {
+            let query = random_vector(dim, 10000 + q);
+
+            // Brute-force ground truth
+            let mut ground_truth: Vec<(u64, f32)> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i as u64, distance.calculate(&query, v)))
+                .collect();
+            ground_truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            let gt_ids: HashSet<u64> = ground_truth.iter().take(k).map(|(id, _)| *id).collect();
+
+            // HNSW search
+            let results = index.search(&query, k, 100);
+            let result_ids: HashSet<u64> = results.iter().map(|r| r.id).collect();
+
+            // Calculate recall
+            let hits = gt_ids.intersection(&result_ids).count();
+            total_recall += hits as f64 / k as f64;
+        }
+
+        let avg_recall = total_recall / num_queries as f64;
+        println!("Average recall@{}: {:.3}", k, avg_recall);
+
+        // Should achieve at least 90% recall
+        assert!(
+            avg_recall >= 0.9,
+            "Recall too low: {:.3} (expected >= 0.9)",
+            avg_recall
+        );
+    }
+
+    #[test]
+    fn test_different_distance_metrics() {
+        let configs = [
+            (Distance::Cosine, "cosine"),
+            (Distance::Euclid, "euclid"),
+            (Distance::Dot, "dot"),
+        ];
+
+        for (metric, name) in configs {
+            let mut index = HnswIndex::new(test_config(), metric);
+
+            for i in 0..50 {
+                let point = Point::new_vector(i, random_vector(16, i));
+                index.insert(&point);
+            }
+
+            let query = random_vector(16, 999);
+            let results = index.search(&query, 10, 100);
+
+            assert_eq!(results.len(), 10, "Failed for metric: {}", name);
+        }
+    }
+}

@@ -1,0 +1,67 @@
+[package]
+name = "lattice-server"
+description = "HTTP and Service Worker transport for LatticeDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lattice-core.workspace = true
+lattice-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+
+# Native HTTP server (Axum)
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["net", "signal", "rt-multi-thread", "macros"], optional = true }
+
+# OpenAPI documentation (optional)
+utoipa = { workspace = true, optional = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+
+# WASM Service Worker
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+
+[dependencies.web-sys]
+workspace = true
+optional = true
+features = [
+    "FetchEvent",
+    "Request",
+    "Response",
+    "ResponseInit",
+    "Headers",
+    "ServiceWorkerGlobalScope",
+    "ExtendableEvent",
+]
+
+[dev-dependencies]
+rand.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true
+getrandom.workspace = true
+
+[features]
+default = ["native"]
+native = ["axum", "tokio", "lattice-storage/native", "lattice-core/simd"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "lattice-storage/wasm"]
+openapi = ["native", "utoipa", "utoipa-swagger-ui"]
+simd = ["lattice-core/simd"]
+
+[[bin]]
+name = "lattice-server"
+path = "src/main.rs"
+required-features = ["native"]

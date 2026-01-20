@@ -1,0 +1,53 @@
+[package]
+name = "lattice-storage"
+description = "Storage backend implementations for LatticeDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lattice-core.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+
+# Native storage (tokio::fs)
+tokio = { workspace = true, features = ["fs", "io-util", "sync"], optional = true }
+
+# WASM storage (OPFS)
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+
+[dependencies.web-sys]
+workspace = true
+optional = true
+features = [
+    "Blob",
+    "File",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemReadWriteOptions",
+    "FileSystemSyncAccessHandle",
+    "FileSystemWritableFileStream",
+    "Navigator",
+    "StorageManager",
+    "Window",
+]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
+rand.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true
+getrandom.workspace = true
+
+[features]
+default = ["native"]
+native = ["tokio"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys"]
