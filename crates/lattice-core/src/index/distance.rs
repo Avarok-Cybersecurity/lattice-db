@@ -294,6 +294,116 @@ mod simd_x86 {
 }
 
 // ============================================================================
+// SIMD implementations (aarch64 with NEON)
+// ============================================================================
+
+#[cfg(all(feature = "simd", target_arch = "aarch64"))]
+mod simd_neon {
+    use std::arch::aarch64::*;
+
+    /// NEON cosine distance (processes 4 floats at a time)
+    ///
+    /// # Safety
+    /// Requires aarch64 NEON support (always available on aarch64)
+    #[inline]
+    pub unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
+        let len = a.len();
+        let chunks = len / 4;
+
+        let mut dot_sum = vdupq_n_f32(0.0);
+        let mut norm_a_sum = vdupq_n_f32(0.0);
+        let mut norm_b_sum = vdupq_n_f32(0.0);
+
+        for i in 0..chunks {
+            let base = i * 4;
+            let va = vld1q_f32(a.as_ptr().add(base));
+            let vb = vld1q_f32(b.as_ptr().add(base));
+
+            dot_sum = vfmaq_f32(dot_sum, va, vb);
+            norm_a_sum = vfmaq_f32(norm_a_sum, va, va);
+            norm_b_sum = vfmaq_f32(norm_b_sum, vb, vb);
+        }
+
+        // Horizontal sum
+        let dot = vaddvq_f32(dot_sum);
+        let norm_a = vaddvq_f32(norm_a_sum);
+        let norm_b = vaddvq_f32(norm_b_sum);
+
+        // Handle remainder with scalar
+        let remainder_start = chunks * 4;
+        let (mut dot_r, mut norm_a_r, mut norm_b_r) = (0.0f32, 0.0f32, 0.0f32);
+        for i in remainder_start..len {
+            dot_r += a[i] * b[i];
+            norm_a_r += a[i] * a[i];
+            norm_b_r += b[i] * b[i];
+        }
+
+        let total_dot = dot + dot_r;
+        let total_norm_a = norm_a + norm_a_r;
+        let total_norm_b = norm_b + norm_b_r;
+
+        let norm_product = (total_norm_a * total_norm_b).sqrt();
+        if norm_product == 0.0 {
+            return 1.0;
+        }
+
+        1.0 - (total_dot / norm_product)
+    }
+
+    /// NEON euclidean distance (processes 4 floats at a time)
+    #[inline]
+    pub unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
+        let len = a.len();
+        let chunks = len / 4;
+
+        let mut sum = vdupq_n_f32(0.0);
+
+        for i in 0..chunks {
+            let base = i * 4;
+            let va = vld1q_f32(a.as_ptr().add(base));
+            let vb = vld1q_f32(b.as_ptr().add(base));
+            let diff = vsubq_f32(va, vb);
+            sum = vfmaq_f32(sum, diff, diff);
+        }
+
+        let mut result = vaddvq_f32(sum);
+
+        // Handle remainder with scalar
+        for i in (chunks * 4)..len {
+            let diff = a[i] - b[i];
+            result += diff * diff;
+        }
+
+        result.sqrt()
+    }
+
+    /// NEON dot product distance (processes 4 floats at a time)
+    #[inline]
+    pub unsafe fn dot_distance_neon(a: &[f32], b: &[f32]) -> f32 {
+        let len = a.len();
+        let chunks = len / 4;
+
+        let mut sum = vdupq_n_f32(0.0);
+
+        for i in 0..chunks {
+            let base = i * 4;
+            let va = vld1q_f32(a.as_ptr().add(base));
+            let vb = vld1q_f32(b.as_ptr().add(base));
+            sum = vfmaq_f32(sum, va, vb);
+        }
+
+        let mut result = vaddvq_f32(sum);
+
+        // Handle remainder with scalar
+        for i in (chunks * 4)..len {
+            result += a[i] * b[i];
+        }
+
+        -result
+    }
+}
+
+// ============================================================================
 // Dispatch functions (select best implementation at runtime)
 // ============================================================================
 
@@ -307,6 +417,14 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         // Use AVX2 for large vectors if available (cached detection)
         if a.len() >= 32 && has_avx2_fma() {
             return unsafe { simd_x86::cosine_distance_avx2(a, b) };
+        }
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
+        if a.len() >= 16 {
+            return unsafe { simd_neon::cosine_distance_neon(a, b) };
         }
     }
 
@@ -326,6 +444,14 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         }
     }
 
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
+        if a.len() >= 16 {
+            return unsafe { simd_neon::euclidean_distance_neon(a, b) };
+        }
+    }
+
     euclidean_distance_scalar(a, b)
 }
 
@@ -340,6 +466,14 @@ pub fn dot_distance(a: &[f32], b: &[f32]) -> f32 {
         // Use AVX2 for large vectors if available (cached detection)
         if a.len() >= 32 && has_avx2_fma() {
             return unsafe { simd_x86::dot_distance_avx2(a, b) };
+        }
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    {
+        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
+        if a.len() >= 16 {
+            return unsafe { simd_neon::dot_distance_neon(a, b) };
         }
     }
 
@@ -568,6 +702,99 @@ mod tests {
             let scalar_dot = dot_distance_scalar(&a, &b);
 
             // Use dispatch (may use SIMD)
+            let dispatch_cos = cosine_distance(&a, &b);
+            let dispatch_euc = euclidean_distance(&a, &b);
+            let dispatch_dot = dot_distance(&a, &b);
+
+            assert!(
+                (scalar_cos - dispatch_cos).abs() < 1e-4,
+                "Cosine mismatch: scalar={}, dispatch={}",
+                scalar_cos,
+                dispatch_cos
+            );
+            assert!(
+                (scalar_euc - dispatch_euc).abs() < 1e-4,
+                "Euclidean mismatch: scalar={}, dispatch={}",
+                scalar_euc,
+                dispatch_euc
+            );
+            assert!(
+                (scalar_dot - dispatch_dot).abs() < 1e-4,
+                "Dot mismatch: scalar={}, dispatch={}",
+                scalar_dot,
+                dispatch_dot
+            );
+        }
+    }
+
+    // NEON SIMD tests for aarch64 (Apple Silicon, etc.)
+    #[cfg(all(feature = "simd", target_arch = "aarch64"))]
+    mod neon_tests {
+        use super::*;
+
+        #[test]
+        fn test_neon_cosine_large_vector() {
+            let calc = DistanceCalculator::new(Distance::Cosine);
+            let dim = 256;
+            let a: Vec<f32> = (0..dim).map(|i| (i as f32) / 100.0).collect();
+            let b: Vec<f32> = (0..dim).map(|i| ((i + 1) as f32) / 100.0).collect();
+
+            // Should use NEON path on aarch64
+            let dist = calc.calculate(&a, &b);
+
+            // Verify result is reasonable (identical vectors would be 0)
+            assert!(dist >= 0.0 && dist < 1.0, "Cosine distance out of range: {}", dist);
+        }
+
+        #[test]
+        fn test_neon_euclidean_large_vector() {
+            let calc = DistanceCalculator::new(Distance::Euclid);
+            let dim = 256;
+            let a: Vec<f32> = vec![0.0; dim];
+            let b: Vec<f32> = vec![1.0; dim];
+
+            let dist = calc.calculate(&a, &b);
+            let expected = (dim as f32).sqrt();
+
+            assert!(
+                (dist - expected).abs() < 0.01,
+                "Expected {}, got {}",
+                expected,
+                dist
+            );
+        }
+
+        #[test]
+        fn test_neon_dot_large_vector() {
+            let calc = DistanceCalculator::new(Distance::Dot);
+            let dim = 256;
+            let a: Vec<f32> = vec![1.0; dim];
+            let b: Vec<f32> = vec![2.0; dim];
+
+            let dist = calc.calculate(&a, &b);
+            let expected = -(dim as f32 * 2.0);
+
+            assert!(
+                (dist - expected).abs() < 0.01,
+                "Expected {}, got {}",
+                expected,
+                dist
+            );
+        }
+
+        #[test]
+        fn test_neon_vs_scalar_consistency() {
+            // Verify NEON and scalar produce the same results
+            let dim = 128;
+            let a: Vec<f32> = (0..dim).map(|i| (i as f32) * 0.1).collect();
+            let b: Vec<f32> = (0..dim).map(|i| ((i * 2) as f32) * 0.1).collect();
+
+            // Force scalar
+            let scalar_cos = cosine_distance_scalar(&a, &b);
+            let scalar_euc = euclidean_distance_scalar(&a, &b);
+            let scalar_dot = dot_distance_scalar(&a, &b);
+
+            // Use dispatch (uses NEON on aarch64)
             let dispatch_cos = cosine_distance(&a, &b);
             let dispatch_euc = euclidean_distance(&a, &b);
             let dispatch_dot = dot_distance(&a, &b);
