@@ -60,6 +60,7 @@ native = ["axum", "tokio", "lattice-storage/native", "lattice-core/simd"]
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "lattice-storage/wasm"]
 openapi = ["native", "utoipa", "utoipa-swagger-ui"]
 simd = ["lattice-core/simd"]
+mmap = ["lattice-core/mmap"]
 
 [[bin]]
 name = "lattice-server"

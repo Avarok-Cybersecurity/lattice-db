@@ -10,6 +10,7 @@ rust-version.workspace = true
 [features]
 default = []
 simd = []
+mmap = ["memmap2"]
 
 [dependencies]
 # Serialization - zero-copy
@@ -37,6 +38,7 @@ thiserror.workspace = true
 # Native-only parallel processing (inherent, not a feature)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.10"
+memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 rand.workspace = true

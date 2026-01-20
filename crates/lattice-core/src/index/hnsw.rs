@@ -327,6 +327,45 @@ impl HnswIndex {
         self.layers.layer_counts()
     }
 
+    /// Iterate over all vector IDs
+    pub fn vector_ids(&self) -> impl Iterator<Item = PointId> + '_ {
+        self.vectors.keys().copied()
+    }
+
+    // --- Mmap support (native only with mmap feature) ---
+
+    /// Export vectors to a memory-mapped file
+    ///
+    /// This creates an mmap file containing all vectors in the index.
+    /// After export, vectors can be loaded via `load_vectors_mmap` for
+    /// reduced memory footprint.
+    #[cfg(all(feature = "mmap", not(target_arch = "wasm32")))]
+    pub fn export_vectors_mmap(
+        &self,
+        path: &std::path::Path,
+    ) -> std::io::Result<super::mmap_vectors::MmapVectorStore> {
+        use super::mmap_vectors::MmapVectorBuilder;
+
+        let dim = self.vectors.values().next().map(|v| v.len()).unwrap_or(0);
+        let mut builder = MmapVectorBuilder::new(dim);
+
+        for (&id, vector) in &self.vectors {
+            builder.add(id, vector.clone());
+        }
+
+        builder.build(path)
+    }
+
+    /// Get memory usage estimate in bytes
+    ///
+    /// Returns estimated memory used by vectors (not including graph structure).
+    pub fn vector_memory_bytes(&self) -> usize {
+        self.vectors
+            .values()
+            .map(|v| v.len() * std::mem::size_of::<f32>() + std::mem::size_of::<PointId>())
+            .sum()
+    }
+
     // --- Private methods ---
 
     /// Generate random level for new node
