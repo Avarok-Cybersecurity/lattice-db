@@ -311,6 +311,41 @@ impl CollectionEngine {
     ///
     /// Returns i64::MIN for missing points/properties (sorts to bottom for DESC).
     pub fn batch_extract_i64_property(&self, ids: &[PointId], property: &str) -> Vec<i64> {
+        // For large N, pre-extract ALL values in BTreeMap order (sequential access),
+        // then use O(1) Vec lookup (IDs are typically sequential starting from 0)
+        const LARGE_THRESHOLD: usize = 5000;
+
+        if ids.len() >= LARGE_THRESHOLD && !ids.is_empty() {
+            // Check if IDs are roughly sequential (common case after AllNodesScan)
+            let min_id = *ids.iter().min().unwrap();
+            let max_id = *ids.iter().max().unwrap();
+            let id_range = max_id - min_id + 1;
+
+            // Only use dense Vec if IDs are ~dense (not sparse)
+            if id_range <= ids.len() as u64 * 2 {
+                // Pre-extract all properties in BTreeMap order (sequential, cache-friendly)
+                let pts = self.points.read().unwrap();
+                let mut values: Vec<i64> = vec![i64::MIN; id_range as usize];
+
+                // Single sequential iteration over BTreeMap
+                for (&id, point) in pts.range(min_id..=max_id) {
+                    let idx = (id - min_id) as usize;
+                    if let Some(bytes) = point.payload.get(property) {
+                        if let Some(val) = Self::fast_parse_i64(bytes) {
+                            values[idx] = val;
+                        }
+                    }
+                }
+
+                // O(1) lookup for each id
+                return ids
+                    .iter()
+                    .map(|id| values[(id - min_id) as usize])
+                    .collect();
+            }
+        }
+
+        // Fallback: direct BTreeMap lookups
         let pts = self.points.read().unwrap();
         ids.iter()
             .map(|id| {

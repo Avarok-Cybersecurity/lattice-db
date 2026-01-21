@@ -460,15 +460,16 @@ impl QueryExecutor {
     /// Execute AllNodesScan
     fn execute_all_nodes_scan(
         &self,
-        variable: &String,
+        _variable: &String,
         ctx: &ExecutionContext,
     ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
         let ids = ctx.collection.point_ids();
-        let rows: Vec<Vec<CypherValue>> = ids
-            .into_iter()
-            .map(|id| vec![CypherValue::NodeRef(id)])
-            .collect();
-
+        // Preallocate outer Vec to avoid reallocation during collect
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            // Single-element Vec - could use SmallVec in future for zero-alloc
+            rows.push(vec![CypherValue::NodeRef(id)]);
+        }
         Ok((rows, QueryStats::default()))
     }
 
