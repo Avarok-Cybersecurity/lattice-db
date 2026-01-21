@@ -803,9 +803,22 @@ impl QueryExecutor {
         })
     }
 
-    /// Try to batch prefetch sort keys for parallel extraction.
-    /// Returns Some if all sort expressions are simple property accesses on the first row variable.
-    /// This enables parallel sort key construction by eliminating ctx dependency.
+    /// Extract all NodeRef IDs from the first column of rows.
+    /// Returns None if any row doesn't have a NodeRef in first position.
+    /// Preallocates for efficiency.
+    #[inline]
+    fn extract_node_ids(input_rows: &[Vec<CypherValue>]) -> Option<Vec<u64>> {
+        let mut node_ids = Vec::with_capacity(input_rows.len());
+        for row in input_rows {
+            if let Some(CypherValue::NodeRef(id)) = row.first() {
+                node_ids.push(*id);
+            } else {
+                return None;
+            }
+        }
+        Some(node_ids)
+    }
+
     /// Try to extract sort keys using the highly optimized i64 path.
     /// Returns Some((keys, ascending)) if this is a single integer property ORDER BY.
     fn try_batch_i64_sort_keys(
@@ -828,23 +841,8 @@ impl QueryExecutor {
         // Check if sort expression is simple property access
         let property = self.extract_simple_property_access(&items[0].expr)?;
 
-        // Extract all NodeRef IDs from first column
-        let node_ids: Vec<u64> = input_rows
-            .iter()
-            .filter_map(|row| {
-                row.first().and_then(|v| {
-                    if let CypherValue::NodeRef(id) = v {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-
-        if node_ids.len() != input_rows.len() {
-            return None;
-        }
+        // Extract all NodeRef IDs from first column (preallocated)
+        let node_ids = Self::extract_node_ids(input_rows)?;
 
         // Use the highly optimized i64 extraction (no cloning, no CypherValue overhead)
         let keys = ctx.collection.batch_extract_i64_property(&node_ids, property);
@@ -876,24 +874,8 @@ impl QueryExecutor {
             return None;
         }
 
-        // Extract all NodeRef IDs from first column
-        let node_ids: Vec<u64> = input_rows
-            .iter()
-            .filter_map(|row| {
-                row.first().and_then(|v| {
-                    if let CypherValue::NodeRef(id) = v {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-
-        // If not all rows have NodeRef in first column, fall back
-        if node_ids.len() != input_rows.len() {
-            return None;
-        }
+        // Extract all NodeRef IDs from first column (preallocated)
+        let node_ids = Self::extract_node_ids(input_rows)?;
 
         // Batch extract raw property bytes (single lock acquisition, no Point clone)
         let raw_properties = ctx.collection.batch_extract_properties(&node_ids, &property_names);
