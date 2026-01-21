@@ -292,7 +292,7 @@ fn bench_order_by(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
 
-    for size in [100, 500, 1000, 5000, 10000].iter() {
+    for size in [100, 500, 1000, 5000, 10000, 20000, 50000].iter() {
         // LatticeDB
         let mut lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
