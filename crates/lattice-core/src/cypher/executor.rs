@@ -652,6 +652,12 @@ impl QueryExecutor {
             return Ok((input_rows, stats));
         }
 
+        // FAST PATH: Single i64 sort key - avoids all CypherValue overhead
+        // This is ~3x faster for ORDER BY integer_column queries
+        if let Some((i64_keys, ascending)) = self.try_batch_i64_sort_keys(&input_rows, items, ctx) {
+            return self.execute_sort_i64_fast(input_rows, i64_keys, ascending, limit, stats);
+        }
+
         // OPTIMIZATION: Try batch prefetch for simple property access sort expressions
         // This enables parallel sort key construction by pre-fetching all needed data
         let prefetched = self.try_batch_prefetch_sort_keys(&input_rows, items, ctx);
@@ -740,6 +746,53 @@ impl QueryExecutor {
         Ok((sorted_rows, stats))
     }
 
+    /// Fast path for sorting by a single i64 key.
+    /// Avoids all CypherValue overhead by working directly with (i64, usize) pairs.
+    fn execute_sort_i64_fast(
+        &self,
+        mut input_rows: Vec<Vec<CypherValue>>,
+        keys: Vec<i64>,
+        ascending: bool,
+        limit: Option<u64>,
+        stats: QueryStats,
+    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+        // Create (key, index) pairs for sorting
+        let mut keyed_indices: Vec<(i64, usize)> = keys.into_iter().enumerate()
+            .map(|(idx, key)| (key, idx))
+            .collect();
+
+        // Comparator based on sort direction
+        let compare = if ascending {
+            |a: &(i64, usize), b: &(i64, usize)| a.0.cmp(&b.0)
+        } else {
+            |a: &(i64, usize), b: &(i64, usize)| b.0.cmp(&a.0)
+        };
+
+        if let Some(k) = limit {
+            let k = k as usize;
+            if k > 0 && k < keyed_indices.len() {
+                // Partial sort: O(n) partition + O(k log k) sort
+                keyed_indices.select_nth_unstable_by(k - 1, compare);
+                keyed_indices.truncate(k);
+                parallel::sort_by(&mut keyed_indices, compare);
+            } else if k == 0 {
+                return Ok((vec![], stats));
+            } else {
+                parallel::sort_by(&mut keyed_indices, compare);
+            }
+        } else {
+            parallel::sort_by(&mut keyed_indices, compare);
+        }
+
+        // Reconstruct rows in sorted order
+        let sorted_rows: Vec<Vec<CypherValue>> = keyed_indices
+            .into_iter()
+            .map(|(_, idx)| std::mem::take(&mut input_rows[idx]))
+            .collect();
+
+        Ok((sorted_rows, stats))
+    }
+
     /// Check if all sort keys are homogeneous i64 (enables SIMD optimization)
     #[inline]
     fn keys_are_homogeneous_i64(&self, rows: &[(SortKey, usize)]) -> bool {
@@ -752,6 +805,51 @@ impl QueryExecutor {
     /// Try to batch prefetch sort keys for parallel extraction.
     /// Returns Some if all sort expressions are simple property accesses on the first row variable.
     /// This enables parallel sort key construction by eliminating ctx dependency.
+    /// Try to extract sort keys using the highly optimized i64 path.
+    /// Returns Some((keys, ascending)) if this is a single integer property ORDER BY.
+    fn try_batch_i64_sort_keys(
+        &self,
+        input_rows: &[Vec<CypherValue>],
+        items: &[OrderByItem],
+        ctx: &ExecutionContext,
+    ) -> Option<(Vec<i64>, bool)> {
+        // Only optimize single-key integer sorts
+        if items.len() != 1 {
+            return None;
+        }
+
+        // Need sufficient rows to benefit
+        const I64_THRESHOLD: usize = 200;
+        if input_rows.len() < I64_THRESHOLD {
+            return None;
+        }
+
+        // Check if sort expression is simple property access
+        let property = self.extract_simple_property_access(&items[0].expr)?;
+
+        // Extract all NodeRef IDs from first column
+        let node_ids: Vec<u64> = input_rows
+            .iter()
+            .filter_map(|row| {
+                row.first().and_then(|v| {
+                    if let CypherValue::NodeRef(id) = v {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if node_ids.len() != input_rows.len() {
+            return None;
+        }
+
+        // Use the highly optimized i64 extraction (no cloning, no CypherValue overhead)
+        let keys = ctx.collection.batch_extract_i64_property(&node_ids, property);
+        Some((keys, items[0].ascending))
+    }
+
     fn try_batch_prefetch_sort_keys(
         &self,
         input_rows: &[Vec<CypherValue>],

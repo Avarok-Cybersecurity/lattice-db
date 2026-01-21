@@ -301,6 +301,62 @@ impl CollectionEngine {
             .collect()
     }
 
+    /// Batch extract a single numeric property as i64, optimized for ORDER BY on integer fields.
+    ///
+    /// This is highly optimized:
+    /// - No byte cloning (parses in-place)
+    /// - No CypherValue allocation
+    /// - Single lock acquisition
+    /// - Fast integer parsing without serde overhead
+    ///
+    /// Returns i64::MIN for missing points/properties (sorts to bottom for DESC).
+    pub fn batch_extract_i64_property(&self, ids: &[PointId], property: &str) -> Vec<i64> {
+        let pts = self.points.read().unwrap();
+        ids.iter()
+            .map(|id| {
+                pts.get(id)
+                    .and_then(|point| point.payload.get(property))
+                    .and_then(|bytes| Self::fast_parse_i64(bytes))
+                    .unwrap_or(i64::MIN)
+            })
+            .collect()
+    }
+
+    /// Fast parse i64 from JSON bytes without allocation.
+    /// Returns None for non-integer values (floats, strings, etc).
+    #[inline]
+    fn fast_parse_i64(bytes: &[u8]) -> Option<i64> {
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let (start, negative) = if bytes[0] == b'-' {
+            if bytes.len() < 2 {
+                return None;
+            }
+            (1, true)
+        } else {
+            (0, false)
+        };
+
+        let mut result: i64 = 0;
+        for &b in &bytes[start..] {
+            if b.is_ascii_digit() {
+                result = result.checked_mul(10)?;
+                let digit = (b - b'0') as i64;
+                result = if negative {
+                    result.checked_sub(digit)?
+                } else {
+                    result.checked_add(digit)?
+                };
+            } else {
+                // Not a simple integer (float, string, etc.)
+                return None;
+            }
+        }
+        Some(result)
+    }
+
     /// Delete points by IDs
     ///
     /// Returns the number of points actually deleted.
@@ -1012,6 +1068,61 @@ impl CollectionEngine {
                 }
             })
             .collect()
+    }
+
+    /// Batch extract a single numeric property as i64, optimized for ORDER BY on integer fields.
+    ///
+    /// This is highly optimized:
+    /// - No byte cloning (parses in-place)
+    /// - No CypherValue allocation
+    /// - Fast integer parsing without serde overhead
+    ///
+    /// Returns i64::MIN for missing points/properties (sorts to bottom for DESC).
+    pub fn batch_extract_i64_property(&self, ids: &[PointId], property: &str) -> Vec<i64> {
+        ids.iter()
+            .map(|id| {
+                self.points
+                    .get(id)
+                    .and_then(|point| point.payload.get(property))
+                    .and_then(|bytes| Self::fast_parse_i64_wasm(bytes))
+                    .unwrap_or(i64::MIN)
+            })
+            .collect()
+    }
+
+    /// Fast parse i64 from JSON bytes without allocation.
+    /// Returns None for non-integer values (floats, strings, etc).
+    #[inline]
+    fn fast_parse_i64_wasm(bytes: &[u8]) -> Option<i64> {
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let (start, negative) = if bytes[0] == b'-' {
+            if bytes.len() < 2 {
+                return None;
+            }
+            (1, true)
+        } else {
+            (0, false)
+        };
+
+        let mut result: i64 = 0;
+        for &b in &bytes[start..] {
+            if b.is_ascii_digit() {
+                result = result.checked_mul(10)?;
+                let digit = (b - b'0') as i64;
+                result = if negative {
+                    result.checked_sub(digit)?
+                } else {
+                    result.checked_add(digit)?
+                };
+            } else {
+                // Not a simple integer (float, string, etc.)
+                return None;
+            }
+        }
+        Some(result)
     }
 
     /// Delete points by IDs
