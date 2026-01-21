@@ -1,0 +1,66 @@
+{
+  "runs": [
+    {
+      "timestamp": "2026-01-20T00:00:00Z",
+      "commit": "baseline",
+      "optimizations": ["baseline"],
+      "results": {
+        "node_creation/single": { "lattice_us": 34.8, "neo4j_us": 5610 },
+        "match_all/100": { "lattice_us": 9.2, "neo4j_us": 1490 },
+        "match_all/500": { "lattice_us": 33.3, "neo4j_us": 3070 },
+        "match_all/1000": { "lattice_us": 69.2, "neo4j_us": 4450 },
+        "match_by_label/100": { "lattice_us": 47.4, "neo4j_us": 1140 },
+        "match_by_label/500": { "lattice_us": 263.0, "neo4j_us": 2680 },
+        "match_by_label/1000": { "lattice_us": 591.0, "neo4j_us": 4790 },
+        "match_with_limit/100": { "lattice_us": 57.4, "neo4j_us": 972 },
+        "match_with_limit/500": { "lattice_us": 283.0, "neo4j_us": 805 },
+        "match_with_limit/1000": { "lattice_us": 575.0, "neo4j_us": 766 },
+        "match_with_filter/100": { "lattice_us": 104.0, "neo4j_us": 1120 },
+        "match_with_filter/500": { "lattice_us": 538.0, "neo4j_us": 3140 },
+        "match_with_filter/1000": { "lattice_us": 1230.0, "neo4j_us": 3660 },
+        "complex_filter/100": { "lattice_us": 146.0, "neo4j_us": 834 },
+        "complex_filter/500": { "lattice_us": 720.0, "neo4j_us": 1240 },
+        "complex_filter/1000": { "lattice_us": 1560.0, "neo4j_us": 1470 },
+        "order_by/100": { "lattice_us": 510.0, "neo4j_us": 1050 },
+        "order_by/500": { "lattice_us": 3090.0, "neo4j_us": 1110 },
+        "order_by/1000": { "lattice_us": 6380.0, "neo4j_us": 1200 },
+        "skip_limit/200": { "lattice_us": 110.0, "neo4j_us": 797 },
+        "skip_limit/500": { "lattice_us": 248.0, "neo4j_us": 747 },
+        "skip_limit/1000": { "lattice_us": 485.0, "neo4j_us": 704 }
+      }
+    },
+    {
+      "timestamp": "2026-01-20T12:00:00Z",
+      "commit": "optimized",
+      "optimizations": [
+        "DISTINCT: HashSet O(n) instead of Vec::contains O(n²)",
+        "ORDER BY: Pre-computed sort keys (Schwartzian transform)",
+        "Property cache: RefCell-based caching in ExecutionContext"
+      ],
+      "results": {
+        "node_creation/single": { "lattice_us": 23.9, "neo4j_us": 4036 },
+        "match_all/100": { "lattice_us": 8.5, "neo4j_us": 1282 },
+        "match_all/500": { "lattice_us": 30.5, "neo4j_us": 2531 },
+        "match_all/1000": { "lattice_us": 60.7, "neo4j_us": 4520 },
+        "match_by_label/100": { "lattice_us": 48.3, "neo4j_us": 1200 },
+        "match_by_label/500": { "lattice_us": 241.9, "neo4j_us": 2720 },
+        "match_by_label/1000": { "lattice_us": 491.9, "neo4j_us": 4152 },
+        "match_with_limit/100": { "lattice_us": 44.1, "neo4j_us": 693 },
+        "match_with_limit/500": { "lattice_us": 228.1, "neo4j_us": 696 },
+        "match_with_limit/1000": { "lattice_us": 454.0, "neo4j_us": 633 },
+        "match_with_filter/100": { "lattice_us": 115.7, "neo4j_us": 1010 },
+        "match_with_filter/500": { "lattice_us": 618.5, "neo4j_us": 2257 },
+        "match_with_filter/1000": { "lattice_us": 1282.0, "neo4j_us": 3456 },
+        "complex_filter/100": { "lattice_us": 158.1, "neo4j_us": 672 },
+        "complex_filter/500": { "lattice_us": 841.3, "neo4j_us": 1020 },
+        "complex_filter/1000": { "lattice_us": 1704.0, "neo4j_us": 1316 },
+        "order_by/100": { "lattice_us": 190.7, "neo4j_us": 954 },
+        "order_by/500": { "lattice_us": 705.8, "neo4j_us": 997 },
+        "order_by/1000": { "lattice_us": 1388.0, "neo4j_us": 1112 },
+        "skip_limit/200": { "lattice_us": 120.8, "neo4j_us": 795 },
+        "skip_limit/500": { "lattice_us": 262.1, "neo4j_us": 753 },
+        "skip_limit/1000": { "lattice_us": 495.6, "neo4j_us": 725 }
+      }
+    }
+  ]
+}

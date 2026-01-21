@@ -97,6 +97,15 @@ pub struct Point {
     /// If `None`, this is a pure VectorDB node.
     /// If `Some`, contains outgoing edges to other points.
     pub outgoing_edges: Option<SmallVec<[Edge; 4]>>,
+
+    /// Bitmap of labels for O(1) label checks
+    ///
+    /// Each bit position corresponds to a label ID from the LabelRegistry.
+    /// Bit N is set if the point has the label with ID N.
+    /// Supports up to 64 unique labels per collection.
+    /// Default 0 means no labels or not yet migrated.
+    #[serde(default)]
+    pub label_bitmap: u64,
 }
 
 impl Point {
@@ -107,6 +116,7 @@ impl Point {
             vector,
             payload: HashMap::new(),
             outgoing_edges: None,
+            label_bitmap: 0,
         }
     }
 
@@ -117,6 +127,7 @@ impl Point {
             vector,
             payload: HashMap::new(),
             outgoing_edges: Some(edges),
+            label_bitmap: 0,
         }
     }
 
@@ -129,6 +140,12 @@ impl Point {
     /// Add a payload field
     pub fn with_field(mut self, key: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
         self.payload.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set label bitmap for O(1) label checks
+    pub fn with_label_bitmap(mut self, bitmap: u64) -> Self {
+        self.label_bitmap = bitmap;
         self
     }
 
@@ -224,6 +241,7 @@ mod tests {
             vector: vec![0.1, 0.2, 0.3, 0.4],
             payload,
             outgoing_edges: Some(edges),
+            label_bitmap: 0,
         };
 
         // Serialize

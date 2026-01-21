@@ -373,3 +373,24 @@ impl From<QueryRequest> for SearchRequest {
         }
     }
 }
+
+// === Cypher Query API (LatticeDB extension) ===
+
+/// Cypher query request
+///
+/// Execute openCypher queries against the graph:
+/// ```json
+/// {
+///   "query": "MATCH (n:Person) WHERE n.age > 25 RETURN n.name",
+///   "parameters": { "min_age": 25 }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CypherQueryRequest {
+    /// The Cypher query to execute
+    pub query: String,
+    /// Optional query parameters (for parameterized queries)
+    #[serde(default)]
+    pub parameters: HashMap<String, serde_json::Value>,
+}

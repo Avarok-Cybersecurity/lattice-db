@@ -17,6 +17,7 @@ use crate::types::collection::CollectionConfig;
 use crate::types::point::{Edge, Point, PointId};
 use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, SearchResult};
 use rkyv::rancor::Error as RkyvError;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound;
@@ -26,8 +27,6 @@ use std::ops::Bound;
 use crate::engine::async_indexer::AsyncIndexerHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
-#[cfg(not(target_arch = "wasm32"))]
-use std::collections::HashSet;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, RwLock};
 
@@ -71,9 +70,11 @@ pub struct CollectionEngine {
     /// Point storage: id -> Point
     points: Arc<RwLock<BTreeMap<PointId, Point>>>,
     /// Points pending indexing (not yet in HNSW)
-    pending_index: Arc<RwLock<HashSet<PointId>>>,
+    pending_index: Arc<RwLock<FxHashSet<PointId>>>,
     /// Background indexer handle
     indexer: AsyncIndexerHandle,
+    /// Label index: label -> set of point IDs (for O(1) label lookups)
+    label_index: Arc<RwLock<HashMap<String, FxHashSet<PointId>>>>,
     /// Next available page ID for storage (reserved for Phase 2)
     #[allow(dead_code)]
     next_page_id: u64,
@@ -88,6 +89,8 @@ pub struct CollectionEngine {
     index: HnswIndex,
     /// Point storage: id -> Point (BTreeMap for O(log n) sorted iteration)
     points: BTreeMap<PointId, Point>,
+    /// Label index: label -> set of point IDs (for O(1) label lookups)
+    label_index: HashMap<String, FxHashSet<PointId>>,
     /// Next available page ID for storage (reserved for Phase 2)
     #[allow(dead_code)]
     next_page_id: u64,
@@ -107,7 +110,8 @@ impl CollectionEngine {
             config.vectors.distance,
         )));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
-        let pending_index = Arc::new(RwLock::new(HashSet::new()));
+        let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
+        let label_index = Arc::new(RwLock::new(HashMap::new()));
 
         // Spawn background indexer
         let indexer = AsyncIndexerHandle::spawn(
@@ -122,6 +126,7 @@ impl CollectionEngine {
             points,
             pending_index,
             indexer,
+            label_index,
             next_page_id: PAGE_POINTS_START,
         })
     }
@@ -192,17 +197,25 @@ impl CollectionEngine {
         {
             let mut pts = self.points.write().unwrap();
             let mut pending = self.pending_index.write().unwrap();
+            let mut label_idx = self.label_index.write().unwrap();
 
             for point in points {
                 let is_update = pts.contains_key(&point.id);
 
                 if is_update {
-                    // For updates, delete from index first (sync to ensure consistency)
+                    // For updates, remove old labels from label index
+                    if let Some(old_point) = pts.get(&point.id) {
+                        Self::remove_point_labels_from_index(old_point, &mut label_idx);
+                    }
+                    // Delete from HNSW index first (sync to ensure consistency)
                     self.indexer.queue_delete(point.id);
                     updated += 1;
                 } else {
                     inserted += 1;
                 }
+
+                // Update label index with new labels
+                Self::add_point_labels_to_index(&point, &mut label_idx);
 
                 // Store point
                 pts.insert(point.id, point.clone());
@@ -216,6 +229,39 @@ impl CollectionEngine {
         Ok(UpsertResult { inserted, updated })
     }
 
+    /// Extract labels from a point's _labels payload and add to label index
+    fn add_point_labels_to_index(
+        point: &Point,
+        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
+    ) {
+        if let Some(labels_bytes) = point.payload.get("_labels") {
+            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
+                for label in labels {
+                    label_idx
+                        .entry(label)
+                        .or_insert_with(FxHashSet::default)
+                        .insert(point.id);
+                }
+            }
+        }
+    }
+
+    /// Remove a point's labels from the label index
+    fn remove_point_labels_from_index(
+        point: &Point,
+        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
+    ) {
+        if let Some(labels_bytes) = point.payload.get("_labels") {
+            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
+                for label in labels {
+                    if let Some(ids) = label_idx.get_mut(&label) {
+                        ids.remove(&point.id);
+                    }
+                }
+            }
+        }
+    }
+
     /// Get points by IDs (returns cloned points for thread safety)
     pub fn get_points(&self, ids: &[PointId]) -> Vec<Option<Point>> {
         let pts = self.points.read().unwrap();
@@ -227,6 +273,34 @@ impl CollectionEngine {
         self.points.read().unwrap().get(&id).cloned()
     }
 
+    /// Batch extract specific properties from points without cloning entire Points.
+    ///
+    /// This is optimized for ORDER BY queries where we only need sort key properties.
+    /// Returns Vec<Vec<Option<Vec<u8>>>> - outer: per point, inner: per property.
+    /// The values are the raw JSON bytes from the payload (caller deserializes).
+    ///
+    /// Returns None if point doesn't exist, Some(None) if property doesn't exist.
+    pub fn batch_extract_properties(
+        &self,
+        ids: &[PointId],
+        properties: &[&str],
+    ) -> Vec<Vec<Option<Vec<u8>>>> {
+        let pts = self.points.read().unwrap();
+        ids.iter()
+            .map(|id| {
+                if let Some(point) = pts.get(id) {
+                    properties
+                        .iter()
+                        .map(|prop| point.payload.get(*prop).cloned())
+                        .collect()
+                } else {
+                    // Point not found - return None for all properties
+                    vec![None; properties.len()]
+                }
+            })
+            .collect()
+    }
+
     /// Delete points by IDs
     ///
     /// Returns the number of points actually deleted.
@@ -235,10 +309,13 @@ impl CollectionEngine {
 
         let mut pts = self.points.write().unwrap();
         let mut pending = self.pending_index.write().unwrap();
+        let mut label_idx = self.label_index.write().unwrap();
 
         for &id in ids {
-            if pts.remove(&id).is_some() {
-                // Queue deletion from index (background)
+            if let Some(point) = pts.remove(&id) {
+                // Remove from label index
+                Self::remove_point_labels_from_index(&point, &mut label_idx);
+                // Queue deletion from HNSW index (background)
                 self.indexer.queue_delete(id);
                 // Remove from pending if it was there
                 pending.remove(&id);
@@ -257,6 +334,15 @@ impl CollectionEngine {
     /// Get all point IDs
     pub fn point_ids(&self) -> Vec<PointId> {
         self.points.read().unwrap().keys().copied().collect()
+    }
+
+    /// Get point IDs that have a specific label (O(1) lookup via label index)
+    pub fn point_ids_by_label(&self, label: &str) -> Vec<PointId> {
+        let label_idx = self.label_index.read().unwrap();
+        label_idx
+            .get(label)
+            .map(|ids| ids.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     // --- Search Operations ---
@@ -782,6 +868,7 @@ impl CollectionEngine {
             config,
             index,
             points: BTreeMap::new(),
+            label_index: HashMap::new(),
             next_page_id: PAGE_POINTS_START,
         })
     }
@@ -833,14 +920,21 @@ impl CollectionEngine {
 
             // Update index
             if is_update {
-                // Remove old entry from index
+                // Remove old labels from label index
+                if let Some(old_point) = self.points.get(&point.id) {
+                    Self::remove_point_labels_from_index_wasm(old_point, &mut self.label_index);
+                }
+                // Remove old entry from HNSW index
                 self.index.delete(point.id);
                 updated += 1;
             } else {
                 inserted += 1;
             }
 
-            // Insert into index
+            // Update label index with new labels
+            Self::add_point_labels_to_index_wasm(&point, &mut self.label_index);
+
+            // Insert into HNSW index
             self.index.insert(&point);
 
             // Store point
@@ -848,6 +942,39 @@ impl CollectionEngine {
         }
 
         Ok(UpsertResult { inserted, updated })
+    }
+
+    /// Extract labels from a point's _labels payload and add to label index
+    fn add_point_labels_to_index_wasm(
+        point: &Point,
+        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
+    ) {
+        if let Some(labels_bytes) = point.payload.get("_labels") {
+            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
+                for label in labels {
+                    label_idx
+                        .entry(label)
+                        .or_insert_with(FxHashSet::default)
+                        .insert(point.id);
+                }
+            }
+        }
+    }
+
+    /// Remove a point's labels from the label index
+    fn remove_point_labels_from_index_wasm(
+        point: &Point,
+        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
+    ) {
+        if let Some(labels_bytes) = point.payload.get("_labels") {
+            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
+                for label in labels {
+                    if let Some(ids) = label_idx.get_mut(&label) {
+                        ids.remove(&point.id);
+                    }
+                }
+            }
+        }
     }
 
     /// Get points by IDs
@@ -860,6 +987,33 @@ impl CollectionEngine {
         self.points.get(&id)
     }
 
+    /// Batch extract specific properties from points without cloning entire Points.
+    ///
+    /// This is optimized for ORDER BY queries where we only need sort key properties.
+    /// Returns Vec<Vec<Option<Vec<u8>>>> - outer: per point, inner: per property.
+    /// The values are the raw JSON bytes from the payload (caller deserializes).
+    ///
+    /// Returns None if point doesn't exist, Some(None) if property doesn't exist.
+    pub fn batch_extract_properties(
+        &self,
+        ids: &[PointId],
+        properties: &[&str],
+    ) -> Vec<Vec<Option<Vec<u8>>>> {
+        ids.iter()
+            .map(|id| {
+                if let Some(point) = self.points.get(id) {
+                    properties
+                        .iter()
+                        .map(|prop| point.payload.get(*prop).cloned())
+                        .collect()
+                } else {
+                    // Point not found - return None for all properties
+                    vec![None; properties.len()]
+                }
+            })
+            .collect()
+    }
+
     /// Delete points by IDs
     ///
     /// Returns the number of points actually deleted.
@@ -867,7 +1021,9 @@ impl CollectionEngine {
         let mut deleted = 0;
 
         for &id in ids {
-            if self.points.remove(&id).is_some() {
+            if let Some(point) = self.points.remove(&id) {
+                // Remove from label index
+                Self::remove_point_labels_from_index_wasm(&point, &mut self.label_index);
                 self.index.delete(id);
                 deleted += 1;
             }
@@ -884,6 +1040,14 @@ impl CollectionEngine {
     /// Get all point IDs
     pub fn point_ids(&self) -> Vec<PointId> {
         self.points.keys().copied().collect()
+    }
+
+    /// Get point IDs that have a specific label (O(1) lookup via label index)
+    pub fn point_ids_by_label(&self, label: &str) -> Vec<PointId> {
+        self.label_index
+            .get(label)
+            .map(|ids| ids.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     // --- Search Operations ---

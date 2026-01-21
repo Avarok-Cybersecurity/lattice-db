@@ -1,0 +1,36 @@
+[package]
+name = "lattice-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Benchmarks comparing LatticeDB Cypher implementation against Neo4j"
+
+[dependencies]
+# LatticeDB
+lattice-core = { path = "../lattice-core" }
+
+# Neo4j driver
+neo4rs = "0.8"
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+# Benchmarking
+criterion = { workspace = true, features = ["async_tokio"] }
+
+# HTTP client for LatticeDB benchmarks
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utilities
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+[[bench]]
+name = "cypher_comparison"
+harness = false
+
+[features]
+default = []

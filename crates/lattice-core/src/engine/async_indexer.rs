@@ -7,7 +7,8 @@
 
 use crate::index::hnsw::HnswIndex;
 use crate::types::point::{Point, PointId};
-use std::collections::{BTreeMap, HashSet};
+use rustc_hash::FxHashSet;
+use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
@@ -36,7 +37,7 @@ impl AsyncIndexerHandle {
     pub fn spawn(
         index: Arc<RwLock<HnswIndex>>,
         points: Arc<RwLock<BTreeMap<PointId, Point>>>,
-        pending: Arc<RwLock<HashSet<PointId>>>,
+        pending: Arc<RwLock<FxHashSet<PointId>>>,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
 
@@ -89,8 +90,8 @@ struct AsyncIndexer {
     index: Arc<RwLock<HnswIndex>>,
     /// Shared point storage
     points: Arc<RwLock<BTreeMap<PointId, Point>>>,
-    /// Set of points pending indexing
-    pending: Arc<RwLock<HashSet<PointId>>>,
+    /// Set of points pending indexing (FxHashSet for faster integer hashing)
+    pending: Arc<RwLock<FxHashSet<PointId>>>,
 }
 
 impl AsyncIndexer {
@@ -98,7 +99,7 @@ impl AsyncIndexer {
         rx: Receiver<IndexTask>,
         index: Arc<RwLock<HnswIndex>>,
         points: Arc<RwLock<BTreeMap<PointId, Point>>>,
-        pending: Arc<RwLock<HashSet<PointId>>>,
+        pending: Arc<RwLock<FxHashSet<PointId>>>,
     ) -> Self {
         Self {
             rx,
@@ -205,7 +206,7 @@ mod tests {
     fn test_async_indexer_insert() {
         let index = Arc::new(RwLock::new(test_index()));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
-        let pending = Arc::new(RwLock::new(HashSet::new()));
+        let pending = Arc::new(RwLock::new(FxHashSet::default()));
 
         // Add point to storage and pending
         {
@@ -239,7 +240,7 @@ mod tests {
     fn test_async_indexer_shutdown() {
         let index = Arc::new(RwLock::new(test_index()));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
-        let pending = Arc::new(RwLock::new(HashSet::new()));
+        let pending = Arc::new(RwLock::new(FxHashSet::default()));
 
         let mut handle =
             AsyncIndexerHandle::spawn(Arc::clone(&index), Arc::clone(&points), Arc::clone(&pending));

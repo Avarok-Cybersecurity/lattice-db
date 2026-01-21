@@ -15,8 +15,10 @@ use crate::index::scann::{DistanceTable, PQCode, ProductQuantizer};
 use crate::types::collection::{Distance, HnswConfig};
 use crate::types::point::{Point, PointId, Vector};
 use crate::types::query::SearchResult;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::BinaryHeap;
 
 // Native: parallel processing with rayon
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,7 +32,7 @@ use std::cell::RefCell;
 /// Avoids repeated allocation of HashSet, BinaryHeap, Vec per search
 #[cfg(not(target_arch = "wasm32"))]
 struct SearchScratch {
-    visited: HashSet<PointId>,
+    visited: FxHashSet<PointId>,
     candidates: BinaryHeap<Reverse<Candidate>>,
     results: BinaryHeap<Candidate>,
 }
@@ -39,7 +41,7 @@ struct SearchScratch {
 impl SearchScratch {
     fn new() -> Self {
         Self {
-            visited: HashSet::with_capacity(1000),
+            visited: FxHashSet::with_capacity_and_hasher(1000, Default::default()),
             candidates: BinaryHeap::with_capacity(200),
             results: BinaryHeap::with_capacity(200),
         }
@@ -58,7 +60,8 @@ thread_local! {
 }
 
 /// Candidate for search priority queue
-#[derive(Debug, Clone, PartialEq)]
+/// Uses Copy trait for efficient passing (16 bytes fits in registers)
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Candidate {
     id: PointId,
     distance: f32,
@@ -102,8 +105,8 @@ pub struct HnswIndex {
     distance: DistanceCalculator,
     /// Layer manager (graph structure)
     layers: LayerManager,
-    /// Vector storage: point_id -> vector
-    vectors: HashMap<PointId, Vector>,
+    /// Vector storage: point_id -> vector (FxHashMap for faster integer hashing)
+    vectors: FxHashMap<PointId, Vector>,
     /// Random number generator state for layer selection
     rng_state: u64,
 }
@@ -115,7 +118,7 @@ impl HnswIndex {
             config,
             distance: DistanceCalculator::new(metric),
             layers: LayerManager::new(),
-            vectors: HashMap::new(),
+            vectors: FxHashMap::default(),
             rng_state: 42, // Deterministic for testing
         }
     }
@@ -160,7 +163,7 @@ impl HnswIndex {
             // Find ef_construction nearest neighbors
             let neighbors = self.search_layer(
                 &vector,
-                vec![current],
+                &[current],
                 self.config.ef_construction,
                 layer,
             );
@@ -172,14 +175,9 @@ impl HnswIndex {
                 self.config.m
             };
 
-            let selected: Vec<PointId> = neighbors
-                .iter()
-                .take(max_neighbors)
-                .map(|c| c.id)
-                .collect();
-
-            // Add bidirectional connections
-            for &neighbor_id in &selected {
+            // Add bidirectional connections without intermediate Vec allocation
+            for neighbor in neighbors.iter().take(max_neighbors) {
+                let neighbor_id = neighbor.id;
                 node.add_neighbor(layer, neighbor_id);
 
                 // Add reverse connection (may need pruning)
@@ -247,7 +245,7 @@ impl HnswIndex {
         }
 
         // Phase 2: Search layer 0 with ef
-        let candidates = self.search_layer(query, vec![current], ef, 0);
+        let candidates = self.search_layer(query, &[current], ef, 0);
 
         // Return top k
         candidates
@@ -383,6 +381,7 @@ impl HnswIndex {
     }
 
     /// Search a single layer for the nearest neighbor (greedy)
+    #[inline]
     fn search_layer_single(&self, query: &[f32], start: PointId, layer: u16) -> PointId {
         let mut current = start;
         let mut current_dist = self.calc_distance(query, current);
@@ -413,6 +412,7 @@ impl HnswIndex {
     ///
     /// Returns (best_id, best_distance, improved) where improved indicates
     /// if we found a better neighbor than the starting point.
+    #[inline]
     fn search_layer_single_with_shortcut(
         &self,
         query: &[f32],
@@ -454,7 +454,7 @@ impl HnswIndex {
     fn search_layer(
         &self,
         query: &[f32],
-        entry_points: Vec<PointId>,
+        entry_points: &[PointId],
         ef: usize,
         layer: u16,
     ) -> Vec<Candidate> {
@@ -463,7 +463,7 @@ impl HnswIndex {
             scratch.clear();
 
             // Initialize with entry points
-            for &ep in &entry_points {
+            for &ep in entry_points {
                 scratch.visited.insert(ep);
                 let dist = self.calc_distance(query, ep);
                 scratch.candidates.push(Reverse(Candidate { id: ep, distance: dist }));
@@ -482,8 +482,8 @@ impl HnswIndex {
 
                 // Explore neighbors
                 if let Some(node) = self.layers.get_node(current.id) {
-                    // Collect unvisited neighbors
-                    let unvisited: Vec<PointId> = node
+                    // Collect unvisited neighbors (SmallVec avoids heap allocation for typical M0=32)
+                    let unvisited: SmallVec<[PointId; 32]> = node
                         .neighbors_at(layer)
                         .iter()
                         .copied()
@@ -505,7 +505,7 @@ impl HnswIndex {
                             || scratch.results.peek().map_or(true, |w| dist < w.distance);
 
                         if should_add {
-                            scratch.candidates.push(Reverse(candidate.clone()));
+                            scratch.candidates.push(Reverse(candidate));
                             scratch.results.push(candidate);
 
                             while scratch.results.len() > ef {
@@ -518,7 +518,7 @@ impl HnswIndex {
 
             // Convert to sorted vec (closest first)
             let mut result_vec: Vec<Candidate> = scratch.results.drain().collect();
-            result_vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+            result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
             result_vec
         })
     }
@@ -528,11 +528,11 @@ impl HnswIndex {
     fn search_layer(
         &self,
         query: &[f32],
-        entry_points: Vec<PointId>,
+        entry_points: &[PointId],
         ef: usize,
         layer: u16,
     ) -> Vec<Candidate> {
-        let mut visited: HashSet<PointId> = entry_points.iter().copied().collect();
+        let mut visited: FxHashSet<PointId> = entry_points.iter().copied().collect();
 
         // Min-heap: candidates to explore (closest first)
         let mut candidates: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
@@ -541,7 +541,7 @@ impl HnswIndex {
         let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
 
         // Initialize with entry points
-        for &ep in &entry_points {
+        for &ep in entry_points {
             let dist = self.calc_distance(query, ep);
             candidates.push(Reverse(Candidate { id: ep, distance: dist }));
             results.push(Candidate { id: ep, distance: dist });
@@ -559,8 +559,8 @@ impl HnswIndex {
 
             // Explore neighbors - collect unvisited first, then calculate distances
             if let Some(node) = self.layers.get_node(current.id) {
-                // Collect unvisited neighbors
-                let unvisited: Vec<PointId> = node
+                // Collect unvisited neighbors (SmallVec avoids heap allocation for typical M0=32)
+                let unvisited: SmallVec<[PointId; 32]> = node
                     .neighbors_at(layer)
                     .iter()
                     .copied()
@@ -583,7 +583,7 @@ impl HnswIndex {
                         || results.peek().map_or(true, |w| dist < w.distance);
 
                     if should_add {
-                        candidates.push(Reverse(candidate.clone()));
+                        candidates.push(Reverse(candidate));
                         results.push(candidate);
 
                         // Prune results to ef size
@@ -597,7 +597,7 @@ impl HnswIndex {
 
         // Convert to sorted vec (closest first)
         let mut result_vec: Vec<Candidate> = results.into_vec();
-        result_vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
         result_vec
     }
 
@@ -618,22 +618,28 @@ impl HnswIndex {
                 })
                 .collect()
         } else {
-            ids.iter()
-                .filter_map(|&id| {
-                    self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
-                })
-                .collect()
+            // Pre-allocate to avoid reallocation during collection
+            let mut results = Vec::with_capacity(ids.len());
+            for &id in ids {
+                if let Some(vec) = self.vectors.get(&id) {
+                    results.push((id, self.distance.calculate(query, vec)));
+                }
+            }
+            results
         }
     }
 
     /// Calculate distances to multiple points (sequential on WASM)
     #[cfg(target_arch = "wasm32")]
     fn calc_distances_batch(&self, query: &[f32], ids: &[PointId]) -> Vec<(PointId, f32)> {
-        ids.iter()
-            .filter_map(|&id| {
-                self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
-            })
-            .collect()
+        // Pre-allocate to avoid reallocation during collection
+        let mut results = Vec::with_capacity(ids.len());
+        for &id in ids {
+            if let Some(vec) = self.vectors.get(&id) {
+                results.push((id, self.distance.calculate(query, vec)));
+            }
+        }
+        results
     }
 
     /// Prune neighbors to keep best M (closest by distance)
@@ -680,6 +686,7 @@ impl HnswIndex {
     }
 
     /// Calculate distance between query and stored vector
+    #[inline]
     fn calc_distance(&self, query: &[f32], id: PointId) -> f32 {
         match self.vectors.get(&id) {
             Some(vec) => self.distance.calculate(query, vec),
@@ -724,7 +731,7 @@ impl HnswIndex {
         pq.train_default(&training_vectors);
 
         // Encode all vectors
-        let mut codes: HashMap<PointId, PQCode> = HashMap::with_capacity(self.vectors.len());
+        let mut codes: FxHashMap<PointId, PQCode> = FxHashMap::default();
         for (&id, vector) in &self.vectors {
             codes.insert(id, pq.encode(vector));
         }
@@ -787,7 +794,7 @@ impl HnswIndex {
         }
 
         // Phase 2: Search layer 0 with PQ-accelerated distances
-        let candidates = self.search_layer_pq(query, vec![current], ef * rerank_factor, &dist_table, accelerator);
+        let candidates = self.search_layer_pq(query, &[current], ef * rerank_factor, &dist_table, accelerator);
 
         // Phase 3: Re-rank top candidates with exact distances
         let rerank_count = k * rerank_factor;
@@ -812,17 +819,17 @@ impl HnswIndex {
     fn search_layer_pq(
         &self,
         _query: &[f32],
-        entry_points: Vec<PointId>,
+        entry_points: &[PointId],
         ef: usize,
         dist_table: &DistanceTable,
         accelerator: &PQAccelerator,
     ) -> Vec<Candidate> {
-        let mut visited: HashSet<PointId> = entry_points.iter().copied().collect();
+        let mut visited: FxHashSet<PointId> = entry_points.iter().copied().collect();
         let mut candidates: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
         let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
 
         // Initialize with entry points
-        for &ep in &entry_points {
+        for &ep in entry_points {
             let dist = accelerator.approximate_distance_with_table(dist_table, ep);
             candidates.push(Reverse(Candidate { id: ep, distance: dist }));
             results.push(Candidate { id: ep, distance: dist });
@@ -860,7 +867,7 @@ impl HnswIndex {
         }
 
         let mut result_vec: Vec<Candidate> = results.into_vec();
-        result_vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
         result_vec
     }
 }
@@ -872,8 +879,8 @@ impl HnswIndex {
 pub struct PQAccelerator {
     /// Product quantizer with trained codebooks
     pq: ProductQuantizer,
-    /// PQ-encoded vectors: point_id -> compressed code
-    codes: HashMap<PointId, PQCode>,
+    /// PQ-encoded vectors: point_id -> compressed code (FxHashMap for faster integer hashing)
+    codes: FxHashMap<PointId, PQCode>,
 }
 
 impl PQAccelerator {
@@ -928,6 +935,7 @@ impl PQAccelerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;

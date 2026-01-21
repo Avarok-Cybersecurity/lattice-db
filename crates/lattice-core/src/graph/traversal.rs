@@ -3,7 +3,8 @@
 //! Provides iterators for BFS and DFS traversal of the graph.
 
 use crate::types::point::PointId;
-use std::collections::{HashSet, VecDeque};
+use rustc_hash::FxHashSet;
+use std::collections::VecDeque;
 
 /// A path through the graph
 #[derive(Debug, Clone)]
@@ -59,7 +60,7 @@ impl GraphPath {
 /// Visits nodes level by level, finding shortest paths first.
 pub struct BfsIterator<F> {
     queue: VecDeque<(PointId, usize)>, // (node, depth)
-    visited: HashSet<PointId>,
+    visited: FxHashSet<PointId>,
     max_depth: usize,
     get_neighbors: F,
 }
@@ -72,7 +73,7 @@ where
     pub fn new(start: PointId, max_depth: usize, get_neighbors: F) -> Self {
         let mut queue = VecDeque::new();
         queue.push_back((start, 0));
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         visited.insert(start);
 
         Self {
@@ -114,7 +115,7 @@ where
 /// Explores as far as possible along each branch before backtracking.
 pub struct DfsIterator<F> {
     stack: Vec<(PointId, usize)>, // (node, depth)
-    visited: HashSet<PointId>,
+    visited: FxHashSet<PointId>,
     max_depth: usize,
     get_neighbors: F,
 }
@@ -127,7 +128,7 @@ where
     pub fn new(start: PointId, max_depth: usize, get_neighbors: F) -> Self {
         let mut stack = Vec::new();
         stack.push((start, 0));
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
         visited.insert(start);
 
         Self {
@@ -168,6 +169,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;

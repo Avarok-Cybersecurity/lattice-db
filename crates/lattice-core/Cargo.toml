@@ -23,6 +23,17 @@ async-trait.workspace = true
 
 # Collections
 smallvec.workspace = true
+rustc-hash = "2.0"
+
+# Arena allocation for query-scoped temporaries (WASM-compatible)
+bumpalo = "3.16"
+
+# Parsing (WASM-compatible, for Cypher)
+pest.workspace = true
+pest_derive.workspace = true
+
+# String optimization (WASM-compatible)
+compact_str.workspace = true
 
 # Error handling
 thiserror.workspace = true
@@ -39,6 +50,8 @@ thiserror.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = "1.10"
 memmap2 = { version = "0.9", optional = true }
+# Fast RwLock for thread-safe property caching during parallel execution
+parking_lot = "0.12"
 
 [dev-dependencies]
 rand.workspace = true

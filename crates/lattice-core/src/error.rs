@@ -16,6 +16,9 @@ pub enum LatticeError {
     #[error("Index error: {0}")]
     Index(#[from] IndexError),
 
+    #[error("Cypher query error: {0}")]
+    Cypher(#[from] crate::cypher::CypherError),
+
     #[error("Collection not found: {name}")]
     CollectionNotFound { name: String },
 

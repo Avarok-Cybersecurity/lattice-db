@@ -4,7 +4,7 @@
 //! fewer nodes than the layer below.
 
 use crate::types::point::PointId;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Node in the HNSW graph
 ///
@@ -22,8 +22,20 @@ pub struct HnswNode {
 
 impl HnswNode {
     /// Create a new node at a given layer
+    ///
+    /// Pre-allocates neighbor vectors with typical capacity to reduce reallocations.
     pub fn new(point_id: PointId, max_layer: u16) -> Self {
-        let neighbors = (0..=max_layer as usize).map(|_| Vec::new()).collect();
+        // Pre-allocate with typical M/M0 capacity to avoid reallocations
+        // Layer 0 typically has M0=32 neighbors, higher layers have M=16
+        let neighbors = (0..=max_layer as usize)
+            .map(|layer| {
+                if layer == 0 {
+                    Vec::with_capacity(32) // M0
+                } else {
+                    Vec::with_capacity(16) // M
+                }
+            })
+            .collect();
         Self {
             point_id,
             max_layer,
@@ -76,8 +88,8 @@ impl HnswNode {
 /// Tracks which nodes exist at each layer and provides efficient lookups.
 #[derive(Debug, Default)]
 pub struct LayerManager {
-    /// All nodes indexed by point ID
-    nodes: HashMap<PointId, HnswNode>,
+    /// All nodes indexed by point ID (FxHashMap for faster integer hashing)
+    nodes: FxHashMap<PointId, HnswNode>,
     /// Entry point (highest layer node)
     entry_point: Option<PointId>,
     /// Current maximum layer in the graph

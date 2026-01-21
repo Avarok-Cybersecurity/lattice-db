@@ -301,75 +301,91 @@ mod simd_x86 {
 mod simd_neon {
     use std::arch::aarch64::*;
 
-    /// NEON cosine distance (processes 4 floats at a time)
+    /// NEON cosine distance with 2x unrolling (processes 8 floats at a time)
     ///
     /// # Safety
     /// Requires aarch64 NEON support (always available on aarch64)
     #[inline]
     pub unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
-        let chunks = len / 4;
 
-        let mut dot_sum = vdupq_n_f32(0.0);
-        let mut norm_a_sum = vdupq_n_f32(0.0);
-        let mut norm_b_sum = vdupq_n_f32(0.0);
+        // Process 8 floats per iteration (2x unrolling)
+        let chunks8 = len / 8;
 
-        for i in 0..chunks {
-            let base = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(base));
-            let vb = vld1q_f32(b.as_ptr().add(base));
+        let mut dot_sum0 = vdupq_n_f32(0.0);
+        let mut dot_sum1 = vdupq_n_f32(0.0);
+        let mut norm_a_sum0 = vdupq_n_f32(0.0);
+        let mut norm_a_sum1 = vdupq_n_f32(0.0);
+        let mut norm_b_sum0 = vdupq_n_f32(0.0);
+        let mut norm_b_sum1 = vdupq_n_f32(0.0);
 
-            dot_sum = vfmaq_f32(dot_sum, va, vb);
-            norm_a_sum = vfmaq_f32(norm_a_sum, va, va);
-            norm_b_sum = vfmaq_f32(norm_b_sum, vb, vb);
+        for i in 0..chunks8 {
+            let base = i * 8;
+            // Load 8 floats (2 NEON registers)
+            let va0 = vld1q_f32(a.as_ptr().add(base));
+            let va1 = vld1q_f32(a.as_ptr().add(base + 4));
+            let vb0 = vld1q_f32(b.as_ptr().add(base));
+            let vb1 = vld1q_f32(b.as_ptr().add(base + 4));
+
+            dot_sum0 = vfmaq_f32(dot_sum0, va0, vb0);
+            dot_sum1 = vfmaq_f32(dot_sum1, va1, vb1);
+            norm_a_sum0 = vfmaq_f32(norm_a_sum0, va0, va0);
+            norm_a_sum1 = vfmaq_f32(norm_a_sum1, va1, va1);
+            norm_b_sum0 = vfmaq_f32(norm_b_sum0, vb0, vb0);
+            norm_b_sum1 = vfmaq_f32(norm_b_sum1, vb1, vb1);
         }
+
+        // Combine the two accumulators
+        let dot_sum = vaddq_f32(dot_sum0, dot_sum1);
+        let norm_a_sum = vaddq_f32(norm_a_sum0, norm_a_sum1);
+        let norm_b_sum = vaddq_f32(norm_b_sum0, norm_b_sum1);
 
         // Horizontal sum
-        let dot = vaddvq_f32(dot_sum);
-        let norm_a = vaddvq_f32(norm_a_sum);
-        let norm_b = vaddvq_f32(norm_b_sum);
+        let mut dot = vaddvq_f32(dot_sum);
+        let mut norm_a = vaddvq_f32(norm_a_sum);
+        let mut norm_b = vaddvq_f32(norm_b_sum);
 
         // Handle remainder with scalar
-        let remainder_start = chunks * 4;
-        let (mut dot_r, mut norm_a_r, mut norm_b_r) = (0.0f32, 0.0f32, 0.0f32);
-        for i in remainder_start..len {
-            dot_r += a[i] * b[i];
-            norm_a_r += a[i] * a[i];
-            norm_b_r += b[i] * b[i];
+        for i in (chunks8 * 8)..len {
+            dot += a[i] * b[i];
+            norm_a += a[i] * a[i];
+            norm_b += b[i] * b[i];
         }
 
-        let total_dot = dot + dot_r;
-        let total_norm_a = norm_a + norm_a_r;
-        let total_norm_b = norm_b + norm_b_r;
-
-        let norm_product = (total_norm_a * total_norm_b).sqrt();
+        let norm_product = (norm_a * norm_b).sqrt();
         if norm_product == 0.0 {
             return 1.0;
         }
 
-        1.0 - (total_dot / norm_product)
+        1.0 - (dot / norm_product)
     }
 
-    /// NEON euclidean distance (processes 4 floats at a time)
+    /// NEON euclidean distance with 2x unrolling (processes 8 floats at a time)
     #[inline]
     pub unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
-        let chunks = len / 4;
+        let chunks8 = len / 8;
 
-        let mut sum = vdupq_n_f32(0.0);
+        let mut sum0 = vdupq_n_f32(0.0);
+        let mut sum1 = vdupq_n_f32(0.0);
 
-        for i in 0..chunks {
-            let base = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(base));
-            let vb = vld1q_f32(b.as_ptr().add(base));
-            let diff = vsubq_f32(va, vb);
-            sum = vfmaq_f32(sum, diff, diff);
+        for i in 0..chunks8 {
+            let base = i * 8;
+            let va0 = vld1q_f32(a.as_ptr().add(base));
+            let va1 = vld1q_f32(a.as_ptr().add(base + 4));
+            let vb0 = vld1q_f32(b.as_ptr().add(base));
+            let vb1 = vld1q_f32(b.as_ptr().add(base + 4));
+            let diff0 = vsubq_f32(va0, vb0);
+            let diff1 = vsubq_f32(va1, vb1);
+            sum0 = vfmaq_f32(sum0, diff0, diff0);
+            sum1 = vfmaq_f32(sum1, diff1, diff1);
         }
 
+        let sum = vaddq_f32(sum0, sum1);
         let mut result = vaddvq_f32(sum);
 
         // Handle remainder with scalar
-        for i in (chunks * 4)..len {
+        for i in (chunks8 * 8)..len {
             let diff = a[i] - b[i];
             result += diff * diff;
         }
@@ -377,25 +393,30 @@ mod simd_neon {
         result.sqrt()
     }
 
-    /// NEON dot product distance (processes 4 floats at a time)
+    /// NEON dot product distance with 2x unrolling (processes 8 floats at a time)
     #[inline]
     pub unsafe fn dot_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
-        let chunks = len / 4;
+        let chunks8 = len / 8;
 
-        let mut sum = vdupq_n_f32(0.0);
+        let mut sum0 = vdupq_n_f32(0.0);
+        let mut sum1 = vdupq_n_f32(0.0);
 
-        for i in 0..chunks {
-            let base = i * 4;
-            let va = vld1q_f32(a.as_ptr().add(base));
-            let vb = vld1q_f32(b.as_ptr().add(base));
-            sum = vfmaq_f32(sum, va, vb);
+        for i in 0..chunks8 {
+            let base = i * 8;
+            let va0 = vld1q_f32(a.as_ptr().add(base));
+            let va1 = vld1q_f32(a.as_ptr().add(base + 4));
+            let vb0 = vld1q_f32(b.as_ptr().add(base));
+            let vb1 = vld1q_f32(b.as_ptr().add(base + 4));
+            sum0 = vfmaq_f32(sum0, va0, vb0);
+            sum1 = vfmaq_f32(sum1, va1, vb1);
         }
 
+        let sum = vaddq_f32(sum0, sum1);
         let mut result = vaddvq_f32(sum);
 
         // Handle remainder with scalar
-        for i in (chunks * 4)..len {
+        for i in (chunks8 * 8)..len {
             result += a[i] * b[i];
         }
 
@@ -422,8 +443,8 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(all(feature = "simd", target_arch = "aarch64"))]
     {
-        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
-        if a.len() >= 16 {
+        // Use NEON for vectors >= 8 elements (1 unrolled iteration worth)
+        if a.len() >= 8 {
             return unsafe { simd_neon::cosine_distance_neon(a, b) };
         }
     }
@@ -446,8 +467,8 @@ pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(all(feature = "simd", target_arch = "aarch64"))]
     {
-        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
-        if a.len() >= 16 {
+        // Use NEON for vectors >= 8 elements (1 unrolled iteration worth)
+        if a.len() >= 8 {
             return unsafe { simd_neon::euclidean_distance_neon(a, b) };
         }
     }
@@ -471,8 +492,8 @@ pub fn dot_distance(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(all(feature = "simd", target_arch = "aarch64"))]
     {
-        // Use NEON for vectors >= 16 elements (NEON always available on aarch64)
-        if a.len() >= 16 {
+        // Use NEON for vectors >= 8 elements (1 unrolled iteration worth)
+        if a.len() >= 8 {
             return unsafe { simd_neon::dot_distance_neon(a, b) };
         }
     }

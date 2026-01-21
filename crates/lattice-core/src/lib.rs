@@ -16,11 +16,14 @@
 #[cfg(all(target_arch = "wasm32", test))]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+pub mod cypher;
 pub mod engine;
 pub mod error;
 pub mod graph;
 pub mod index;
+pub mod parallel;
 pub mod storage;
+pub mod sync;
 pub mod transport;
 pub mod types;
 
@@ -34,3 +37,4 @@ pub use transport::{LatticeRequest, LatticeResponse, LatticeTransport};
 pub use types::collection::{CollectionConfig, Distance, HnswConfig, VectorConfig};
 pub use types::point::{Edge, Point, PointId, Vector};
 pub use types::query::{ScrollQuery, ScrollResult, SearchQuery, SearchResult};
+pub use types::value::CypherValue;

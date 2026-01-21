@@ -248,6 +248,11 @@ def run_benchmark(client: QdrantClient, name: str, points: List[PointStruct]) ->
     results.append(result)
     print_result(result)
 
+    # Wait for async indexing to complete (LatticeDB indexes in background)
+    if "LatticeDB" in name:
+        print("  Waiting for async indexing to complete...")
+        time.sleep(4)
+
     # Search
     result = benchmark_search(client, NUM_QUERIES, name)
     results.append(result)

@@ -4,6 +4,7 @@ members = [
     "crates/lattice-core",
     "crates/lattice-storage",
     "crates/lattice-server",
+    "crates/lattice-bench",
 ]
 
 [workspace.package]
@@ -25,6 +26,13 @@ async-trait = "0.1"
 
 # Collections
 smallvec = { version = "1.13", features = ["serde"] }
+
+# Parsing (WASM-compatible)
+pest = "2.7"
+pest_derive = "2.7"
+
+# String optimization (WASM-compatible)
+compact_str = { version = "0.8", features = ["serde", "rkyv"] }
 
 # Error handling
 thiserror = "2.0"

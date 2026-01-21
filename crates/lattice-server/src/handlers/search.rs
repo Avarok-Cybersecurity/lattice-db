@@ -1,16 +1,20 @@
 //! Search handlers
 //!
-//! Handles search, scroll, and graph traversal operations.
+//! Handles search, scroll, graph traversal, and Cypher query operations.
 
 use crate::dto::{
-    ApiResponse, BatchSearchRequest, EdgeRecord, PointRecord, QueryResponse, ScoredPoint,
-    ScrollRequest, ScrollResult, SearchRequest, TraversalResult, TraverseRequest,
+    ApiResponse, BatchSearchRequest, CypherQueryRequest, CypherQueryResponse, CypherQueryStats,
+    EdgeRecord, PointRecord, QueryResponse, ScoredPoint, ScrollRequest, ScrollResult,
+    SearchRequest, TraversalResult, TraverseRequest,
 };
 #[cfg(feature = "openapi")]
 use crate::dto::{
-    ApiResponseScrollResult, ApiResponseTraversalResult, ApiResponseVecScoredPoint,
+    ApiResponseCypherQueryResponse, ApiResponseScrollResult, ApiResponseTraversalResult,
+    ApiResponseVecScoredPoint,
 };
 use crate::router::{json_response, AppState};
+use lattice_core::cypher::{CypherHandler, DefaultCypherHandler};
+use lattice_core::CypherValue;
 use lattice_core::{LatticeResponse, ScrollQuery, SearchQuery};
 use std::collections::HashMap;
 
@@ -348,6 +352,183 @@ pub fn traverse_graph(
         }
         Err(e) => LatticeResponse::bad_request(&format!("Traversal failed: {}", e)),
     }
+}
+
+/// Execute a Cypher query (LatticeDB extension)
+#[cfg_attr(feature = "openapi", utoipa::path(
+    post,
+    path = "/collections/{collection_name}/graph/query",
+    tag = "Graph",
+    params(
+        ("collection_name" = String, Path, description = "Collection name")
+    ),
+    request_body = CypherQueryRequest,
+    responses(
+        (status = 200, description = "Query results", body = ApiResponseCypherQueryResponse),
+        (status = 400, description = "Invalid query"),
+        (status = 404, description = "Collection not found")
+    )
+))]
+pub fn cypher_query(
+    state: &AppState,
+    collection_name: &str,
+    request: CypherQueryRequest,
+) -> LatticeResponse {
+    let mut collections = state.collections.write().unwrap();
+
+    let engine = match collections.get_mut(collection_name) {
+        Some(e) => e,
+        None => {
+            return LatticeResponse::not_found(&format!(
+                "Collection '{}' not found",
+                collection_name
+            ))
+        }
+    };
+
+    // Create the Cypher handler
+    let handler = DefaultCypherHandler::new();
+
+    // Convert JSON parameters to CypherValue
+    let parameters: HashMap<String, CypherValue> = request
+        .parameters
+        .into_iter()
+        .map(|(k, v)| (k, json_to_cypher_value(v)))
+        .collect();
+
+    // Record start time
+    let start = std::time::Instant::now();
+
+    // Execute the query
+    match handler.query(&request.query, engine, parameters) {
+        Ok(result) => {
+            let execution_time_ms = start.elapsed().as_millis() as u64;
+
+            // Convert CypherValue rows to JSON
+            let rows: Vec<Vec<serde_json::Value>> = result
+                .rows
+                .into_iter()
+                .map(|row| row.into_iter().map(cypher_value_to_json).collect())
+                .collect();
+
+            let response = CypherQueryResponse {
+                columns: result.columns,
+                rows,
+                stats: CypherQueryStats {
+                    nodes_created: result.stats.nodes_created as u64,
+                    relationships_created: result.stats.relationships_created as u64,
+                    nodes_deleted: result.stats.nodes_deleted as u64,
+                    relationships_deleted: result.stats.relationships_deleted as u64,
+                    properties_set: result.stats.properties_set as u64,
+                    execution_time_ms,
+                },
+            };
+
+            json_response(&ApiResponse::ok(response))
+        }
+        Err(e) => LatticeResponse::bad_request(&format!("Cypher query failed: {}", e)),
+    }
+}
+
+/// Convert JSON value to CypherValue
+fn json_to_cypher_value(value: serde_json::Value) -> CypherValue {
+    match value {
+        serde_json::Value::Null => CypherValue::Null,
+        serde_json::Value::Bool(b) => CypherValue::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                CypherValue::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                CypherValue::Float(f)
+            } else {
+                CypherValue::Null
+            }
+        }
+        serde_json::Value::String(s) => CypherValue::String(s.into()),
+        serde_json::Value::Array(arr) => {
+            CypherValue::List(arr.into_iter().map(json_to_cypher_value).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            CypherValue::Map(obj.into_iter().map(|(k, v)| (k.into(), json_to_cypher_value(v))).collect())
+        }
+    }
+}
+
+/// Convert CypherValue to JSON value
+fn cypher_value_to_json(value: CypherValue) -> serde_json::Value {
+    match value {
+        CypherValue::Null => serde_json::Value::Null,
+        CypherValue::Bool(b) => serde_json::Value::Bool(b),
+        CypherValue::Int(i) => serde_json::Value::Number(i.into()),
+        CypherValue::Float(f) => serde_json::json!(f),
+        CypherValue::String(s) => serde_json::Value::String(s.to_string()),
+        CypherValue::Bytes(bytes) => {
+            // Encode as base64 string
+            serde_json::Value::String(base64_encode(&bytes))
+        }
+        CypherValue::Date { year, month, day } => {
+            serde_json::json!({ "year": year, "month": month, "day": day })
+        }
+        CypherValue::Time { hour, minute, second, nanos } => {
+            serde_json::json!({ "hour": hour, "minute": minute, "second": second, "nanos": nanos })
+        }
+        CypherValue::DateTime { date, time } => {
+            serde_json::json!({ "date": cypher_value_to_json(*date), "time": cypher_value_to_json(*time) })
+        }
+        CypherValue::Duration { months, days, nanos } => {
+            serde_json::json!({ "months": months, "days": days, "nanos": nanos })
+        }
+        CypherValue::Point2D { x, y, srid } => {
+            serde_json::json!({ "x": x, "y": y, "srid": srid })
+        }
+        CypherValue::Point3D { x, y, z, srid } => {
+            serde_json::json!({ "x": x, "y": y, "z": z, "srid": srid })
+        }
+        CypherValue::List(items) => {
+            serde_json::Value::Array(items.into_iter().map(cypher_value_to_json).collect())
+        }
+        CypherValue::Map(entries) => {
+            let obj: serde_json::Map<String, serde_json::Value> = entries
+                .into_iter()
+                .map(|(k, v): (String, CypherValue)| (k, cypher_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        CypherValue::NodeRef(id) => serde_json::json!({ "_node_id": id }),
+        CypherValue::RelationshipRef(id) => serde_json::json!({ "_relationship_id": id }),
+        CypherValue::Path(ids) => {
+            serde_json::json!({ "_path": ids.into_iter().collect::<Vec<_>>() })
+        }
+    }
+}
+
+/// Simple base64 encoding for bytes
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as usize;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
+
+        result.push(ALPHABET[b0 >> 2] as char);
+        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
+
+        if chunk.len() > 1 {
+            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
+        } else {
+            result.push('=');
+        }
+
+        if chunk.len() > 2 {
+            result.push(ALPHABET[b2 & 0x3f] as char);
+        } else {
+            result.push('=');
+        }
+    }
+
+    result
 }
 
 /// Convert serde_json::Value to HashMap

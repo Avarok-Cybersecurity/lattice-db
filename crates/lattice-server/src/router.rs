@@ -3,9 +3,9 @@
 //! Maps Qdrant-compatible endpoints to internal handlers.
 
 use crate::dto::{
-    AddEdgeRequest, BatchSearchRequest, CreateCollectionRequest, DeletePointsRequest,
-    GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest, TraverseRequest,
-    UpsertPointsRequest,
+    AddEdgeRequest, BatchSearchRequest, CreateCollectionRequest, CypherQueryRequest,
+    DeletePointsRequest, GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest,
+    TraverseRequest, UpsertPointsRequest,
 };
 use crate::handlers::{collections, points, search};
 use lattice_core::{LatticeRequest, LatticeResponse};
@@ -63,6 +63,7 @@ pub fn new_app_state() -> AppState {
 /// Graph (LatticeDB extensions):
 /// - `POST /collections/{name}/graph/edges` - Add edge
 /// - `POST /collections/{name}/graph/traverse` - Traverse graph
+/// - `POST /collections/{name}/graph/query` - Execute Cypher query
 pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
     let method = request.method.to_uppercase();
     let path = request.path.trim_end_matches('/');
@@ -160,6 +161,14 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
         ("POST", ["collections", name, "graph", "traverse"]) => {
             match parse_body::<TraverseRequest>(&request.body) {
                 Ok(req) => search::traverse_graph(&state, name, req),
+                Err(e) => e,
+            }
+        }
+
+        // POST /collections/{name}/graph/query - Execute Cypher query
+        ("POST", ["collections", name, "graph", "query"]) => {
+            match parse_body::<CypherQueryRequest>(&request.body) {
+                Ok(req) => search::cypher_query(&state, name, req),
                 Err(e) => e,
             }
         }

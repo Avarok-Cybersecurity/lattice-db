@@ -386,6 +386,38 @@ pub struct AddEdgeResult {
     pub status: String,
 }
 
+// === Cypher Query Response (LatticeDB extension) ===
+
+/// Cypher query response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CypherQueryResponse {
+    /// Column names from the RETURN clause
+    pub columns: Vec<String>,
+    /// Result rows (each row contains values for each column)
+    pub rows: Vec<Vec<serde_json::Value>>,
+    /// Query execution statistics
+    pub stats: CypherQueryStats,
+}
+
+/// Cypher query execution statistics
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct CypherQueryStats {
+    /// Number of nodes created
+    pub nodes_created: u64,
+    /// Number of relationships created
+    pub relationships_created: u64,
+    /// Number of nodes deleted
+    pub nodes_deleted: u64,
+    /// Number of relationships deleted
+    pub relationships_deleted: u64,
+    /// Number of properties set
+    pub properties_set: u64,
+    /// Query execution time in milliseconds
+    pub execution_time_ms: u64,
+}
+
 // === List Collections Response ===
 
 /// Single collection description
@@ -526,6 +558,18 @@ pub mod openapi_types {
         pub status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub result: Option<Vec<PointRecord>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub time: Option<f64>,
+    }
+
+    /// API response containing Cypher query result
+    #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+    pub struct ApiResponseCypherQueryResponse {
+        pub status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub result: Option<CypherQueryResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub error: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
