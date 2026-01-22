@@ -158,18 +158,9 @@ export class LatticeDB {
   createCollection(name: string, config: CollectionConfig): void {
     try {
       const result = this.db.createCollection(name, config);
-      // Debug: log what we got back
-      if (typeof result === 'undefined') {
-        throw new Error(`Failed to create collection: ${name} - WASM returned undefined`);
-      }
-      if (result === null) {
-        throw new Error(`Failed to create collection: ${name} - WASM returned null`);
-      }
-      if (typeof result !== 'object') {
-        throw new Error(`Failed to create collection: ${name} - WASM returned ${typeof result}: ${result}`);
-      }
-      if (!result.result && result.result !== true) {
-        throw new Error(`Failed to create collection: ${name} - result.result=${result.result}, error=${result.error}, status=${result.status}`);
+      if (!result || result.status !== 'ok' || result.result !== true) {
+        const errorMsg = result?.error || `status=${result?.status}, result=${result?.result}`;
+        throw new Error(`Failed to create collection: ${name} - ${errorMsg}`);
       }
     } catch (e) {
       if (e instanceof Error) throw e;
@@ -184,6 +175,9 @@ export class LatticeDB {
    */
   listCollections(): string[] {
     const result = this.db.listCollections();
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to list collections: ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -195,6 +189,9 @@ export class LatticeDB {
    */
   getCollection(name: string): CollectionInfo {
     const result = this.db.getCollection(name);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to get collection '${name}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -229,6 +226,9 @@ export class LatticeDB {
    */
   upsert(collection: string, points: Point[]): UpsertResult {
     const result = this.db.upsert(collection, points);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to upsert into '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -252,6 +252,9 @@ export class LatticeDB {
       options?.withPayload ?? true,
       options?.withVector ?? false
     );
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to get points from '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -301,6 +304,9 @@ export class LatticeDB {
   ): SearchResult[] {
     const vectorArray = new Float32Array(vector);
     const result = this.db.search(collection, vectorArray, limit, options);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to search '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -313,6 +319,9 @@ export class LatticeDB {
    */
   scroll(collection: string, options?: ScrollOptions): ScrollResult {
     const result = this.db.scroll(collection, options);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to scroll '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -372,6 +381,9 @@ export class LatticeDB {
     relations?: string[]
   ): TraversalResult {
     const result = this.db.traverse(collection, BigInt(startId), maxDepth, relations);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to traverse '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 
@@ -403,6 +415,9 @@ export class LatticeDB {
     parameters?: Record<string, unknown>
   ): CypherResult {
     const result = this.db.query(collection, cypher, parameters);
+    if (result.status !== 'ok' || result.result === undefined) {
+      throw new Error(`Failed to execute query on '${collection}': ${result.error || 'unknown error'}`);
+    }
     return result.result;
   }
 }

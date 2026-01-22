@@ -142,11 +142,12 @@ describe('Type exports', () => {
 
   it('should have correct type structure for ApiResponse', async () => {
     const _response: import('../types.js').ApiResponse<string[]> = {
-      time: 0.001,
       status: 'ok',
       result: ['a', 'b'],
+      time: 0.001,
     };
     expect(_response.result).toHaveLength(2);
+    expect(_response.status).toBe('ok');
   });
 });
 

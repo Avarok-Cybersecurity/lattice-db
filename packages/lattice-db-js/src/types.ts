@@ -203,13 +203,15 @@ export interface CollectionInfo {
 }
 
 /**
- * API response wrapper
+ * API response wrapper (matches Rust ApiResponse)
  */
 export interface ApiResponse<T> {
-  /** Response time in seconds */
-  time: number;
-  /** Response status */
+  /** Response status: "ok" or "error" */
   status: string;
-  /** Result data */
-  result: T;
+  /** Result data (present on success) */
+  result?: T;
+  /** Error message (present on failure) */
+  error?: string;
+  /** Response time in seconds */
+  time?: number;
 }
