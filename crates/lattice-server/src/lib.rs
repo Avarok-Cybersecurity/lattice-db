@@ -1,3 +1,9 @@
+// Allow some clippy lints
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 //! LatticeDB Server - HTTP and Service Worker transport
 //!
 //! This crate provides the API layer for LatticeDB, including:

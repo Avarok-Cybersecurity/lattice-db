@@ -25,20 +25,20 @@ struct ApiResponse<T> {
 }
 
 #[derive(Deserialize)]
-struct CypherResponse {
-    columns: Vec<String>,
-    rows: Vec<Vec<serde_json::Value>>,
-    stats: CypherStats,
+pub struct CypherResponse {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub stats: CypherStats,
 }
 
 #[derive(Deserialize)]
-struct CypherStats {
-    nodes_created: u64,
-    relationships_created: u64,
-    nodes_deleted: u64,
-    relationships_deleted: u64,
-    properties_set: u64,
-    execution_time_ms: u64,
+pub struct CypherStats {
+    pub nodes_created: u64,
+    pub relationships_created: u64,
+    pub nodes_deleted: u64,
+    pub relationships_deleted: u64,
+    pub properties_set: u64,
+    pub execution_time_ms: u64,
 }
 
 /// Collection creation request

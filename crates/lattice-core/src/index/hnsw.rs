@@ -780,7 +780,6 @@ impl HnswIndex {
 
     /// Calculate distance between query and stored vector
     #[inline]
-    #[inline]
     fn calc_distance(&self, query: &[f32], id: PointId) -> f32 {
         match self.vectors.get_idx(id) {
             Some(idx) => {

@@ -262,6 +262,7 @@ impl CollectionEngine {
     }
 
     /// Extract labels from a point's _labels payload and add to label index
+    #[allow(dead_code)]
     fn add_point_labels_to_index(
         point: &Point,
         label_idx: &mut HashMap<String, FxHashSet<PointId>>,

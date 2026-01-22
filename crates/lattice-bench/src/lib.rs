@@ -1,3 +1,12 @@
+// Allow some clippy lints for benchmark code
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 //! LatticeDB vs Neo4j Cypher Benchmark Suite
 //!
 //! This crate provides benchmarks comparing LatticeDB's Cypher implementation

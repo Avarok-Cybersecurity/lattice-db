@@ -200,7 +200,6 @@ impl CypherParser {
     fn parse_relationship_pattern(&self, pair: Pair<Rule>) -> CypherResult<RelPattern> {
         let mut variable = None;
         let mut rel_types = Vec::new();
-        let mut direction = Direction::Both;
         let mut properties = None;
         let mut length = None;
 
@@ -242,7 +241,7 @@ impl CypherParser {
             }
         }
 
-        direction = match (has_left_arrow, has_right_arrow) {
+        let direction = match (has_left_arrow, has_right_arrow) {
             (true, false) => Direction::Incoming,
             (false, true) => Direction::Outgoing,
             _ => Direction::Both,
@@ -989,7 +988,7 @@ impl CypherParser {
         let mut when_clauses = Vec::new();
         let mut else_clause = None;
 
-        let mut current_when: Option<Expr> = None;
+        let current_when: Option<Expr> = None;
 
         for inner in pair.into_inner() {
             match inner.as_rule() {
@@ -1073,7 +1072,7 @@ impl CypherParser {
                             }
                             Rule::identifier => {
                                 // First identifier in a property
-                                let key = String::from(entry.as_str());
+                                let _key = String::from(entry.as_str());
                                 // Look for the next sibling (value)
                                 // This branch handles direct identifier tokens
                             }

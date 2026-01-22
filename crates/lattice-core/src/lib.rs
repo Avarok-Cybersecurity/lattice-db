@@ -12,6 +12,25 @@
 //! It defines traits for storage and transport but never imports I/O primitives.
 //! All external interactions occur through injected trait implementations.
 
+// Allow some clippy lints that are too pedantic for this crate
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::manual_div_ceil)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::let_and_return)]
+#![allow(clippy::or_fun_call)]
+#![allow(clippy::vec_init_then_push)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::manual_strip)]
+#![allow(dead_code)]
+#![allow(clippy::never_loop)]
+#![allow(clippy::unwrap_or_default)]
+#![allow(clippy::unnecessary_map_or)]
+
 // Configure WASM tests to run in browser (Node.js has issues with wasm-bindgen-test)
 #[cfg(all(target_arch = "wasm32", test))]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

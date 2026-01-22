@@ -1656,6 +1656,7 @@ impl QueryExecutor {
     }
 
     /// Check if a point has a specific label
+    #[allow(dead_code)]
     fn point_has_label(&self, point: &Point, label: &str) -> bool {
         if let Some(labels_bytes) = point.payload.get("_labels") {
             if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
