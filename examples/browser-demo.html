@@ -30,12 +30,12 @@
     <div id="output"></div>
 
     <h2>How It Works</h2>
-    <pre><code>// Import from GitHub releases (or use npm: import { LatticeDB } from 'lattice-db')
+    <pre><code>// Import from GitHub Pages CDN (or use npm: import { LatticeDB } from 'lattice-db')
 import init, { LatticeDB } from
-    'https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db.min.js';
+    'https://avarok-cybersecurity.github.io/lattice-db/js/lattice-db.min.js';
 
 // Initialize WASM (downloads ~500KB)
-await init('https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice_server_bg.wasm');
+await init('https://avarok-cybersecurity.github.io/lattice-db/js/lattice_server_bg.wasm');
 
 const db = new LatticeDB();
 
@@ -53,21 +53,21 @@ db.upsert('docs', [
 const results = db.search('docs', queryVector, 5);</code></pre>
 
     <script type="module">
-        // GitHub release URL pattern
-        const RELEASE_BASE = 'https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download';
+        // GitHub Pages CDN URL (serves files with proper CORS headers)
+        const CDN_BASE = 'https://avarok-cybersecurity.github.io/lattice-db/js';
 
         window.runDemo = async function() {
             const output = document.getElementById('output');
-            output.innerHTML = '<div class="output">Loading WASM module from GitHub releases...</div>';
+            output.innerHTML = '<div class="output">Loading WASM module from GitHub Pages CDN...</div>';
 
             try {
-                // Dynamic import from GitHub releases
-                const module = await import(`${RELEASE_BASE}/lattice-db.min.js`);
+                // Dynamic import from GitHub Pages (proper CORS support)
+                const module = await import(`${CDN_BASE}/lattice-db.min.js`);
                 const init = module.default;
                 const LatticeDB = module.LatticeDB;
 
                 output.innerHTML += '<div class="output">Initializing database...</div>';
-                await init(`${RELEASE_BASE}/lattice_server_bg.wasm`);
+                await init(`${CDN_BASE}/lattice_server_bg.wasm`);
 
                 const db = new LatticeDB();
 

@@ -19,14 +19,14 @@ open browser-demo.html  # macOS
 
 ## Using from CDN
 
-Import directly from GitHub releases:
+Import directly from GitHub Pages:
 
 ```html
 <script type="module">
-    const RELEASE = 'https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download';
+    const CDN = 'https://avarok-cybersecurity.github.io/lattice-db/js';
 
-    const { default: init, LatticeDB } = await import(`${RELEASE}/lattice-db.min.js`);
-    await init(`${RELEASE}/lattice_server_bg.wasm`);
+    const { default: init, LatticeDB } = await import(`${CDN}/lattice-db.min.js`);
+    await init(`${CDN}/lattice_server_bg.wasm`);
 
     const db = new LatticeDB();
 
