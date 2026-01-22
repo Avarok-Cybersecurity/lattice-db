@@ -19,7 +19,7 @@ use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, S
 use rkyv::rancor::Error as RkyvError;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::Bound;
 
 // Native-only imports for async indexing
@@ -206,13 +206,25 @@ impl CollectionEngine {
             }
         }
 
+        // Pre-parse labels BEFORE acquiring locks (JSON parsing is expensive)
+        let points_with_labels: Vec<(Point, Option<Vec<String>>)> = points
+            .into_iter()
+            .map(|point| {
+                let labels = point
+                    .payload
+                    .get("_labels")
+                    .and_then(|bytes| serde_json::from_slice::<Vec<String>>(bytes).ok());
+                (point, labels)
+            })
+            .collect();
+
         // Store points immediately and queue for background indexing
         {
             let mut pts = self.points.write().unwrap();
             let mut pending = self.pending_index.write().unwrap();
             let mut label_idx = self.label_index.write().unwrap();
 
-            for point in points {
+            for (point, labels) in points_with_labels {
                 let is_update = pts.contains_key(&point.id);
 
                 if is_update {
@@ -227,8 +239,15 @@ impl CollectionEngine {
                     inserted += 1;
                 }
 
-                // Update label index with new labels
-                Self::add_point_labels_to_index(&point, &mut label_idx);
+                // Update label index with pre-parsed labels (no JSON parsing here)
+                if let Some(labels) = labels {
+                    for label in labels {
+                        label_idx
+                            .entry(label)
+                            .or_insert_with(FxHashSet::default)
+                            .insert(point.id);
+                    }
+                }
 
                 // Store point
                 pts.insert(point.id, point.clone());
@@ -781,11 +800,13 @@ impl CollectionEngine {
 
         let mut visited: HashMap<PointId, usize> = HashMap::new(); // id -> depth
         let mut paths: Vec<TraversalPath> = Vec::new();
-        let mut queue: Vec<(PointId, usize, Vec<PointId>)> = vec![(start_id, 0, vec![start_id])];
+        // Use VecDeque for proper BFS traversal (pop_front instead of pop)
+        let mut queue: VecDeque<(PointId, usize, Vec<PointId>)> =
+            VecDeque::from([(start_id, 0, vec![start_id])]);
 
         visited.insert(start_id, 0);
 
-        while let Some((current_id, depth, path)) = queue.pop() {
+        while let Some((current_id, depth, path)) = queue.pop_front() {
             if depth >= max_depth {
                 continue;
             }
@@ -803,10 +824,15 @@ impl CollectionEngine {
                         let target_id = edge.target_id;
                         let new_depth = depth + 1;
 
-                        // Only visit if not visited or found at shorter depth
-                        if !visited.contains_key(&target_id) || visited[&target_id] > new_depth {
+                        // Single lookup: only visit if not visited or found at shorter depth
+                        let should_visit = visited
+                            .get(&target_id)
+                            .map_or(true, |&prev_depth| prev_depth > new_depth);
+
+                        if should_visit {
                             visited.insert(target_id, new_depth);
 
+                            // Build path once, clone only for TraversalPath storage
                             let mut new_path = path.clone();
                             new_path.push(target_id);
 
@@ -817,7 +843,7 @@ impl CollectionEngine {
                                 weight: edge.weight,
                             });
 
-                            queue.push((target_id, new_depth, new_path));
+                            queue.push_back((target_id, new_depth, new_path));
                         }
                     }
                 }
@@ -1420,11 +1446,13 @@ impl CollectionEngine {
 
         let mut visited: HashMap<PointId, usize> = HashMap::new(); // id -> depth
         let mut paths: Vec<TraversalPath> = Vec::new();
-        let mut queue: Vec<(PointId, usize, Vec<PointId>)> = vec![(start_id, 0, vec![start_id])];
+        // Use VecDeque for proper BFS traversal (pop_front instead of pop)
+        let mut queue: VecDeque<(PointId, usize, Vec<PointId>)> =
+            VecDeque::from([(start_id, 0, vec![start_id])]);
 
         visited.insert(start_id, 0);
 
-        while let Some((current_id, depth, path)) = queue.pop() {
+        while let Some((current_id, depth, path)) = queue.pop_front() {
             if depth >= max_depth {
                 continue;
             }
@@ -1442,10 +1470,15 @@ impl CollectionEngine {
                         let target_id = edge.target_id;
                         let new_depth = depth + 1;
 
-                        // Only visit if not visited or found at shorter depth
-                        if !visited.contains_key(&target_id) || visited[&target_id] > new_depth {
+                        // Single lookup: only visit if not visited or found at shorter depth
+                        let should_visit = visited
+                            .get(&target_id)
+                            .map_or(true, |&prev_depth| prev_depth > new_depth);
+
+                        if should_visit {
                             visited.insert(target_id, new_depth);
 
+                            // Build path once, clone only for TraversalPath storage
                             let mut new_path = path.clone();
                             new_path.push(target_id);
 
@@ -1456,7 +1489,7 @@ impl CollectionEngine {
                                 weight: edge.weight,
                             });
 
-                            queue.push((target_id, new_depth, new_path));
+                            queue.push_back((target_id, new_depth, new_path));
                         }
                     }
                 }
