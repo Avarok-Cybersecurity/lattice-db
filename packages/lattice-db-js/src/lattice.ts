@@ -156,9 +156,24 @@ export class LatticeDB {
    * ```
    */
   createCollection(name: string, config: CollectionConfig): void {
-    const result = this.db.createCollection(name, config);
-    if (!result.result) {
-      throw new Error(`Failed to create collection: ${name}`);
+    try {
+      const result = this.db.createCollection(name, config);
+      // Debug: log what we got back
+      if (typeof result === 'undefined') {
+        throw new Error(`Failed to create collection: ${name} - WASM returned undefined`);
+      }
+      if (result === null) {
+        throw new Error(`Failed to create collection: ${name} - WASM returned null`);
+      }
+      if (typeof result !== 'object') {
+        throw new Error(`Failed to create collection: ${name} - WASM returned ${typeof result}: ${result}`);
+      }
+      if (!result.result && result.result !== true) {
+        throw new Error(`Failed to create collection: ${name} - result.result=${result.result}, error=${result.error}, status=${result.status}`);
+      }
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error(`Failed to create collection: ${name} - ${String(e)}`);
     }
   }
 

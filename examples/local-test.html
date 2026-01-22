@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>LatticeDB Local Test</title>
+</head>
+<body>
+    <h1>LatticeDB Local Test</h1>
+    <button onclick="runTest()">Run Test</button>
+    <pre id="output"></pre>
+
+    <script type="module">
+        window.runTest = async function() {
+            const output = document.getElementById('output');
+            output.textContent = 'Loading...\n';
+
+            try {
+                // Import from local files
+                const { LatticeDB } = await import('../packages/lattice-db-js/dist/lattice-db.esm.js');
+                output.textContent += 'Module loaded\n';
+
+                // Initialize
+                const db = await LatticeDB.init('../packages/lattice-db-js/wasm/lattice_server_bg.wasm');
+                output.textContent += 'Database initialized\n';
+
+                // Create collection
+                output.textContent += 'Creating collection...\n';
+                db.createCollection('test', {
+                    vectors: { size: 4, distance: 'Cosine' }
+                });
+                output.textContent += 'Collection created!\n';
+
+                // List collections
+                const collections = db.listCollections();
+                output.textContent += 'Collections: ' + JSON.stringify(collections) + '\n';
+
+            } catch (e) {
+                output.textContent += 'Error: ' + e.message + '\n';
+                output.textContent += e.stack + '\n';
+            }
+        };
+    </script>
+</body>
+</html>
