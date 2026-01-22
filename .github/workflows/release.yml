@@ -51,8 +51,8 @@ jobs:
         with:
           path: pages
 
-  build-wasm:
-    name: Build WASM
+  build-wasm-js:
+    name: Build WASM & JS Bundle
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +61,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -72,14 +78,56 @@ jobs:
         run: |
           wasm-pack build crates/lattice-server \
             --target web \
-            --out-dir ../../pkg \
+            --out-dir ../../packages/lattice-db-js/wasm \
             --no-default-features \
             --features wasm
 
-      - name: Package WASM
-        run: tar -czvf lattice-db-wasm-${{ github.ref_name }}.tar.gz -C pkg .
+      - name: Install npm dependencies
+        working-directory: packages/lattice-db-js
+        run: npm install
 
-      - name: Upload artifact
+      - name: Build TypeScript bundle
+        working-directory: packages/lattice-db-js
+        run: |
+          npm run build:types
+          npm run build:esm
+          npm run build:cjs
+          npm run build:minify
+
+      - name: Copy README
+        run: cp README.md packages/lattice-db-js/
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: packages/lattice-db-js
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      # Upload raw JS files for GitHub Release (individual files)
+      - name: Upload JS bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-bundle
+          path: |
+            packages/lattice-db-js/dist/lattice-db.js
+            packages/lattice-db-js/dist/lattice-db.esm.js
+            packages/lattice-db-js/dist/lattice-db.min.js
+            packages/lattice-db-js/wasm/lattice_server_bg.wasm
+
+      # Upload full npm package for publishing
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: packages/lattice-db-js/
+
+      # Also upload tarred WASM for legacy compatibility
+      - name: Package WASM
+        run: tar -czvf lattice-db-wasm-${{ github.ref_name }}.tar.gz -C packages/lattice-db-js/wasm .
+
+      - name: Upload WASM tarball
         uses: actions/upload-artifact@v4
         with:
           name: wasm-package
@@ -151,10 +199,34 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
+  publish-npm:
+    name: Publish to NPM
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-wasm-js
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download npm package
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: package
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        working-directory: package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_JS_TOKEN }}
+
   create-release:
     name: Create Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-docs, build-wasm, build-native]
+    needs: [build-docs, build-wasm-js, build-native]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -162,12 +234,19 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts
+        run: find artifacts -type f
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            artifacts/js-bundle/lattice-db.js
+            artifacts/js-bundle/lattice-db.esm.js
+            artifacts/js-bundle/lattice-db.min.js
+            artifacts/js-bundle/lattice_server_bg.wasm
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}

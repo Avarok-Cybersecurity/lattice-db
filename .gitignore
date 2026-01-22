@@ -45,3 +45,15 @@ venv/
 
 # MCP memory
 .memory.jsonl
+
+# Node.js / npm
+node_modules/
+packages/*/node_modules/
+packages/*/dist/
+packages/*/wasm/
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+
+# Package lock files (generated during CI)
+package-lock.json

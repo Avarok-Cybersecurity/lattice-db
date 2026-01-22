@@ -46,6 +46,9 @@ pub mod axum_transport;
 #[cfg(feature = "wasm")]
 pub mod service_worker;
 
+#[cfg(feature = "wasm")]
+pub mod wasm_bindings;
+
 #[cfg(feature = "openapi")]
 pub mod openapi;
 

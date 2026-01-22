@@ -101,10 +101,13 @@ mod wasm_impl {
 
         /// Persist metadata to file
         async fn persist_meta(&self) -> StorageResult<()> {
-            let meta = self.meta_cache.borrow();
-            let json = serde_json::to_vec(&*meta).map_err(|e| StorageError::Serialization {
-                message: format!("Failed to serialize metadata: {}", e),
-            })?;
+            // Clone the data to avoid holding RefCell borrow across await points
+            let json = {
+                let meta = self.meta_cache.borrow();
+                serde_json::to_vec(&*meta).map_err(|e| StorageError::Serialization {
+                    message: format!("Failed to serialize metadata: {}", e),
+                })?
+            };
 
             // Write to meta file
             let writable = get_writable_stream(&self.meta_handle).await?;

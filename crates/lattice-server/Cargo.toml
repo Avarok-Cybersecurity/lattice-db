@@ -30,6 +30,8 @@ utoipa-swagger-ui = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
+serde-wasm-bindgen = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
 
 [dependencies.web-sys]
 workspace = true
@@ -57,7 +59,7 @@ getrandom.workspace = true
 [features]
 default = ["native"]
 native = ["axum", "tokio", "lattice-storage/native", "lattice-core/simd"]
-wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "lattice-storage/wasm"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "console_error_panic_hook", "lattice-storage/wasm"]
 openapi = ["native", "utoipa", "utoipa-swagger-ui"]
 simd = ["lattice-core/simd"]
 mmap = ["lattice-core/mmap"]

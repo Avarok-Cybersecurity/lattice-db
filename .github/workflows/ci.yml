@@ -77,6 +77,44 @@ jobs:
       - name: Run WASM tests
         run: wasm-pack test --headless --chrome crates/lattice-core
 
+  test-js:
+    name: Test (JavaScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          wasm-pack build crates/lattice-server \
+            --target web \
+            --out-dir ../../packages/lattice-db-js/wasm \
+            --no-default-features \
+            --features wasm
+
+      - name: Install dependencies
+        working-directory: packages/lattice-db-js
+        run: npm install
+
+      - name: Run TypeScript tests
+        working-directory: packages/lattice-db-js
+        run: npm test
+
   build-check:
     name: Build Check
     runs-on: ubuntu-latest
@@ -94,8 +132,11 @@ jobs:
       - name: Check workspace
         run: cargo check --workspace
 
-      - name: Check WASM target
+      - name: Check WASM target (core)
         run: cargo check -p lattice-core --target wasm32-unknown-unknown
+
+      - name: Check WASM target (server)
+        run: cargo check -p lattice-server --target wasm32-unknown-unknown --no-default-features --features wasm
 
   doc:
     name: Documentation
