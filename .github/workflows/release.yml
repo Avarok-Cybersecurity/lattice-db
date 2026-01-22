@@ -81,6 +81,7 @@ jobs:
             packages/lattice-db-js/dist/lattice-db.js
             packages/lattice-db-js/dist/lattice-db.esm.js
             packages/lattice-db-js/dist/lattice-db.min.js
+            packages/lattice-db-js/wasm/lattice_server.js
             packages/lattice-db-js/wasm/lattice_server_bg.wasm
 
       # Upload full npm package for publishing
@@ -130,12 +131,14 @@ jobs:
 
       - name: Prepare pages
         run: |
-          mkdir -p pages/js
+          mkdir -p pages/js pages/wasm
           cp -r target/doc pages/api
           cp -r target/book pages/book
           # Copy JS bundle to pages for CDN-style access
+          # Structure: /js/lattice-db.min.js imports ../wasm/lattice_server.js
           cp js-bundle/dist/*.js pages/js/
-          cp js-bundle/wasm/*.wasm pages/js/
+          cp js-bundle/wasm/lattice_server.js pages/wasm/
+          cp js-bundle/wasm/lattice_server_bg.wasm pages/wasm/
           echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url=book/"></head></html>' > pages/index.html
 
       - name: Upload pages artifact
