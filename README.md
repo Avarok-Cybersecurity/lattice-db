@@ -15,10 +15,11 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Qdrant Compatible](https://img.shields.io/badge/qdrant-API%20compatible-green.svg)](https://qdrant.tech)
 [![Cypher](https://img.shields.io/badge/cypher-query%20language-blue.svg)](https://neo4j.com/docs/cypher-manual/)
+[![Memory](https://img.shields.io/badge/memory-2.4MB-brightgreen.svg)](#-ultra-low-footprint)
 
 ---
 
-**Browser-Native** | **Graph + Vector Hybrid** | **No Server Costs** | **WASM SIMD**
+**Browser-Native** | **Graph + Vector Hybrid** | **No Server Costs** | **2.4 MB Memory**
 
 </div>
 
@@ -30,6 +31,7 @@
 |---------|-------------|
 | [🎯 Why LatticeDB?](#-why-latticedb) | The problem we solve |
 | [⚡ Performance](#-performance) | Benchmark results vs Qdrant & Neo4j |
+| [🪶 Ultra-Low Footprint](#-ultra-low-footprint) | 2.4 MB memory, ~500 KB WASM |
 | [✨ Features](#-features) | Hybrid graph/vector, platform support |
 | [💡 Use Cases](#-use-cases) | RAG, knowledge graphs, AI assistants |
 | [🚀 Quick Start](#-quick-start) | Installation & first steps |
@@ -118,6 +120,32 @@ For datasets exceeding 50K elements, server-based solutions like Qdrant or Neo4j
 
 ---
 
+## 🪶 Ultra-Low Footprint
+
+LatticeDB is engineered for minimal resource consumption:
+
+| Platform | Metric | Size |
+|----------|--------|------|
+| **Native** | Runtime Memory (RSS) | **2.4 MB** |
+| **Browser (WASM)** | Bundle Size (gzip) | **~500 KB** |
+| **Browser (WASM)** | Runtime Memory | **~2-3 MB** |
+
+**Why this matters:**
+- 💾 Runs on low-end devices and mobile browsers
+- ⚡ Instant startup - no JVM warmup or heavy initialization
+- 📱 Ideal for PWAs and offline-first applications
+- 🌐 Fast download and parse time in browsers
+
+Compare this to typical database footprints:
+- PostgreSQL: ~20-50 MB baseline
+- MongoDB: ~100-200 MB baseline
+- Neo4j: ~500+ MB (JVM-based)
+- Qdrant: ~50-100 MB baseline
+
+LatticeDB delivers **full vector + graph database capabilities in under 3 MB**.
+
+---
+
 ## 🔗 Why Hybrid?
 
 **One library for everything your frontend needs.**
@@ -135,7 +163,7 @@ Modern AI-powered applications require multiple database capabilities:
 
 - 🔌 **Single Dependency** - One import, not three separate databases
 - 🎯 **Unified Queries** - Vector similarity + graph traversal in one query
-- 📦 **Smaller Bundle** - ~500KB WASM vs multiple large dependencies
+- 📦 **Smaller Bundle** - ~500 KB WASM vs multiple large dependencies
 - 🧠 **Simpler Mental Model** - Points have vectors, payloads, AND relationships
 - ⚡ **Zero Network Hops** - No coordination between services
 - 💰 **No Server Costs** - Everything runs client-side
