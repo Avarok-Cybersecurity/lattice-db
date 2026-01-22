@@ -24,11 +24,11 @@ use std::ops::Bound;
 
 // Native-only imports for async indexing
 #[cfg(not(target_arch = "wasm32"))]
-use crate::engine::async_indexer::AsyncIndexerHandle;
+use crate::engine::async_indexer::{AsyncIndexerHandle, BackpressureSignal};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 /// Starting page ID for point storage (reserved for Phase 2)
 const PAGE_POINTS_START: u64 = 1_000_000;
@@ -75,6 +75,8 @@ pub struct CollectionEngine {
     indexer: AsyncIndexerHandle,
     /// Label index: label -> set of point IDs (for O(1) label lookups)
     label_index: Arc<RwLock<HashMap<String, FxHashSet<PointId>>>>,
+    /// Signal for backpressure coordination with async indexer
+    backpressure_signal: BackpressureSignal,
     /// Next available page ID for storage (reserved for Phase 2)
     #[allow(dead_code)]
     next_page_id: u64,
@@ -111,13 +113,16 @@ impl CollectionEngine {
         )));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
         let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
-        let label_index = Arc::new(RwLock::new(HashMap::new()));
+        // Pre-allocate for typical number of unique labels in a graph
+        let label_index = Arc::new(RwLock::new(HashMap::with_capacity(64)));
+        let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
 
         // Spawn background indexer
         let indexer = AsyncIndexerHandle::spawn(
             Arc::clone(&index),
             Arc::clone(&points),
             Arc::clone(&pending_index),
+            Arc::clone(&backpressure_signal),
         );
 
         Ok(Self {
@@ -127,6 +132,7 @@ impl CollectionEngine {
             pending_index,
             indexer,
             label_index,
+            backpressure_signal,
             next_page_id: PAGE_POINTS_START,
         })
     }
@@ -186,9 +192,16 @@ impl CollectionEngine {
             let pending = self.pending_index.read().unwrap();
             if pending.len() > PENDING_THRESHOLD {
                 drop(pending); // Release read lock
-                // Wait for indexer to catch up
+
+                // Wait for indexer to catch up using condvar (efficient, no CPU spin)
+                let (lock, cv) = &*self.backpressure_signal;
+                let mut guard = lock.lock().unwrap();
                 while self.pending_index.read().unwrap().len() > PENDING_THRESHOLD / 2 {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    // Wait with timeout to handle edge cases (indexer stopped, etc.)
+                    let result = cv
+                        .wait_timeout(guard, std::time::Duration::from_millis(10))
+                        .unwrap();
+                    guard = result.0;
                 }
             }
         }
@@ -539,8 +552,8 @@ impl CollectionEngine {
             }
         }
 
-        // Extract vectors and params for batch search
-        let query_vectors: Vec<Vec<f32>> = queries.iter().map(|q| q.vector.clone()).collect();
+        // Extract vector references for batch search (avoids cloning 4MB+ for 1000 queries × 512-dim)
+        let query_vectors: Vec<&[f32]> = queries.iter().map(|q| q.vector.as_slice()).collect();
         let first_query = &queries[0];
         let ef = first_query.ef.unwrap_or(self.config.hnsw.ef);
         let limit = first_query.limit;
@@ -959,7 +972,8 @@ impl CollectionEngine {
             config,
             index,
             points: BTreeMap::new(),
-            label_index: HashMap::new(),
+            // Pre-allocate for typical number of unique labels in a graph
+            label_index: HashMap::with_capacity(64),
             next_page_id: PAGE_POINTS_START,
         })
     }

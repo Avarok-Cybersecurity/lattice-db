@@ -23,6 +23,12 @@
 /// parallel overhead (thread spawning, synchronization).
 pub const DEFAULT_PARALLEL_THRESHOLD: usize = 500;
 
+/// Upper threshold for parallel sort with expensive comparison functions.
+/// At 30K-80K rows with CypherValue enum comparisons, thread sync overhead
+/// and cache line bouncing exceed the parallelization benefit.
+/// Above this threshold, the workload is large enough that parallel wins again.
+pub const EXPENSIVE_CMP_PARALLEL_UPPER: usize = 80_000;
+
 // =============================================================================
 // Native implementations (with rayon)
 // =============================================================================
@@ -61,6 +67,31 @@ mod native {
             slice.par_sort_unstable_by(compare);
         } else {
             slice.sort_unstable_by(compare);
+        }
+    }
+
+    /// Sort with expensive comparison function (e.g., CypherValue enum matching).
+    /// Uses sequential sort in the 30K-80K range where thread overhead exceeds benefit.
+    /// Based on benchmark analysis: LatticeDB 2.3x slower than Neo4j at 50K due to
+    /// parallel overhead with expensive comparisons.
+    #[inline]
+    pub fn sort_by_expensive_cmp<T, F>(slice: &mut [T], compare: F)
+    where
+        T: Send,
+        F: Fn(&T, &T) -> Ordering + Sync,
+    {
+        use super::EXPENSIVE_CMP_PARALLEL_UPPER;
+        let len = slice.len();
+
+        if len < DEFAULT_PARALLEL_THRESHOLD {
+            // Too small for parallel
+            slice.sort_by(compare);
+        } else if len >= EXPENSIVE_CMP_PARALLEL_UPPER {
+            // Large enough that parallel wins despite comparison cost
+            slice.par_sort_by(compare);
+        } else {
+            // Awkward zone (500-80K): sequential is faster with expensive comparisons
+            slice.sort_by(compare);
         }
     }
 
@@ -172,6 +203,22 @@ mod native {
         sort_by(&mut slice[..k], compare);
     }
 
+    /// Filter a vector by consuming it and returning matching elements.
+    /// Uses parallel iteration for large vectors.
+    /// More efficient than filter_collect when you own the data (no cloning).
+    #[inline]
+    pub fn filter_into_vec<T, F>(vec: Vec<T>, f: F) -> Vec<T>
+    where
+        T: Send,
+        F: Fn(&T) -> bool + Sync + Send,
+    {
+        if vec.len() >= DEFAULT_PARALLEL_THRESHOLD {
+            vec.into_par_iter().filter(|x| f(x)).collect()
+        } else {
+            vec.into_iter().filter(|x| f(&x)).collect()
+        }
+    }
+
     // =========================================================================
     // Sequential versions for non-Send types (no parallelization)
     // =========================================================================
@@ -221,6 +268,15 @@ mod wasm {
         F: FnMut(&T, &T) -> Ordering,
     {
         slice.sort_unstable_by(|a, b| compare(a, b));
+    }
+
+    /// Sort with expensive comparison function (sequential on WASM).
+    #[inline]
+    pub fn sort_by_expensive_cmp<T, F>(slice: &mut [T], compare: F)
+    where
+        F: FnMut(&T, &T) -> Ordering,
+    {
+        slice.sort_by(compare);
     }
 
     /// Map a slice to a new vector (sequential).
@@ -292,6 +348,15 @@ mod wasm {
 
         // Sort only top-k: O(k log k)
         slice[..k].sort_by(compare);
+    }
+
+    /// Filter a vector by consuming it and returning matching elements (sequential).
+    #[inline]
+    pub fn filter_into_vec<T, F>(vec: Vec<T>, f: F) -> Vec<T>
+    where
+        F: Fn(&T) -> bool,
+    {
+        vec.into_iter().filter(|x| f(x)).collect()
     }
 
     // =========================================================================

@@ -17,7 +17,8 @@ use bumpalo::Bump;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Sort key with inline storage for 1-3 keys (covers 95%+ of ORDER BY clauses)
 /// SmallVec avoids heap allocation for common case, reducing memory pressure
@@ -93,8 +94,9 @@ pub struct ExecutionContext<'a> {
     /// Query parameters
     pub parameters: HashMap<String, CypherValue>,
     /// Cache for point lookups using FxHashMap for faster integer hashing
+    /// Uses Arc<Point> to avoid cloning entire Point structs on cache hit
     /// Uses SyncCell for thread-safe parallel access during sort key extraction
-    point_cache: SyncCell<FxHashMap<u64, Option<Point>>>,
+    point_cache: SyncCell<FxHashMap<u64, Option<Arc<Point>>>>,
     /// Two-level property cache: node_id -> (property_name -> CypherValue)
     /// Uses FxHashMap for O(1) lookups with fast integer hashing
     /// Inner map uses &str lookup to avoid String allocation
@@ -141,12 +143,13 @@ impl<'a> ExecutionContext<'a> {
     }
 
     /// Get a point by ID, using cache if available
-    pub fn get_point_cached(&self, id: u64) -> Option<Point> {
-        // Check cache first
+    /// Returns Arc<Point> to avoid cloning - cheap reference count increment
+    pub fn get_point_cached(&self, id: u64) -> Option<Arc<Point>> {
+        // Check cache first - Arc::clone is cheap (just ref count increment)
         {
             let cache = self.point_cache.borrow();
             if let Some(cached) = cache.get(&id) {
-                return cached.clone();
+                return cached.as_ref().map(Arc::clone);
             }
         }
 
@@ -157,13 +160,14 @@ impl<'a> ExecutionContext<'a> {
         #[cfg(target_arch = "wasm32")]
         let point = self.collection.get_point(id).cloned();
 
-        // Store in cache
+        // Wrap in Arc and store in cache
+        let arc_point = point.map(Arc::new);
         {
             let mut cache = self.point_cache.borrow_mut();
-            cache.insert(id, point.clone());
+            cache.insert(id, arc_point.clone());
         }
 
-        point
+        arc_point
     }
 
     /// Get a property value by node ID and property name, using cache if available
@@ -556,7 +560,7 @@ impl QueryExecutor {
 
         let mut result_rows = Vec::new();
 
-        for row in input_rows {
+        for mut row in input_rows {
             // Get the source node ID from the row
             // Assume the first column is the source node
             if let Some(CypherValue::NodeRef(source_id)) = row.first() {
@@ -574,18 +578,36 @@ impl QueryExecutor {
                         message: e.to_string(),
                     })?;
 
-                for path in traverse_result.paths {
-                    // Filter by min_hops
-                    if path.depth < min_hops as usize {
-                        continue;
+                // Filter paths first to enable last-path optimization
+                let valid_paths: SmallVec<[_; 8]> = traverse_result
+                    .paths
+                    .into_iter()
+                    .filter(|path| path.depth >= min_hops as usize)
+                    .collect();
+
+                // Check direction (simplified - assume outgoing matches)
+                // TODO: Proper direction handling
+
+                // Optimization: fast paths for common cases
+                let paths_len = valid_paths.len();
+                if paths_len == 0 {
+                    continue; // No valid paths, skip this row
+                } else if paths_len == 1 {
+                    // Single path - move row directly (no clone needed)
+                    let path = valid_paths.into_iter().next().unwrap();
+                    Row::push(&mut row, CypherValue::NodeRef(path.target_id));
+                    result_rows.push(row);
+                } else {
+                    // Multiple paths - clone all but last
+                    for (i, path) in valid_paths.into_iter().enumerate() {
+                        let mut new_row = if i == paths_len - 1 {
+                            Row::take(&mut row) // Move last one (avoids clone)
+                        } else {
+                            row.clone()
+                        };
+                        Row::push(&mut new_row, CypherValue::NodeRef(path.target_id));
+                        result_rows.push(new_row);
                     }
-
-                    // Check direction (simplified - assume outgoing matches)
-                    // TODO: Proper direction handling
-
-                    let mut new_row = row.clone();
-                    Row::push(&mut new_row, CypherValue::NodeRef(path.target_id));
-                    result_rows.push(new_row);
                 }
             }
         }
@@ -594,6 +616,11 @@ impl QueryExecutor {
     }
 
     /// Execute Filter operation
+    ///
+    /// Note: Parallelization opportunity exists here (parallel::filter_into_vec)
+    /// but requires ExecutionContext to be Sync. Currently blocked by
+    /// `collection: &'a mut CollectionEngine` field. Future work could split
+    /// ctx into mutable/immutable parts for parallel predicate evaluation.
     fn execute_filter(
         &self,
         input: &LogicalOp,
@@ -602,11 +629,10 @@ impl QueryExecutor {
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
-        let mut result_rows = Vec::new();
+        // Pre-allocate assuming ~50% selectivity (reduces reallocations)
+        let mut result_rows = Vec::with_capacity(input_rows.len() / 2);
 
         for row in input_rows {
-            // Evaluate predicate for this row
-            // For now, simplified evaluation
             if self.evaluate_predicate(predicate, &row, ctx)? {
                 result_rows.push(row);
             }
@@ -727,21 +753,23 @@ impl QueryExecutor {
                     compare(keys_a, keys_b)
                 });
                 keyed_indices.truncate(k);
-                // Sort just the first k elements (parallel on native via Arc<str>)
-                parallel::sort_by(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
+                // Sort just the first k elements
+                // Use expensive_cmp variant: CypherValue comparison has enum overhead
+                parallel::sort_by_expensive_cmp(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
                     compare(keys_a, keys_b)
                 });
             } else if k == 0 {
                 return Ok((Vec::new(), stats));
             } else {
-                // k >= keyed_indices.len(), full sort needed (parallel on native)
-                parallel::sort_by(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
+                // k >= keyed_indices.len(), full sort needed
+                parallel::sort_by_expensive_cmp(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
                     compare(keys_a, keys_b)
                 });
             }
         } else {
-            // No limit: full sort O(n log n) (parallel on native via Arc<str>)
-            parallel::sort_by(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
+            // No limit: full sort O(n log n)
+            // Use expensive_cmp: skips parallel in 30K-80K range where overhead > benefit
+            parallel::sort_by_expensive_cmp(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
                 compare(keys_a, keys_b)
             });
         }
@@ -866,8 +894,9 @@ impl QueryExecutor {
             return None;
         }
 
-        // Need sufficient rows to benefit
-        const I64_THRESHOLD: usize = 200;
+        // Lower threshold: i64 fast-path is always better than CypherValue comparison
+        // Even at 50 rows, avoiding enum overhead is worth it
+        const I64_THRESHOLD: usize = 50;
         if input_rows.len() < I64_THRESHOLD {
             return None;
         }
@@ -948,20 +977,21 @@ impl QueryExecutor {
         None
     }
 
-    /// Optimized sort for single i64 key using unstable parallel sort.
-    /// Uses Arc<str> on native for Send, enabling parallel sorting.
+    /// Optimized sort for single i64 key using unstable sort.
+    /// The i64 comparison itself is cheap; this path avoids the generic CypherValue
+    /// comparison path which has more overhead per comparison.
     #[inline]
     fn sort_i64_simd(&self, keyed_indices: &mut [(SortKey, usize)], ascending: bool) {
-        // Extract i64 values for efficient comparison
-        // Parallel on native because CypherValue uses Arc<str> (Send)
+        // Direct comparison with inline .as_int() extraction
+        // Cheaper than generic CypherValue comparison path
         if ascending {
-            parallel::sort_unstable_by(keyed_indices, |(a, _), (b, _)| {
+            keyed_indices.sort_unstable_by(|(a, _), (b, _)| {
                 let val_a = a.first().and_then(|v| v.as_int()).unwrap_or(i64::MAX);
                 let val_b = b.first().and_then(|v| v.as_int()).unwrap_or(i64::MAX);
                 val_a.cmp(&val_b)
             });
         } else {
-            parallel::sort_unstable_by(keyed_indices, |(a, _), (b, _)| {
+            keyed_indices.sort_unstable_by(|(a, _), (b, _)| {
                 let val_a = a.first().and_then(|v| v.as_int()).unwrap_or(i64::MIN);
                 let val_b = b.first().and_then(|v| v.as_int()).unwrap_or(i64::MIN);
                 val_b.cmp(&val_a)
@@ -1001,18 +1031,37 @@ impl QueryExecutor {
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
-        // Use HashSet for O(n) deduplication instead of O(n²) Vec::contains
-        let mut seen: HashSet<u64> = HashSet::with_capacity(input_rows.len());
+        // Use HashMap with collision detection to avoid hash collision bugs
+        // Key: hash, Value: indices of rows with that hash
+        let mut seen: HashMap<u64, SmallVec<[usize; 1]>> =
+            HashMap::with_capacity(input_rows.len());
         let mut result_rows = Vec::with_capacity(input_rows.len());
 
-        for row in input_rows {
-            let hash = self.hash_row(&row);
-            if seen.insert(hash) {
-                result_rows.push(row);
+        for (idx, row) in input_rows.iter().enumerate() {
+            let hash = self.hash_row(row);
+            let entry = seen.entry(hash).or_default();
+
+            // Check for collision: verify row is actually different from all rows with same hash
+            let is_duplicate = entry
+                .iter()
+                .any(|&prev_idx| self.rows_equal(&input_rows[prev_idx], row));
+
+            if !is_duplicate {
+                entry.push(idx);
+                result_rows.push(row.clone());
             }
         }
 
         Ok((result_rows, stats))
+    }
+
+    /// Compare two rows for equality
+    #[inline]
+    fn rows_equal(&self, a: &[CypherValue], b: &[CypherValue]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        a.iter().zip(b.iter()).all(|(va, vb)| va == vb)
     }
 
     /// Hash a row for deduplication using FNV-1a algorithm
@@ -1121,7 +1170,8 @@ impl QueryExecutor {
         let id = self.generate_point_id();
 
         // Build payload with labels and properties
-        let mut payload = HashMap::new();
+        // Pre-allocate: 1 for _labels + number of properties
+        let mut payload = HashMap::with_capacity(1 + properties.entries.len());
 
         // Compute label bitmap for O(1) label checks
         let label_bitmap = if !labels.is_empty() {

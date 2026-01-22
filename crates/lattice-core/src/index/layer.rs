@@ -140,15 +140,20 @@ impl LayerManager {
 
     /// Remove a node
     ///
-    /// Also removes it from all neighbor lists using binary search.
+    /// Also removes it from all neighbor lists using swap_remove for O(1) per list.
+    /// Re-sorts affected lists to maintain binary_search invariant.
     pub fn remove_node(&mut self, id: PointId) -> Option<HnswNode> {
         let node = self.nodes.remove(&id)?;
 
-        // Remove from all neighbor lists using binary search
+        // Remove from all neighbor lists using swap_remove (O(1)) + sort
+        // For small M (16-32), this is faster than element-by-element shifting
         for other_node in self.nodes.values_mut() {
             for neighbors in &mut other_node.neighbors {
                 if let Ok(pos) = neighbors.binary_search(&id) {
-                    neighbors.remove(pos);
+                    neighbors.swap_remove(pos); // O(1) instead of O(M) shift
+                    // Re-sort to maintain binary_search invariant
+                    // For nearly-sorted arrays, this is very fast (adaptive algorithm)
+                    neighbors.sort_unstable();
                 }
             }
         }

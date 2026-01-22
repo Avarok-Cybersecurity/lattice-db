@@ -10,8 +10,11 @@ use crate::types::point::{Point, PointId};
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
+
+/// Shared signal for backpressure coordination
+pub type BackpressureSignal = Arc<(Mutex<()>, Condvar)>;
 
 /// Task sent to the background indexer
 #[derive(Debug)]
@@ -38,11 +41,12 @@ impl AsyncIndexerHandle {
         index: Arc<RwLock<HnswIndex>>,
         points: Arc<RwLock<BTreeMap<PointId, Point>>>,
         pending: Arc<RwLock<FxHashSet<PointId>>>,
+        backpressure_signal: BackpressureSignal,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
 
         let thread_handle = thread::spawn(move || {
-            AsyncIndexer::new(rx, index, points, pending).run();
+            AsyncIndexer::new(rx, index, points, pending, backpressure_signal).run();
         });
 
         Self {
@@ -92,6 +96,8 @@ struct AsyncIndexer {
     points: Arc<RwLock<BTreeMap<PointId, Point>>>,
     /// Set of points pending indexing (FxHashSet for faster integer hashing)
     pending: Arc<RwLock<FxHashSet<PointId>>>,
+    /// Signal to notify waiting upserts that pending count decreased
+    backpressure_signal: BackpressureSignal,
 }
 
 impl AsyncIndexer {
@@ -100,85 +106,112 @@ impl AsyncIndexer {
         index: Arc<RwLock<HnswIndex>>,
         points: Arc<RwLock<BTreeMap<PointId, Point>>>,
         pending: Arc<RwLock<FxHashSet<PointId>>>,
+        backpressure_signal: BackpressureSignal,
     ) -> Self {
         Self {
             rx,
             index,
             points,
             pending,
+            backpressure_signal,
         }
     }
 
-    /// Run the indexer loop
-    fn run(self) {
-        loop {
-            // Process all available tasks before blocking
-            loop {
-                match self.rx.try_recv() {
-                    Ok(task) => {
-                        if !self.process_task(task) {
-                            return; // Shutdown requested
-                        }
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => return,
-                }
-            }
+    /// Maximum batch size for processing
+    const BATCH_SIZE: usize = 100;
 
-            // Block waiting for next task
+    /// Run the indexer loop with batch processing
+    fn run(self) {
+        let mut batch = Vec::with_capacity(Self::BATCH_SIZE);
+
+        loop {
+            batch.clear();
+
+            // Wait for first task
             match self.rx.recv() {
-                Ok(task) => {
-                    if !self.process_task(task) {
-                        return; // Shutdown requested
-                    }
-                }
+                Ok(task) => batch.push(task),
                 Err(_) => return, // Channel disconnected
             }
+
+            // Collect more tasks if available (up to batch size)
+            while batch.len() < Self::BATCH_SIZE {
+                match self.rx.try_recv() {
+                    Ok(task) => batch.push(task),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+
+            // Process batch - returns false if shutdown requested
+            if !self.process_batch(&batch) {
+                return;
+            }
         }
     }
 
-    /// Process a single task. Returns false if shutdown requested.
-    fn process_task(&self, task: IndexTask) -> bool {
-        match task {
-            IndexTask::Insert(id) => {
-                self.index_point(id);
-                true
+    /// Process a batch of tasks with minimized lock acquisitions
+    fn process_batch(&self, tasks: &[IndexTask]) -> bool {
+        // Separate inserts and deletes
+        let mut inserts = Vec::new();
+        let mut deletes = Vec::new();
+
+        for task in tasks {
+            match task {
+                IndexTask::Insert(id) => inserts.push(*id),
+                IndexTask::Delete(id) => deletes.push(*id),
+                IndexTask::Shutdown => return false,
             }
-            IndexTask::Delete(id) => {
-                self.delete_from_index(id);
-                true
-            }
-            IndexTask::Shutdown => false,
         }
+
+        // Process deletes first (for update safety)
+        if !deletes.is_empty() {
+            let mut index = self.index.write().unwrap();
+            for id in &deletes {
+                index.delete(*id);
+            }
+        }
+
+        // Batch process inserts
+        if !inserts.is_empty() {
+            self.batch_index_points(&inserts);
+        }
+
+        true
     }
 
-    /// Index a single point
-    fn index_point(&self, id: PointId) {
-        // Get point data (need read lock on points)
-        let point = {
+    /// Batch index multiple points with minimized lock acquisitions
+    fn batch_index_points(&self, ids: &[PointId]) {
+        // Get all points in one read lock
+        let points_to_index: Vec<Point> = {
             let points = self.points.read().unwrap();
-            points.get(&id).cloned()
+            ids.iter()
+                .filter_map(|id| points.get(id).cloned())
+                .collect()
         };
 
-        if let Some(point) = point {
-            // Insert into index (need write lock on index)
-            {
-                let mut index = self.index.write().unwrap();
-                index.insert(&point);
-            }
+        if points_to_index.is_empty() {
+            return;
+        }
 
-            // Remove from pending set
-            {
-                let mut pending = self.pending.write().unwrap();
-                pending.remove(&id);
+        // Insert all into index with one write lock
+        {
+            let mut index = self.index.write().unwrap();
+            for point in &points_to_index {
+                index.insert(point);
             }
         }
-    }
 
-    /// Delete a point from the index
-    fn delete_from_index(&self, id: PointId) {
-        let mut index = self.index.write().unwrap();
-        index.delete(id);
+        // Remove all from pending with one write lock
+        {
+            let mut pending = self.pending.write().unwrap();
+            for point in &points_to_index {
+                pending.remove(&point.id);
+            }
+        }
+
+        // Signal waiters once after batch
+        let (_lock, cv) = &*self.backpressure_signal;
+        cv.notify_all();
     }
 }
 
@@ -207,6 +240,7 @@ mod tests {
         let index = Arc::new(RwLock::new(test_index()));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
         let pending = Arc::new(RwLock::new(FxHashSet::default()));
+        let signal = Arc::new((Mutex::new(()), Condvar::new()));
 
         // Add point to storage and pending
         {
@@ -217,8 +251,12 @@ mod tests {
         }
 
         // Start indexer
-        let mut handle =
-            AsyncIndexerHandle::spawn(Arc::clone(&index), Arc::clone(&points), Arc::clone(&pending));
+        let mut handle = AsyncIndexerHandle::spawn(
+            Arc::clone(&index),
+            Arc::clone(&points),
+            Arc::clone(&pending),
+            signal,
+        );
 
         // Queue insert
         handle.queue_insert(1);
@@ -241,9 +279,14 @@ mod tests {
         let index = Arc::new(RwLock::new(test_index()));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
         let pending = Arc::new(RwLock::new(FxHashSet::default()));
+        let signal = Arc::new((Mutex::new(()), Condvar::new()));
 
-        let mut handle =
-            AsyncIndexerHandle::spawn(Arc::clone(&index), Arc::clone(&points), Arc::clone(&pending));
+        let mut handle = AsyncIndexerHandle::spawn(
+            Arc::clone(&index),
+            Arc::clone(&points),
+            Arc::clone(&pending),
+            signal,
+        );
 
         assert!(handle.is_running());
 
