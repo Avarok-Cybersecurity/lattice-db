@@ -87,7 +87,7 @@ interface WasmLatticeDB {
 }
 
 interface WasmModule {
-  default: (wasmPath?: string) => Promise<void>;
+  default: (wasmPath?: string) => Promise<unknown>;
   LatticeDB: { new (): WasmLatticeDB };
 }
 
