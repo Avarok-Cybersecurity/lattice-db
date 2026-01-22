@@ -6,6 +6,7 @@
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::cypher::planner::LogicalOp;
+use crate::cypher::row::{ExecutorRow, Row};
 use crate::engine::collection::CollectionEngine;
 use crate::parallel;
 use crate::sync::SyncCell;
@@ -361,8 +362,10 @@ pub struct QueryStats {
     pub execution_time_ms: u64,
 }
 
-/// A row of bindings during execution
-type Row = HashMap<String, CypherValue>;
+/// Internal row type for executor operations.
+/// Uses SmallVec for inline storage of 1-2 elements (common case).
+/// Convert to Vec<CypherValue> at API boundaries (QueryResult).
+type InternalRows = Vec<ExecutorRow>;
 
 /// Query executor
 pub struct QueryExecutor;
@@ -377,12 +380,18 @@ impl QueryExecutor {
     pub fn execute(&self, plan: &LogicalOp, ctx: &mut ExecutionContext) -> CypherResult<QueryResult> {
         let start = std::time::Instant::now();
 
-        let (rows, mut stats) = self.execute_op(plan, ctx)?;
+        let (internal_rows, mut stats) = self.execute_op(plan, ctx)?;
 
         // Extract column names from the projection
         let columns = self.extract_columns(plan);
 
         stats.execution_time_ms = start.elapsed().as_millis() as u64;
+
+        // Convert internal SmallVec rows to Vec for public API
+        let rows: Vec<Vec<CypherValue>> = internal_rows
+            .into_iter()
+            .map(|row| row.to_vec())
+            .collect();
 
         Ok(QueryResult {
             columns,
@@ -396,7 +405,7 @@ impl QueryExecutor {
         &self,
         op: &LogicalOp,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         match op {
             LogicalOp::AllNodesScan { variable } => self.execute_all_nodes_scan(variable, ctx),
             LogicalOp::NodeByLabelScan { variable, label, predicate } => {
@@ -451,7 +460,7 @@ impl QueryExecutor {
             LogicalOp::Empty => Ok((Vec::new(), QueryStats::default())),
             LogicalOp::SingleRow => {
                 // Return a single row with no columns
-                Ok((vec![Vec::new()], QueryStats::default()))
+                Ok((vec![ExecutorRow::new()], QueryStats::default()))
             }
             _ => Err(CypherError::unsupported("Unsupported operation")),
         }
@@ -462,13 +471,13 @@ impl QueryExecutor {
         &self,
         _variable: &String,
         ctx: &ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let ids = ctx.collection.point_ids();
         // Preallocate outer Vec to avoid reallocation during collect
         let mut rows = Vec::with_capacity(ids.len());
         for id in ids {
-            // Single-element Vec - could use SmallVec in future for zero-alloc
-            rows.push(vec![CypherValue::NodeRef(id)]);
+            // Single-element row - SmallVec stores inline (zero heap allocation)
+            rows.push(ExecutorRow::single(CypherValue::NodeRef(id)));
         }
         Ok((rows, QueryStats::default()))
     }
@@ -480,7 +489,7 @@ impl QueryExecutor {
         label: &String,
         predicate: Option<&Expr>,
         ctx: &ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         // Use label index for O(1) lookup instead of scanning all points
         let ids = ctx.collection.point_ids_by_label(label);
 
@@ -489,9 +498,9 @@ impl QueryExecutor {
 
         // If no predicate, just return all IDs with the label
         if predicate.is_none() {
-            let rows: Vec<Vec<CypherValue>> = ids
+            let rows: InternalRows = ids
                 .into_iter()
-                .map(|id| vec![CypherValue::NodeRef(id)])
+                .map(|id| ExecutorRow::single(CypherValue::NodeRef(id)))
                 .collect();
             return Ok((rows, QueryStats::default()));
         }
@@ -501,7 +510,7 @@ impl QueryExecutor {
         let mut rows = Vec::with_capacity(ids.len() / 2); // estimate 50% match rate
 
         for id in ids {
-            let row = vec![CypherValue::NodeRef(id)];
+            let row = ExecutorRow::single(CypherValue::NodeRef(id));
             match self.evaluate_predicate(pred, &row, ctx) {
                 Ok(true) => rows.push(row),
                 Ok(false) => continue,
@@ -515,15 +524,15 @@ impl QueryExecutor {
     /// Execute NodeByIdSeek
     fn execute_id_seek(
         &self,
-        variable: &String,
+        _variable: &String,
         ids: &[u64],
         ctx: &ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let points = ctx.collection.get_points(ids);
-        let rows: Vec<Vec<CypherValue>> = ids
+        let rows: InternalRows = ids
             .iter()
             .zip(points.iter())
-            .filter_map(|(&id, opt)| opt.as_ref().map(|_| vec![CypherValue::NodeRef(id)]))
+            .filter_map(|(&id, opt)| opt.as_ref().map(|_| ExecutorRow::single(CypherValue::NodeRef(id))))
             .collect();
 
         Ok((rows, QueryStats::default()))
@@ -534,16 +543,16 @@ impl QueryExecutor {
     fn execute_expand(
         &self,
         input: &LogicalOp,
-        from: &String,
-        rel_variable: Option<&String>,
-        to: &String,
+        _from: &String,
+        _rel_variable: Option<&String>,
+        _to: &String,
         rel_types: &Vec<String>,
-        direction: Direction,
+        _direction: Direction,
         min_hops: u32,
         max_hops: u32,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
-        let (input_rows, mut stats) = self.execute_op(input, ctx)?;
+    ) -> CypherResult<(InternalRows, QueryStats)> {
+        let (input_rows, stats) = self.execute_op(input, ctx)?;
 
         let mut result_rows = Vec::new();
 
@@ -575,7 +584,7 @@ impl QueryExecutor {
                     // TODO: Proper direction handling
 
                     let mut new_row = row.clone();
-                    new_row.push(CypherValue::NodeRef(path.target_id));
+                    Row::push(&mut new_row, CypherValue::NodeRef(path.target_id));
                     result_rows.push(new_row);
                 }
             }
@@ -590,7 +599,7 @@ impl QueryExecutor {
         input: &LogicalOp,
         predicate: &Expr,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
         let mut result_rows = Vec::new();
@@ -612,22 +621,22 @@ impl QueryExecutor {
         input: &LogicalOp,
         items: &[ProjectionItem],
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
         let mut result_rows = Vec::new();
 
         for row in input_rows {
-            let mut new_row = Vec::new();
+            let mut new_row: ExecutorRow = ExecutorRow::with_capacity(items.len());
 
             for item in items {
                 if matches!(item.expr, Expr::Star) {
                     // Return all columns
-                    new_row.extend(row.clone());
+                    Row::extend_from_iter(&mut new_row, row.iter().cloned());
                 } else {
                     // Evaluate expression
                     let value = self.evaluate_expr(&item.expr, &row, ctx)?;
-                    new_row.push(value);
+                    Row::push(&mut new_row, value);
                 }
             }
 
@@ -646,7 +655,7 @@ impl QueryExecutor {
         items: &[OrderByItem],
         limit: Option<u64>,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (mut input_rows, stats) = self.execute_op(input, ctx)?;
 
         if items.is_empty() {
@@ -723,7 +732,7 @@ impl QueryExecutor {
                     compare(keys_a, keys_b)
                 });
             } else if k == 0 {
-                return Ok((vec![], stats));
+                return Ok((Vec::new(), stats));
             } else {
                 // k >= keyed_indices.len(), full sort needed (parallel on native)
                 parallel::sort_by(&mut keyed_indices, |(keys_a, _), (keys_b, _)| {
@@ -738,10 +747,10 @@ impl QueryExecutor {
         }
 
         // Reconstruct rows in sorted order using indices
-        // Use std::mem::take to move rows without cloning
-        let sorted_rows: Vec<Vec<CypherValue>> = keyed_indices
+        // Use Row::take to move rows without cloning (zero-copy)
+        let sorted_rows: InternalRows = keyed_indices
             .into_iter()
-            .map(|(_, idx)| std::mem::take(&mut input_rows[idx]))
+            .map(|(_, idx)| Row::take(&mut input_rows[idx]))
             .collect();
 
         Ok((sorted_rows, stats))
@@ -749,46 +758,71 @@ impl QueryExecutor {
 
     /// Fast path for sorting by a single i64 key.
     /// Avoids all CypherValue overhead by working directly with (i64, usize) pairs.
+    ///
+    /// With `simd` feature: Uses O(n) radix sort for large arrays.
+    /// Without: Uses O(n log n) comparison-based parallel sort.
     fn execute_sort_i64_fast(
         &self,
-        mut input_rows: Vec<Vec<CypherValue>>,
+        mut input_rows: InternalRows,
         keys: Vec<i64>,
         ascending: bool,
         limit: Option<u64>,
         stats: QueryStats,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         // Create (key, index) pairs for sorting
         let mut keyed_indices: Vec<(i64, usize)> = keys.into_iter().enumerate()
             .map(|(idx, key)| (key, idx))
             .collect();
 
-        // Comparator based on sort direction
-        let compare = if ascending {
-            |a: &(i64, usize), b: &(i64, usize)| a.0.cmp(&b.0)
-        } else {
-            |a: &(i64, usize), b: &(i64, usize)| b.0.cmp(&a.0)
-        };
+        #[cfg(feature = "simd")]
+        {
+            // Use O(n) radix sort for large arrays
+            use crate::cypher::row::{radix_partial_sort_i64_indexed, radix_sort_i64_indexed};
 
-        if let Some(k) = limit {
-            let k = k as usize;
-            if k > 0 && k < keyed_indices.len() {
-                // Partial sort: O(n) partition + O(k log k) sort
-                keyed_indices.select_nth_unstable_by(k - 1, compare);
+            if let Some(k) = limit {
+                let k = k as usize;
+                if k == 0 {
+                    return Ok((Vec::new(), stats));
+                }
+                // Radix partial sort: efficient for LIMIT queries
+                radix_partial_sort_i64_indexed(&mut keyed_indices, k, ascending);
                 keyed_indices.truncate(k);
-                parallel::sort_by(&mut keyed_indices, compare);
-            } else if k == 0 {
-                return Ok((vec![], stats));
+            } else {
+                // Full radix sort: O(n) for all elements
+                radix_sort_i64_indexed(&mut keyed_indices, ascending);
+            }
+        }
+
+        #[cfg(not(feature = "simd"))]
+        {
+            // Comparator based on sort direction
+            let compare = if ascending {
+                |a: &(i64, usize), b: &(i64, usize)| a.0.cmp(&b.0)
+            } else {
+                |a: &(i64, usize), b: &(i64, usize)| b.0.cmp(&a.0)
+            };
+
+            if let Some(k) = limit {
+                let k = k as usize;
+                if k > 0 && k < keyed_indices.len() {
+                    // Partial sort: O(n) partition + O(k log k) sort
+                    keyed_indices.select_nth_unstable_by(k - 1, compare);
+                    keyed_indices.truncate(k);
+                    parallel::sort_by(&mut keyed_indices, compare);
+                } else if k == 0 {
+                    return Ok((Vec::new(), stats));
+                } else {
+                    parallel::sort_by(&mut keyed_indices, compare);
+                }
             } else {
                 parallel::sort_by(&mut keyed_indices, compare);
             }
-        } else {
-            parallel::sort_by(&mut keyed_indices, compare);
         }
 
-        // Reconstruct rows in sorted order
-        let sorted_rows: Vec<Vec<CypherValue>> = keyed_indices
+        // Reconstruct rows in sorted order using Row::take (zero-copy)
+        let sorted_rows: InternalRows = keyed_indices
             .into_iter()
-            .map(|(_, idx)| std::mem::take(&mut input_rows[idx]))
+            .map(|(_, idx)| Row::take(&mut input_rows[idx]))
             .collect();
 
         Ok((sorted_rows, stats))
@@ -807,10 +841,10 @@ impl QueryExecutor {
     /// Returns None if any row doesn't have a NodeRef in first position.
     /// Preallocates for efficiency.
     #[inline]
-    fn extract_node_ids(input_rows: &[Vec<CypherValue>]) -> Option<Vec<u64>> {
+    fn extract_node_ids(input_rows: &InternalRows) -> Option<Vec<u64>> {
         let mut node_ids = Vec::with_capacity(input_rows.len());
         for row in input_rows {
-            if let Some(CypherValue::NodeRef(id)) = row.first() {
+            if let Some(CypherValue::NodeRef(id)) = Row::first(row) {
                 node_ids.push(*id);
             } else {
                 return None;
@@ -823,7 +857,7 @@ impl QueryExecutor {
     /// Returns Some((keys, ascending)) if this is a single integer property ORDER BY.
     fn try_batch_i64_sort_keys(
         &self,
-        input_rows: &[Vec<CypherValue>],
+        input_rows: &InternalRows,
         items: &[OrderByItem],
         ctx: &ExecutionContext,
     ) -> Option<(Vec<i64>, bool)> {
@@ -851,7 +885,7 @@ impl QueryExecutor {
 
     fn try_batch_prefetch_sort_keys(
         &self,
-        input_rows: &[Vec<CypherValue>],
+        input_rows: &InternalRows,
         items: &[OrderByItem],
         ctx: &ExecutionContext,
     ) -> Option<Vec<Vec<CypherValue>>> {
@@ -941,9 +975,9 @@ impl QueryExecutor {
         input: &LogicalOp,
         count: u64,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
-        let result_rows: Vec<_> = input_rows.into_iter().skip(count as usize).collect();
+        let result_rows: InternalRows = input_rows.into_iter().skip(count as usize).collect();
         Ok((result_rows, stats))
     }
 
@@ -953,9 +987,9 @@ impl QueryExecutor {
         input: &LogicalOp,
         count: u64,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
-        let result_rows: Vec<_> = input_rows.into_iter().take(count as usize).collect();
+        let result_rows: InternalRows = input_rows.into_iter().take(count as usize).collect();
         Ok((result_rows, stats))
     }
 
@@ -964,7 +998,7 @@ impl QueryExecutor {
         &self,
         input: &LogicalOp,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
         // Use HashSet for O(n) deduplication instead of O(n²) Vec::contains
@@ -1082,7 +1116,7 @@ impl QueryExecutor {
         properties: &MapLiteral,
         _variable: Option<&String>,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         // Generate a new ID (hash of timestamp + random)
         let id = self.generate_point_id();
 
@@ -1103,10 +1137,11 @@ impl QueryExecutor {
             0
         };
 
-        // Store properties
+        // Store properties - use an empty slice as we're creating a new node
+        let empty_row: ExecutorRow = ExecutorRow::new();
         for (key, value_expr) in &properties.entries {
             // Evaluate the expression to get the value
-            let value = self.evaluate_expr(value_expr, &[], ctx)?;
+            let value = self.evaluate_expr(value_expr, &empty_row, ctx)?;
             let value_bytes = self.cypher_value_to_json_bytes(&value)?;
             payload.insert(key.to_string(), value_bytes);
         }
@@ -1127,7 +1162,7 @@ impl QueryExecutor {
         stats.nodes_created = 1;
 
         // Return the created node reference
-        let row = vec![CypherValue::NodeRef(id)];
+        let row = ExecutorRow::single(CypherValue::NodeRef(id));
 
         Ok((vec![row], stats))
     }
@@ -1139,9 +1174,9 @@ impl QueryExecutor {
         to: &String,
         rel_type: &String,
         properties: &MapLiteral,
-        variable: Option<&String>,
+        _variable: Option<&String>,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         // For now, we need the from/to IDs to be provided via parameters
         // This is a simplified implementation
         let from_id = ctx
@@ -1189,7 +1224,7 @@ impl QueryExecutor {
 
         // Return the created relationship as a reference
         let rel_id = self.generate_point_id(); // Generate unique ID for the relationship
-        let row = vec![CypherValue::RelationshipRef(rel_id)];
+        let row = ExecutorRow::single(CypherValue::RelationshipRef(rel_id));
 
         Ok((vec![row], stats))
     }
@@ -1198,17 +1233,17 @@ impl QueryExecutor {
     fn execute_delete_node(
         &self,
         input: &LogicalOp,
-        variable: &String,
-        detach: bool,
+        _variable: &String,
+        _detach: bool,
         ctx: &mut ExecutionContext,
-    ) -> CypherResult<(Vec<Vec<CypherValue>>, QueryStats)> {
+    ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, _) = self.execute_op(input, ctx)?;
 
         let mut deleted = 0u64;
 
         for row in input_rows {
             // Find the node ID in the row
-            for value in &row {
+            for value in row.iter() {
                 if let CypherValue::NodeRef(id) = value {
                     // TODO: If detach, remove all relationships first
                     ctx.collection.delete_points(&[*id]);
