@@ -94,7 +94,7 @@ pub struct ExecutionContext<'a> {
     /// Query parameters
     pub parameters: HashMap<String, CypherValue>,
     /// Cache for point lookups using FxHashMap for faster integer hashing
-    /// Uses Arc<Point> to avoid cloning entire Point structs on cache hit
+    /// Uses `Arc<Point>` to avoid cloning entire Point structs on cache hit
     /// Uses SyncCell for thread-safe parallel access during sort key extraction
     point_cache: SyncCell<FxHashMap<u64, Option<Arc<Point>>>>,
     /// Two-level property cache: node_id -> (property_name -> CypherValue)
@@ -143,7 +143,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     /// Get a point by ID, using cache if available
-    /// Returns Arc<Point> to avoid cloning - cheap reference count increment
+    /// Returns `Arc<Point>` to avoid cloning - cheap reference count increment
     pub fn get_point_cached(&self, id: u64) -> Option<Arc<Point>> {
         // Check cache first - Arc::clone is cheap (just ref count increment)
         {
@@ -172,7 +172,7 @@ impl<'a> ExecutionContext<'a> {
 
     /// Get a property value by node ID and property name, using cache if available
     /// Uses two-level map lookup to avoid String allocation on cache hits
-    /// Returns cloned value for ownership transfer (O(1) with Rc<str>)
+    /// Returns cloned value for ownership transfer (O(1) with `Rc<str>`)
     #[inline]
     pub fn get_property_cached(&self, id: u64, property: &str) -> Option<CypherValue> {
         let cache = self.property_cache.borrow();
@@ -384,14 +384,19 @@ impl QueryExecutor {
         plan: &LogicalOp,
         ctx: &mut ExecutionContext,
     ) -> CypherResult<QueryResult> {
+        #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
 
+        #[allow(unused_mut)]
         let (internal_rows, mut stats) = self.execute_op(plan, ctx)?;
 
         // Extract column names from the projection
         let columns = self.extract_columns(plan);
 
-        stats.execution_time_ms = start.elapsed().as_millis() as u64;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            stats.execution_time_ms = start.elapsed().as_millis() as u64;
+        }
 
         // Convert internal SmallVec rows to Vec for public API
         let rows: Vec<Vec<CypherValue>> =
@@ -1851,22 +1856,42 @@ impl QueryExecutor {
 
     /// Generate a unique point ID
     fn generate_point_id(&self) -> PointId {
-        use std::time::{SystemTime, UNIX_EPOCH};
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::time::{SystemTime, UNIX_EPOCH};
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() as u64;
 
-        // Simple hash to distribute IDs
-        let mut hash = timestamp;
-        hash ^= hash >> 33;
-        hash = hash.wrapping_mul(0xff51afd7ed558ccd);
-        hash ^= hash >> 33;
-        hash = hash.wrapping_mul(0xc4ceb9fe1a85ec53);
-        hash ^= hash >> 33;
+            // Simple hash to distribute IDs
+            let mut hash = timestamp;
+            hash ^= hash >> 33;
+            hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+            hash ^= hash >> 33;
+            hash = hash.wrapping_mul(0xc4ceb9fe1a85ec53);
+            hash ^= hash >> 33;
 
-        hash
+            hash
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(1);
+
+            // Use an incrementing counter with some entropy mixing
+            let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let mut hash = counter;
+            hash ^= hash >> 33;
+            hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+            hash ^= hash >> 33;
+            hash = hash.wrapping_mul(0xc4ceb9fe1a85ec53);
+            hash ^= hash >> 33;
+
+            hash
+        }
     }
 
     /// Extract column names from a plan

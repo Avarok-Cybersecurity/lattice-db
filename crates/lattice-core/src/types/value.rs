@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 // =============================================================================
-// SharedStr: Arc<str> on native (Send + Sync), Rc<str> on WASM (no overhead)
+// SharedStr: `Arc<str>` on native (Send + Sync), `Rc<str>` on WASM (no overhead)
 // =============================================================================
 
 #[cfg(target_arch = "wasm32")]
@@ -30,7 +30,7 @@ use std::rc::Rc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
-/// Shared string type - Arc<str> on native for parallel ops, Rc<str> on WASM
+/// Shared string type - `Arc<str>` on native for parallel ops, `Rc<str>` on WASM
 #[cfg(not(target_arch = "wasm32"))]
 pub type SharedStr = Arc<str>;
 #[cfg(target_arch = "wasm32")]
@@ -85,7 +85,7 @@ pub enum CypherValue {
     Float(f64),
 
     /// String value - uses SharedStr for O(1) cloning
-    /// Arc<str> on native (enables parallel ops), Rc<str> on WASM
+    /// `Arc<str>` on native (enables parallel ops), `Rc<str>` on WASM
     #[serde(with = "shared_str_serde")]
     String(SharedStr),
 
@@ -395,7 +395,7 @@ mod tests {
         assert!(CypherValue::null().is_null());
         assert_eq!(CypherValue::bool(true), CypherValue::Bool(true));
         assert_eq!(CypherValue::int(42), CypherValue::Int(42));
-        assert_eq!(CypherValue::float(3.14), CypherValue::Float(3.14));
+        assert_eq!(CypherValue::float(3.15), CypherValue::Float(3.15));
         assert_eq!(
             CypherValue::string("hello"),
             CypherValue::String(SharedStr::from("hello"))
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(CypherValue::Null.type_name(), "NULL");
         assert_eq!(CypherValue::Bool(true).type_name(), "BOOLEAN");
         assert_eq!(CypherValue::Int(42).type_name(), "INTEGER");
-        assert_eq!(CypherValue::Float(3.14).type_name(), "FLOAT");
+        assert_eq!(CypherValue::Float(3.15).type_name(), "FLOAT");
         assert_eq!(CypherValue::string("test").type_name(), "STRING");
         assert_eq!(CypherValue::list([]).type_name(), "LIST");
         assert_eq!(CypherValue::map().type_name(), "MAP");
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn test_cypher_value_conversions() {
         assert_eq!(CypherValue::int(42).as_int(), Some(42));
-        assert_eq!(CypherValue::float(3.14).as_float(), Some(3.14));
+        assert_eq!(CypherValue::float(3.15).as_float(), Some(3.15));
         assert_eq!(CypherValue::int(42).as_float(), Some(42.0));
         assert_eq!(CypherValue::string("hello").as_str(), Some("hello"));
         assert_eq!(CypherValue::Bool(true).as_bool(), Some(true));
@@ -440,8 +440,8 @@ mod tests {
         let v: CypherValue = 42i64.into();
         assert_eq!(v, CypherValue::Int(42));
 
-        let v: CypherValue = 3.14f64.into();
-        assert_eq!(v, CypherValue::Float(3.14));
+        let v: CypherValue = 3.15f64.into();
+        assert_eq!(v, CypherValue::Float(3.15));
 
         let v: CypherValue = "hello".into();
         assert_eq!(v, CypherValue::string("hello"));

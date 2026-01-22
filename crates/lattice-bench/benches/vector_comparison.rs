@@ -46,7 +46,7 @@ fn bench_upsert(c: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(500));
     group.measurement_time(Duration::from_secs(2));
 
-    for size in [1000].iter() {
+    for size in [1000, 5000].iter() {
         // LatticeDB
         let mut lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
@@ -120,7 +120,7 @@ fn bench_retrieve(c: &mut Criterion) {
 
     let ids: Vec<u64> = (0..10).collect();
 
-    for size in [1000].iter() {
+    for size in [1000, 5000].iter() {
         // LatticeDB
         let lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
@@ -156,7 +156,7 @@ fn bench_scroll(c: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(500));
     group.measurement_time(Duration::from_secs(2));
 
-    for size in [1000].iter() {
+    for size in [1000, 5000].iter() {
         // LatticeDB
         let lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {

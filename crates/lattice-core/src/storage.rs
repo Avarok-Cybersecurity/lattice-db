@@ -58,7 +58,7 @@ pub type StorageResult<T> = Result<T, StorageError>;
 ///
 /// Storage is organized into fixed-size pages identified by `u64` IDs.
 /// This model maps naturally to:
-/// - Memory: HashMap<u64, Vec<u8>>
+/// - Memory: `HashMap<u64, Vec<u8>>`
 /// - Disk: offset = page_id * PAGE_SIZE
 /// - OPFS: same offset-based access
 ///

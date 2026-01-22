@@ -53,7 +53,7 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use std::cell::{Ref, RefCell, RefMut};
+    use std::cell::RefCell;
     use std::ops::Deref;
 
     /// A cell that provides interior mutability.

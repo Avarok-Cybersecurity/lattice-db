@@ -309,7 +309,7 @@ impl CollectionEngine {
     /// Batch extract specific properties from points without cloning entire Points.
     ///
     /// This is optimized for ORDER BY queries where we only need sort key properties.
-    /// Returns Vec<Vec<Option<Vec<u8>>>> - outer: per point, inner: per property.
+    /// Returns `Vec<Vec<Option<Vec<u8>>>>` - outer: per point, inner: per property.
     /// The values are the raw JSON bytes from the payload (caller deserializes).
     ///
     /// Returns None if point doesn't exist, Some(None) if property doesn't exist.
@@ -885,7 +885,7 @@ impl CollectionEngine {
 
     /// Serialize the collection to bytes (for persistence)
     ///
-    /// Format: [config_len:u32][config:JSON][padding][points:rkyv]
+    /// Format: `[config_len:u32][config:JSON][padding][points:rkyv]`
     /// Padding ensures rkyv data starts at 16-byte alignment.
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
         // Serialize config as JSON (small, schema-flexible)
@@ -1130,7 +1130,7 @@ impl CollectionEngine {
     /// Batch extract specific properties from points without cloning entire Points.
     ///
     /// This is optimized for ORDER BY queries where we only need sort key properties.
-    /// Returns Vec<Vec<Option<Vec<u8>>>> - outer: per point, inner: per property.
+    /// Returns `Vec<Vec<Option<Vec<u8>>>>` - outer: per point, inner: per property.
     /// The values are the raw JSON bytes from the payload (caller deserializes).
     ///
     /// Returns None if point doesn't exist, Some(None) if property doesn't exist.
@@ -1543,7 +1543,7 @@ impl CollectionEngine {
 
     /// Serialize the collection to bytes (for persistence)
     ///
-    /// Format: [config_len:u32][config:JSON][padding][points:rkyv]
+    /// Format: `[config_len:u32][config:JSON][padding][points:rkyv]`
     /// Padding ensures rkyv data starts at 16-byte alignment.
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
         // Serialize config as JSON (small, schema-flexible)

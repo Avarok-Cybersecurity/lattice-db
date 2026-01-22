@@ -16,7 +16,7 @@ pub struct HnswNode {
     pub point_id: PointId,
     /// Maximum layer this node exists in
     pub max_layer: u16,
-    /// Neighbors per layer: neighbors[layer] = vec of neighbor IDs
+    /// Neighbors per layer: `neighbors[layer]` = vec of neighbor IDs
     pub neighbors: Vec<Vec<PointId>>,
 }
 

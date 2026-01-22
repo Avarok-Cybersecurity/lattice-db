@@ -765,7 +765,7 @@ mod tests {
 
             // Verify result is reasonable (identical vectors would be 0)
             assert!(
-                dist >= 0.0 && dist < 1.0,
+                (0.0..1.0).contains(&dist),
                 "Cosine distance out of range: {}",
                 dist
             );
@@ -862,7 +862,7 @@ mod tests {
 
             // Verify result is reasonable (identical vectors would be 0)
             assert!(
-                dist >= 0.0 && dist < 1.0,
+                (0.0..1.0).contains(&dist),
                 "Cosine distance out of range: {}",
                 dist
             );

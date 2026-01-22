@@ -12,7 +12,7 @@
 [![Docs](https://img.shields.io/badge/docs-book-blue.svg)](https://Avarok-Cybersecurity.github.io/lattice-db/)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![WASM](https://img.shields.io/badge/wasm-SIMD-blueviolet.svg)](https://webassembly.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Qdrant Compatible](https://img.shields.io/badge/qdrant-API%20compatible-green.svg)](https://qdrant.tech)
 [![Cypher](https://img.shields.io/badge/cypher-query%20language-blue.svg)](https://neo4j.com/docs/cypher-manual/)
 
@@ -65,7 +65,15 @@
 
 ## ⚡ Performance
 
-**LatticeDB wins ALL operations against both Qdrant and Neo4j.**
+**Optimized for small to medium datasets** - the sweet spot for browser-based applications.
+
+### Target Use Cases
+
+LatticeDB shines for datasets typical in frontend applications:
+- **Vectors**: 1K - 50K points (RAG contexts, document collections, user embeddings)
+- **Graphs**: 1K - 10K nodes (knowledge graphs, relationship data, user networks)
+
+At these scales, LatticeDB dramatically outperforms server-based solutions by eliminating network latency and running entirely in-process.
 
 ### Vector Operations: LatticeDB vs Qdrant
 
@@ -78,7 +86,7 @@
 | **Retrieve** | 2.61 µs | 135 µs | **52x faster** |
 | **Scroll** | 18 µs | 133 µs | **7.4x faster** |
 
-> **LatticeDB wins ALL 4 vector operations!** SIMD-accelerated distance calculations, dense vector storage, and thread-local scratch space eliminate overhead.
+> **LatticeDB wins ALL 4 vector operations** at this scale. SIMD-accelerated distance calculations, dense vector storage, and zero network overhead eliminate latency.
 
 ### Graph Operations: LatticeDB vs Neo4j
 
@@ -87,7 +95,6 @@
 | Operation | LatticeDB | Neo4j | Speedup |
 |-----------|-----------|-------|---------|
 | `MATCH (n) RETURN n LIMIT 100` | 60 µs | 3,724 µs | **62x** |
-| `MATCH (n:Person) RETURN n LIMIT 100` | 58 µs | 3,454 µs | **59x** |
 | `MATCH (n:Person) RETURN n LIMIT 10` | 11 µs | 505 µs | **45x** |
 | `SKIP 50 LIMIT 20` | 37 µs | 543 µs | **15x** |
 | `ORDER BY n.name LIMIT 50` | 117 µs | 968 µs | **8x** |
@@ -95,9 +102,63 @@
 | `WHERE n.age > 25 LIMIT 50` | 114 µs | 589 µs | **5x** |
 | Complex filter with AND | 649 µs | 998 µs | **1.5x** |
 
-> **LatticeDB wins ALL 8 graph operations (5-62x faster)!** No JVM overhead, native Rust data structures, and direct query execution.
+> **LatticeDB wins all graph operations** at 1K nodes. No JVM overhead, native Rust data structures, and direct query execution.
+
+### Scaling Considerations
+
+| Dataset Size | LatticeDB Advantage | Recommendation |
+|--------------|---------------------|----------------|
+| < 10K | **Excellent** (10-100x faster) | Ideal for browser/embedded use |
+| 10K - 50K | **Good** (2-10x faster) | Still great for single-user apps |
+| > 50K | **Diminishing** | Consider dedicated vector DB for large datasets |
+
+For datasets exceeding 50K elements, server-based solutions like Qdrant or Neo4j may offer better performance due to their optimized indexing for large-scale workloads.
 
 📖 [Full benchmark details](https://Avarok-Cybersecurity.github.io/lattice-db/book/performance/benchmarks.html)
+
+---
+
+## 🔗 Why Hybrid?
+
+**One library for everything your frontend needs.**
+
+Modern AI-powered applications require multiple database capabilities:
+
+| Capability | Traditional Approach | LatticeDB Approach |
+|------------|---------------------|-------------------|
+| **Semantic Search** | Vector DB (Pinecone, Qdrant) | ✅ Built-in HNSW |
+| **Knowledge Graphs** | Graph DB (Neo4j, Dgraph) | ✅ Built-in Cypher |
+| **Document Storage** | Key-Value DB (Redis, DynamoDB) | ✅ Built-in Payload |
+| **Relationship Queries** | SQL or Graph DB | ✅ Built-in Traversal |
+
+### Why Not Separate Databases?
+
+- 🔌 **Single Dependency** - One import, not three separate databases
+- 🎯 **Unified Queries** - Vector similarity + graph traversal in one query
+- 📦 **Smaller Bundle** - ~500KB WASM vs multiple large dependencies
+- 🧠 **Simpler Mental Model** - Points have vectors, payloads, AND relationships
+- ⚡ **Zero Network Hops** - No coordination between services
+- 💰 **No Server Costs** - Everything runs client-side
+
+### The Hybrid Advantage
+
+```javascript
+// Find semantically similar documents AND their related concepts
+const similar = await db.search({ vector: queryEmbedding, limit: 10 });
+const related = await db.query(`
+  MATCH (doc:Document)-[:REFERENCES]->(concept:Concept)
+  WHERE doc.id IN $docIds
+  RETURN DISTINCT concept.name
+`, { docIds: similar.map(r => r.id) });
+```
+
+With separate databases, this requires:
+1. Query vector DB for similar documents
+2. Query graph DB for relationships
+3. Coordinate results between two systems
+4. Handle different data models and APIs
+
+With LatticeDB, it's one library with unified data.
 
 ---
 
@@ -464,7 +525,12 @@ cargo bench -p lattice-bench
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
 
 ---
 

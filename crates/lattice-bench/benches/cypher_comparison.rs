@@ -22,7 +22,7 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use lattice_bench::datasets::{generate_people, generate_relationships};
+use lattice_bench::datasets::generate_people;
 use lattice_bench::lattice_runner::LatticeRunner;
 use lattice_bench::neo4j_runner::Neo4jRunner;
 use std::time::Duration;
