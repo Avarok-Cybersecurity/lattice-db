@@ -25,10 +25,10 @@ use smallvec::SmallVec;
 // SharedStr: Arc<str> on native (Send + Sync), Rc<str> on WASM (no overhead)
 // =============================================================================
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 /// Shared string type - Arc<str> on native for parallel ops, Rc<str> on WASM
 #[cfg(not(target_arch = "wasm32"))]
@@ -96,11 +96,7 @@ pub enum CypherValue {
 
     // --- Temporal Types (WASM-compatible, no chrono dependency) ---
     /// Date without time component
-    Date {
-        year: i32,
-        month: u8,
-        day: u8,
-    },
+    Date { year: i32, month: u8, day: u8 },
 
     /// Time without date component
     Time {
@@ -119,11 +115,7 @@ pub enum CypherValue {
     },
 
     /// Duration between two instants
-    Duration {
-        months: i64,
-        days: i64,
-        nanos: i64,
-    },
+    Duration { months: i64, days: i64, nanos: i64 },
 
     // --- Spatial Types ---
     /// 2D point with spatial reference

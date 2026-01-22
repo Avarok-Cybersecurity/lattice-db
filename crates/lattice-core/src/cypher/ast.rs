@@ -129,11 +129,7 @@ impl Pattern {
     }
 
     /// Create a pattern with a node-relationship-node chain
-    pub fn chain(
-        start: NodePattern,
-        rel: RelPattern,
-        end: NodePattern,
-    ) -> Self {
+    pub fn chain(start: NodePattern, rel: RelPattern, end: NodePattern) -> Self {
         Self {
             elements: vec![
                 PatternElement::Node(start),
@@ -307,7 +303,10 @@ impl MapLiteral {
     /// Create a map literal from entries
     pub fn from_entries(entries: impl IntoIterator<Item = (impl Into<String>, Expr)>) -> Self {
         Self {
-            entries: entries.into_iter().map(|(k, v)| (k.into(), Box::new(v))).collect(),
+            entries: entries
+                .into_iter()
+                .map(|(k, v)| (k.into(), Box::new(v)))
+                .collect(),
         }
     }
 
@@ -497,10 +496,7 @@ pub enum SetItem {
         properties: MapLiteral,
     },
     /// `SET n:Label`
-    Label {
-        variable: String,
-        label: String,
-    },
+    Label { variable: String, label: String },
 }
 
 /// Expression in Cypher
@@ -516,10 +512,7 @@ pub enum Expr {
     Variable(String),
 
     /// Property access: `n.name`
-    Property {
-        expr: Box<Expr>,
-        property: String,
-    },
+    Property { expr: Box<Expr>, property: String },
 
     /// Parameter: `$param`
     Parameter(String),
@@ -538,10 +531,7 @@ pub enum Expr {
     },
 
     /// Unary operation: `NOT a`, `-x`
-    UnaryOp {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
+    UnaryOp { op: UnaryOp, expr: Box<Expr> },
 
     /// Function call: `count(*)`, `toUpper(s)`
     FunctionCall {
@@ -558,10 +548,7 @@ pub enum Expr {
     },
 
     /// IS NULL / IS NOT NULL
-    IsNull {
-        expr: Box<Expr>,
-        negated: bool,
-    },
+    IsNull { expr: Box<Expr>, negated: bool },
 
     /// IN expression: `x IN [1, 2, 3]`
     In {
@@ -578,9 +565,7 @@ pub enum Expr {
     },
 
     /// EXISTS subquery (Phase 2)
-    Exists {
-        pattern: Pattern,
-    },
+    Exists { pattern: Pattern },
 }
 
 impl Expr {
@@ -728,9 +713,7 @@ mod tests {
     fn test_node_pattern_builder() {
         let node = NodePattern::with_variable("n")
             .with_label("Person")
-            .with_properties(MapLiteral::from_entries([
-                ("name", Expr::literal("Alice")),
-            ]));
+            .with_properties(MapLiteral::from_entries([("name", Expr::literal("Alice"))]));
 
         assert_eq!(node.variable, Some("n".to_string()));
         assert_eq!(node.labels.len(), 1);
@@ -760,16 +743,19 @@ mod tests {
 
         assert_eq!(pattern.elements.len(), 3);
         assert!(matches!(pattern.elements[0], PatternElement::Node(_)));
-        assert!(matches!(pattern.elements[1], PatternElement::Relationship(_)));
+        assert!(matches!(
+            pattern.elements[1],
+            PatternElement::Relationship(_)
+        ));
         assert!(matches!(pattern.elements[2], PatternElement::Node(_)));
     }
 
     #[test]
     fn test_query_builder() {
-        let query = Query::new(ReturnClause::new(vec![
-            ProjectionItem::new(Expr::property(Expr::variable("n"), "name"))
-                .with_alias("name"),
-        ]))
+        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
+            Expr::property(Expr::variable("n"), "name"),
+        )
+        .with_alias("name")]))
         .with_match(MatchClause::new(Pattern::node(
             NodePattern::with_variable("n").with_label("Person"),
         )))
@@ -789,7 +775,13 @@ mod tests {
             .gt(Expr::literal(25i64))
             .and(Expr::property(Expr::variable("n"), "name").eq(Expr::literal("Alice")));
 
-        assert!(matches!(expr, Expr::BinaryOp { op: BinaryOp::And, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::And,
+                ..
+            }
+        ));
     }
 
     #[test]

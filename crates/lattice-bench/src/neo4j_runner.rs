@@ -24,9 +24,7 @@ impl Neo4jRunner {
     /// Clear all data from the database
     pub async fn clear(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Delete all relationships first, then all nodes
-        self.graph
-            .run(query("MATCH ()-[r]->() DELETE r"))
-            .await?;
+        self.graph.run(query("MATCH ()-[r]->() DELETE r")).await?;
         self.graph.run(query("MATCH (n) DELETE n")).await?;
         Ok(())
     }
@@ -50,13 +48,11 @@ impl Neo4jRunner {
         people: &[PersonData],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for person in people {
-            let q = query(
-                "CREATE (p:Person {name: $name, age: $age, city: $city, email: $email})",
-            )
-            .param("name", person.name.clone())
-            .param("age", person.age)
-            .param("city", person.city.clone())
-            .param("email", person.email.clone());
+            let q = query("CREATE (p:Person {name: $name, age: $age, city: $city, email: $email})")
+                .param("name", person.name.clone())
+                .param("age", person.age)
+                .param("city", person.city.clone())
+                .param("email", person.email.clone());
 
             self.graph.run(q).await?;
         }

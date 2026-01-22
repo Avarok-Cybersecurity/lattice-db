@@ -187,9 +187,11 @@ impl BenchmarkHistory {
                 if let Some(prev_measurement) = prev.results.get(name) {
                     let change = measurement.lattice_us / prev_measurement.lattice_us;
                     if change < 0.95 {
-                        format!("\x1b[32m{:.1}%\x1b[0m", (1.0 - change) * 100.0) // Green for improvement
+                        format!("\x1b[32m{:.1}%\x1b[0m", (1.0 - change) * 100.0)
+                    // Green for improvement
                     } else if change > 1.05 {
-                        format!("\x1b[31m+{:.1}%\x1b[0m", (change - 1.0) * 100.0) // Red for regression
+                        format!("\x1b[31m+{:.1}%\x1b[0m", (change - 1.0) * 100.0)
+                    // Red for regression
                     } else {
                         "~".to_string()
                     }

@@ -121,9 +121,20 @@ impl DefaultCypherHandler {
             LogicalOp::AllNodesScan { variable } => {
                 format!("{}AllNodesScan({})\n", prefix, variable)
             }
-            LogicalOp::NodeByLabelScan { variable, label, predicate } => {
-                let filter_str = if predicate.is_some() { " [+filter]" } else { "" };
-                format!("{}NodeByLabelScan({}, :{}){}\n", prefix, variable, label, filter_str)
+            LogicalOp::NodeByLabelScan {
+                variable,
+                label,
+                predicate,
+            } => {
+                let filter_str = if predicate.is_some() {
+                    " [+filter]"
+                } else {
+                    ""
+                };
+                format!(
+                    "{}NodeByLabelScan({}, :{}){}\n",
+                    prefix, variable, label, filter_str
+                )
             }
             LogicalOp::NodeByIdSeek { variable, ids } => {
                 format!("{}NodeByIdSeek({}, {:?})\n", prefix, variable, ids)
@@ -189,13 +200,7 @@ impl DefaultCypherHandler {
             LogicalOp::Sort { input, items, .. } => {
                 let cols: Vec<_> = items
                     .iter()
-                    .map(|i| {
-                        format!(
-                            "{:?} {}",
-                            i.expr,
-                            if i.ascending { "ASC" } else { "DESC" }
-                        )
-                    })
+                    .map(|i| format!("{:?} {}", i.expr, if i.ascending { "ASC" } else { "DESC" }))
                     .collect();
                 format!(
                     "{}Sort([{}])\n{}",
@@ -221,21 +226,21 @@ impl DefaultCypherHandler {
                 )
             }
             LogicalOp::Distinct { input } => {
-                format!("{}Distinct\n{}", prefix, self.format_plan(input, indent + 1))
+                format!(
+                    "{}Distinct\n{}",
+                    prefix,
+                    self.format_plan(input, indent + 1)
+                )
             }
-            LogicalOp::CreateNode { labels, variable, .. } => {
-                let var = variable
-                    .as_ref()
-                    .map(|v| v.to_string())
-                    .unwrap_or_default();
+            LogicalOp::CreateNode {
+                labels, variable, ..
+            } => {
+                let var = variable.as_ref().map(|v| v.to_string()).unwrap_or_default();
                 let lbls: Vec<_> = labels.iter().map(|l| format!(":{}", l)).collect();
                 format!("{}CreateNode({}{})\n", prefix, var, lbls.join(""))
             }
             LogicalOp::CreateRelationship {
-                from,
-                to,
-                rel_type,
-                ..
+                from, to, rel_type, ..
             } => {
                 format!(
                     "{}CreateRelationship(({})-[:{}]->({}))\n",
@@ -412,7 +417,11 @@ mod tests {
         for i in 0..10 {
             handler
                 .query(
-                    &format!("CREATE (n:Person {{name: \"Person{}\", age: {}}})", i, 20 + i),
+                    &format!(
+                        "CREATE (n:Person {{name: \"Person{}\", age: {}}})",
+                        i,
+                        20 + i
+                    ),
                     &mut engine,
                     HashMap::new(),
                 )

@@ -21,9 +21,8 @@ static SIMD_AVX2_FMA_SUPPORT: OnceLock<bool> = OnceLock::new();
 #[cfg(all(feature = "simd", target_arch = "x86_64"))]
 #[inline]
 fn has_avx2_fma() -> bool {
-    *SIMD_AVX2_FMA_SUPPORT.get_or_init(|| {
-        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
-    })
+    *SIMD_AVX2_FMA_SUPPORT
+        .get_or_init(|| is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma"))
 }
 
 /// Distance calculator for vectors
@@ -412,8 +411,14 @@ mod simd_neon {
 
         // Combine the four accumulators
         let dot_sum = vaddq_f32(vaddq_f32(dot_sum0, dot_sum1), vaddq_f32(dot_sum2, dot_sum3));
-        let norm_a_sum = vaddq_f32(vaddq_f32(norm_a_sum0, norm_a_sum1), vaddq_f32(norm_a_sum2, norm_a_sum3));
-        let norm_b_sum = vaddq_f32(vaddq_f32(norm_b_sum0, norm_b_sum1), vaddq_f32(norm_b_sum2, norm_b_sum3));
+        let norm_a_sum = vaddq_f32(
+            vaddq_f32(norm_a_sum0, norm_a_sum1),
+            vaddq_f32(norm_a_sum2, norm_a_sum3),
+        );
+        let norm_b_sum = vaddq_f32(
+            vaddq_f32(norm_b_sum0, norm_b_sum1),
+            vaddq_f32(norm_b_sum2, norm_b_sum3),
+        );
 
         // Horizontal sum
         let mut dot = vaddvq_f32(dot_sum);
@@ -637,11 +642,7 @@ mod tests {
         let b = vec![sqrt2_inv, sqrt2_inv];
         let dist = calc.calculate(&a, &b);
         // cos(45°) ≈ 0.707, distance = 1 - 0.707 ≈ 0.293
-        assert!(
-            (dist - 0.293).abs() < 0.01,
-            "Expected ~0.293, got {}",
-            dist
-        );
+        assert!((dist - 0.293).abs() < 0.01, "Expected ~0.293, got {}", dist);
     }
 
     #[test]
@@ -676,7 +677,11 @@ mod tests {
         let a = vec![0.0, 0.0];
         let b = vec![3.0, 4.0];
         let dist = calc.calculate(&a, &b);
-        assert!(approx_eq(dist, 5.0), "Expected 5 (3-4-5 triangle), got {}", dist);
+        assert!(
+            approx_eq(dist, 5.0),
+            "Expected 5 (3-4-5 triangle), got {}",
+            dist
+        );
     }
 
     #[test]
@@ -759,7 +764,11 @@ mod tests {
             let dist = calc.calculate(&a, &b);
 
             // Verify result is reasonable (identical vectors would be 0)
-            assert!(dist >= 0.0 && dist < 1.0, "Cosine distance out of range: {}", dist);
+            assert!(
+                dist >= 0.0 && dist < 1.0,
+                "Cosine distance out of range: {}",
+                dist
+            );
         }
 
         #[test]
@@ -852,7 +861,11 @@ mod tests {
             let dist = calc.calculate(&a, &b);
 
             // Verify result is reasonable (identical vectors would be 0)
-            assert!(dist >= 0.0 && dist < 1.0, "Cosine distance out of range: {}", dist);
+            assert!(
+                dist >= 0.0 && dist < 1.0,
+                "Cosine distance out of range: {}",
+                dist
+            );
         }
 
         #[test]

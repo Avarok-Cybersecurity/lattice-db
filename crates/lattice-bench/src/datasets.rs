@@ -29,9 +29,26 @@ pub fn generate_people(count: usize, seed: u64) -> Vec<PersonData> {
         "Kate", "Leo", "Mia", "Noah", "Olivia", "Paul", "Quinn", "Ruby", "Sam", "Tina",
     ];
     let last_names = [
-        "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez",
-        "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor",
-        "Moore", "Jackson", "Martin",
+        "Smith",
+        "Johnson",
+        "Williams",
+        "Brown",
+        "Jones",
+        "Garcia",
+        "Miller",
+        "Davis",
+        "Rodriguez",
+        "Martinez",
+        "Hernandez",
+        "Lopez",
+        "Gonzalez",
+        "Wilson",
+        "Anderson",
+        "Thomas",
+        "Taylor",
+        "Moore",
+        "Jackson",
+        "Martin",
     ];
     let cities = [
         "New York",
@@ -125,24 +142,10 @@ pub fn generate_products(count: usize, seed: u64) -> Vec<ProductData> {
         "Health",
     ];
     let adjectives = [
-        "Premium",
-        "Basic",
-        "Pro",
-        "Ultra",
-        "Mini",
-        "Mega",
-        "Super",
-        "Classic",
+        "Premium", "Basic", "Pro", "Ultra", "Mini", "Mega", "Super", "Classic",
     ];
     let nouns = [
-        "Widget",
-        "Gadget",
-        "Device",
-        "Tool",
-        "Item",
-        "Product",
-        "Thing",
-        "Object",
+        "Widget", "Gadget", "Device", "Tool", "Item", "Product", "Thing", "Object",
     ];
 
     (0..count)

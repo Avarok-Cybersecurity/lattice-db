@@ -81,9 +81,7 @@ impl QdrantRunner {
         collection_name: &str,
         vector_dim: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
         Ok(Self {
             client,

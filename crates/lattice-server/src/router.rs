@@ -17,9 +17,8 @@ pub type AppState = Arc<AppStateInner>;
 /// Inner application state
 pub struct AppStateInner {
     /// Collection engines keyed by name
-    pub collections: std::sync::RwLock<
-        std::collections::HashMap<String, lattice_core::CollectionEngine>,
-    >,
+    pub collections:
+        std::sync::RwLock<std::collections::HashMap<String, lattice_core::CollectionEngine>>,
 }
 
 impl AppStateInner {
@@ -180,9 +179,8 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
 /// Parse JSON body into a DTO
 fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, LatticeResponse> {
-    serde_json::from_slice(body).map_err(|e| {
-        LatticeResponse::bad_request(&format!("Invalid JSON: {}", e))
-    })
+    serde_json::from_slice(body)
+        .map_err(|e| LatticeResponse::bad_request(&format!("Invalid JSON: {}", e)))
 }
 
 /// Serialize response as JSON
@@ -234,8 +232,8 @@ mod tests {
 
     async_test!(test_invalid_json, {
         let state = new_app_state();
-        let request = LatticeRequest::new("PUT", "/collections/test")
-            .with_body(b"not valid json".to_vec());
+        let request =
+            LatticeRequest::new("PUT", "/collections/test").with_body(b"not valid json".to_vec());
         let response = route(state, request).await;
         assert_eq!(response.status, 400);
     });

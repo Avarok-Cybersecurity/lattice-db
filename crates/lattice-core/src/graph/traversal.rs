@@ -210,7 +210,7 @@ mod tests {
 
         // BFS should visit level by level
         assert_eq!(bfs[0], (1, 0)); // Start
-        // Level 1: 2, 3 (order may vary)
+                                    // Level 1: 2, 3 (order may vary)
         assert!(bfs[1..3].contains(&(2, 1)));
         assert!(bfs[1..3].contains(&(3, 1)));
         // Level 2: 4, 5 (order may vary)

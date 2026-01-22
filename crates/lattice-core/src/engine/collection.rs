@@ -522,7 +522,11 @@ impl CollectionEngine {
 
             // Merge results
             results.extend(pending_results);
-            results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(query.limit);
         }
 
@@ -553,10 +557,7 @@ impl CollectionEngine {
     ///
     /// More efficient than calling `search` multiple times for many queries.
     /// Uses rayon for parallel query processing on native platforms.
-    pub fn search_batch(
-        &self,
-        queries: Vec<SearchQuery>,
-    ) -> LatticeResult<Vec<Vec<SearchResult>>> {
+    pub fn search_batch(&self, queries: Vec<SearchQuery>) -> LatticeResult<Vec<Vec<SearchResult>>> {
         if queries.is_empty() {
             return Ok(vec![]);
         }
@@ -614,7 +615,9 @@ impl CollectionEngine {
 
                 all_results[i].extend(pending_results);
                 all_results[i].sort_by(|a, b| {
-                    a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 all_results[i].truncate(query.limit);
             }
@@ -631,12 +634,8 @@ impl CollectionEngine {
 
         // Use BTreeMap's range for efficient iteration from offset
         let iter: Box<dyn Iterator<Item = (&PointId, &Point)>> = match query.offset {
-            Some(offset) => {
-                Box::new(pts.range((Bound::Excluded(offset), Bound::Unbounded)))
-            }
-            None => {
-                Box::new(pts.iter())
-            }
+            Some(offset) => Box::new(pts.range((Bound::Excluded(offset), Bound::Unbounded))),
+            None => Box::new(pts.iter()),
         };
 
         // Take limit + 1 to check if there are more results
@@ -704,7 +703,10 @@ impl CollectionEngine {
         match &mut point.outgoing_edges {
             Some(edges) => {
                 // Check for duplicate
-                if !edges.iter().any(|e| e.target_id == to_id && e.relation_id == relation_id) {
+                if !edges
+                    .iter()
+                    .any(|e| e.target_id == to_id && e.relation_id == relation_id)
+                {
                     edges.push(edge);
                 }
             }
@@ -864,11 +866,7 @@ impl CollectionEngine {
     fn payload_to_json(&self, payload: &HashMap<String, Vec<u8>>) -> serde_json::Value {
         let map: serde_json::Map<String, serde_json::Value> = payload
             .iter()
-            .filter_map(|(k, v)| {
-                serde_json::from_slice(v)
-                    .ok()
-                    .map(|val| (k.clone(), val))
-            })
+            .filter_map(|(k, v)| serde_json::from_slice(v).ok().map(|val| (k.clone(), val)))
             .collect();
         serde_json::Value::Object(map)
     }
@@ -890,16 +888,20 @@ impl CollectionEngine {
     /// Padding ensures rkyv data starts at 16-byte alignment.
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
         // Serialize config as JSON (small, schema-flexible)
-        let config_bytes = serde_json::to_vec(&self.config)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let config_bytes =
+            serde_json::to_vec(&self.config).map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Serialize points with rkyv (zero-copy, fast)
         let pts = self.points.read().unwrap();
         let points_vec: Vec<Point> = pts.values().cloned().collect();
         drop(pts); // Release lock before serialization
 
-        let points_bytes = rkyv::to_bytes::<RkyvError>(&points_vec)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let points_bytes =
+            rkyv::to_bytes::<RkyvError>(&points_vec).map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Calculate padding to align rkyv data to 16 bytes
         let header_size = 4 + config_bytes.len() + 4; // config_len + config + points_len
@@ -935,8 +937,12 @@ impl CollectionEngine {
         }
 
         // Deserialize config (JSON)
-        let config: CollectionConfig = serde_json::from_slice(&bytes[4..config_end])
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let config: CollectionConfig =
+            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
+                LatticeError::Serialization {
+                    message: e.to_string(),
+                }
+            })?;
 
         // Read points length
         let points_len = u32::from_le_bytes([
@@ -963,7 +969,9 @@ impl CollectionEngine {
 
         // Deserialize points with rkyv
         let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+            .map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Build engine
         let mut engine = Self::new(config)?;
@@ -1283,7 +1291,10 @@ impl CollectionEngine {
         let iter: Box<dyn Iterator<Item = (&PointId, &Point)>> = match query.offset {
             Some(offset) => {
                 // Start after the offset ID
-                Box::new(self.points.range((Bound::Excluded(offset), Bound::Unbounded)))
+                Box::new(
+                    self.points
+                        .range((Bound::Excluded(offset), Bound::Unbounded)),
+                )
             }
             None => {
                 // Start from the beginning
@@ -1354,7 +1365,10 @@ impl CollectionEngine {
         match &mut point.outgoing_edges {
             Some(edges) => {
                 // Check for duplicate
-                if !edges.iter().any(|e| e.target_id == to_id && e.relation_id == relation_id) {
+                if !edges
+                    .iter()
+                    .any(|e| e.target_id == to_id && e.relation_id == relation_id)
+                {
                     edges.push(edge);
                 }
             }
@@ -1510,11 +1524,7 @@ impl CollectionEngine {
     fn payload_to_json(&self, payload: &HashMap<String, Vec<u8>>) -> serde_json::Value {
         let map: serde_json::Map<String, serde_json::Value> = payload
             .iter()
-            .filter_map(|(k, v)| {
-                serde_json::from_slice(v)
-                    .ok()
-                    .map(|val| (k.clone(), val))
-            })
+            .filter_map(|(k, v)| serde_json::from_slice(v).ok().map(|val| (k.clone(), val)))
             .collect();
         serde_json::Value::Object(map)
     }
@@ -1536,13 +1546,17 @@ impl CollectionEngine {
     /// Padding ensures rkyv data starts at 16-byte alignment.
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
         // Serialize config as JSON (small, schema-flexible)
-        let config_bytes = serde_json::to_vec(&self.config)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let config_bytes =
+            serde_json::to_vec(&self.config).map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Serialize points with rkyv (zero-copy, fast)
         let points_vec: Vec<Point> = self.points.values().cloned().collect();
-        let points_bytes = rkyv::to_bytes::<RkyvError>(&points_vec)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let points_bytes =
+            rkyv::to_bytes::<RkyvError>(&points_vec).map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Calculate padding to align rkyv data to 16 bytes
         let header_size = 4 + config_bytes.len() + 4; // config_len + config + points_len
@@ -1578,8 +1592,12 @@ impl CollectionEngine {
         }
 
         // Deserialize config (JSON)
-        let config: CollectionConfig = serde_json::from_slice(&bytes[4..config_end])
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+        let config: CollectionConfig =
+            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
+                LatticeError::Serialization {
+                    message: e.to_string(),
+                }
+            })?;
 
         // Read points length
         let points_len = u32::from_le_bytes([
@@ -1606,7 +1624,9 @@ impl CollectionEngine {
 
         // Deserialize points with rkyv
         let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
-            .map_err(|e| LatticeError::Serialization { message: e.to_string() })?;
+            .map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
 
         // Build engine
         let mut engine = Self::new(config)?;
@@ -1737,7 +1757,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(LatticeError::DimensionMismatch { expected: 4, actual: 2 })
+            Err(LatticeError::DimensionMismatch {
+                expected: 4,
+                actual: 2
+            })
         ));
     }
 

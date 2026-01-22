@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 pub enum LogicalOp {
     // === Scan Operators ===
     /// Scan all nodes in the collection
-    AllNodesScan {
-        variable: String,
-    },
+    AllNodesScan { variable: String },
 
     /// Scan nodes with a specific label (with optional predicate pushdown)
     NodeByLabelScan {
@@ -30,10 +28,7 @@ pub enum LogicalOp {
     },
 
     /// Seek nodes by ID
-    NodeByIdSeek {
-        variable: String,
-        ids: Vec<u64>,
-    },
+    NodeByIdSeek { variable: String, ids: Vec<u64> },
 
     // === Expand Operators ===
     /// Expand from a node along relationships
@@ -80,21 +75,13 @@ pub enum LogicalOp {
     },
 
     /// Skip first N rows
-    Skip {
-        input: Box<LogicalOp>,
-        count: u64,
-    },
+    Skip { input: Box<LogicalOp>, count: u64 },
 
     /// Limit to N rows
-    Limit {
-        input: Box<LogicalOp>,
-        count: u64,
-    },
+    Limit { input: Box<LogicalOp>, count: u64 },
 
     /// Remove duplicate rows
-    Distinct {
-        input: Box<LogicalOp>,
-    },
+    Distinct { input: Box<LogicalOp> },
 
     // === Mutation Operators ===
     /// Create a new node
@@ -159,9 +146,7 @@ impl QueryPlanner {
             Statement::Query(query) => self.plan_query(query),
             Statement::Create(create) => self.plan_create(create),
             Statement::Delete(delete) => self.plan_delete(delete, None),
-            Statement::ReadWrite { query, mutations } => {
-                self.plan_read_write(query, mutations)
-            }
+            Statement::ReadWrite { query, mutations } => self.plan_read_write(query, mutations),
         }?;
 
         // Apply optimizations
@@ -193,7 +178,11 @@ impl QueryPlanner {
 
         // Apply ORDER BY (with optional limit for partial sort optimization)
         // When there's no SKIP, we can pass the LIMIT to Sort for O(n) partial sort
-        let sort_limit = if query.skip.is_none() { query.limit } else { None };
+        let sort_limit = if query.skip.is_none() {
+            query.limit
+        } else {
+            None
+        };
         if let Some(order_by) = &query.order_by {
             plan = LogicalOp::Sort {
                 input: Box::new(plan),
@@ -441,7 +430,9 @@ impl QueryPlanner {
 
         // Choose scan type based on constraints
         let mut plan = if node.labels.is_empty() {
-            LogicalOp::AllNodesScan { variable: variable.clone() }
+            LogicalOp::AllNodesScan {
+                variable: variable.clone(),
+            }
         } else {
             // Use label scan for first label
             LogicalOp::NodeByLabelScan {
@@ -458,13 +449,13 @@ impl QueryPlanner {
                 // Check if node has this label
                 predicates.push(Expr::function(
                     "hasLabel",
-                    vec![Expr::variable(variable.clone()), Expr::literal(label.as_str())],
+                    vec![
+                        Expr::variable(variable.clone()),
+                        Expr::literal(label.as_str()),
+                    ],
                 ));
             }
-            let combined = predicates
-                .into_iter()
-                .reduce(|a, b| a.and(b))
-                .unwrap();
+            let combined = predicates.into_iter().reduce(|a, b| a.and(b)).unwrap();
             plan = LogicalOp::Filter {
                 input: Box::new(plan),
                 predicate: combined,
@@ -516,9 +507,8 @@ impl QueryPlanner {
         let mut predicates = Vec::new();
 
         for (key, value) in &props.entries {
-            predicates.push(
-                Expr::property(Expr::variable(variable), key.as_str()).eq((**value).clone()),
-            );
+            predicates
+                .push(Expr::property(Expr::variable(variable), key.as_str()).eq((**value).clone()));
         }
 
         predicates
@@ -587,10 +577,18 @@ impl QueryPlanner {
 
             // For relationship creation, we need both nodes to have variables
             let from_var = start_node.variable.clone().ok_or_else(|| {
-                CypherError::syntax(0, 0, "Start node must have a variable for relationship creation")
+                CypherError::syntax(
+                    0,
+                    0,
+                    "Start node must have a variable for relationship creation",
+                )
             })?;
             let to_var = end_node.variable.clone().ok_or_else(|| {
-                CypherError::syntax(0, 0, "End node must have a variable for relationship creation")
+                CypherError::syntax(
+                    0,
+                    0,
+                    "End node must have a variable for relationship creation",
+                )
             })?;
 
             // Get relationship type
@@ -629,7 +627,11 @@ impl QueryPlanner {
                 detach: delete.detach,
             })
         } else {
-            Err(CypherError::syntax(0, 0, "DELETE requires at least one variable"))
+            Err(CypherError::syntax(
+                0,
+                0,
+                "DELETE requires at least one variable",
+            ))
         }
     }
 
@@ -664,7 +666,11 @@ impl QueryPlanner {
             // Filter over NodeByLabelScan - push predicate down
             LogicalOp::Filter { input, predicate } => {
                 match *input {
-                    LogicalOp::NodeByLabelScan { variable, label, predicate: None } => {
+                    LogicalOp::NodeByLabelScan {
+                        variable,
+                        label,
+                        predicate: None,
+                    } => {
                         // Push predicate into the scan
                         LogicalOp::NodeByLabelScan {
                             variable,
@@ -676,7 +682,7 @@ impl QueryPlanner {
                     other => LogicalOp::Filter {
                         input: Box::new(self.optimize_predicate_pushdown(other)),
                         predicate,
-                    }
+                    },
                 }
             }
             // Recursively optimize other operators
@@ -684,7 +690,11 @@ impl QueryPlanner {
                 input: Box::new(self.optimize_predicate_pushdown(*input)),
                 items,
             },
-            LogicalOp::Sort { input, items, limit } => LogicalOp::Sort {
+            LogicalOp::Sort {
+                input,
+                items,
+                limit,
+            } => LogicalOp::Sort {
                 input: Box::new(self.optimize_predicate_pushdown(*input)),
                 items,
                 limit,
@@ -722,12 +732,12 @@ mod tests {
     #[test]
     fn test_plan_all_nodes_scan() {
         let planner = QueryPlanner::new();
-        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(Expr::variable(
+        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
+            Expr::variable("n"),
+        )]))
+        .with_match(MatchClause::new(Pattern::node(NodePattern::with_variable(
             "n",
-        ))]))
-        .with_match(MatchClause::new(Pattern::node(
-            NodePattern::with_variable("n"),
-        )));
+        ))));
 
         let plan = planner.plan(&Statement::Query(query)).unwrap();
 
@@ -738,9 +748,9 @@ mod tests {
     #[test]
     fn test_plan_label_scan() {
         let planner = QueryPlanner::new();
-        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(Expr::variable(
-            "n",
-        ))]))
+        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
+            Expr::variable("n"),
+        )]))
         .with_match(MatchClause::new(Pattern::node(
             NodePattern::with_variable("n").with_label("Person"),
         )));
@@ -758,9 +768,9 @@ mod tests {
     #[test]
     fn test_plan_with_filter() {
         let planner = QueryPlanner::new();
-        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(Expr::variable(
-            "n",
-        ))]))
+        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
+            Expr::variable("n"),
+        )]))
         .with_match(MatchClause::new(Pattern::node(
             NodePattern::with_variable("n").with_label("Person"),
         )))
@@ -773,7 +783,13 @@ mod tests {
         // Verify the filter is pushed down into NodeByLabelScan
         if let LogicalOp::Project { input, .. } = plan {
             // With predicate pushdown, Filter is merged into NodeByLabelScan
-            assert!(matches!(*input, LogicalOp::NodeByLabelScan { predicate: Some(_), .. }));
+            assert!(matches!(
+                *input,
+                LogicalOp::NodeByLabelScan {
+                    predicate: Some(_),
+                    ..
+                }
+            ));
         } else {
             panic!("Expected Project");
         }
@@ -782,12 +798,12 @@ mod tests {
     #[test]
     fn test_plan_with_limit() {
         let planner = QueryPlanner::new();
-        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(Expr::variable(
+        let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
+            Expr::variable("n"),
+        )]))
+        .with_match(MatchClause::new(Pattern::node(NodePattern::with_variable(
             "n",
-        ))]))
-        .with_match(MatchClause::new(Pattern::node(
-            NodePattern::with_variable("n"),
-        )))
+        ))))
         .with_limit(10);
 
         let plan = planner.plan(&Statement::Query(query)).unwrap();
@@ -810,14 +826,15 @@ mod tests {
         let create = CreateClause::new(Pattern::node(
             NodePattern::with_variable("n")
                 .with_label("Person")
-                .with_properties(MapLiteral::from_entries([
-                    ("name", Expr::literal("Alice")),
-                ])),
+                .with_properties(MapLiteral::from_entries([("name", Expr::literal("Alice"))])),
         ));
 
         let plan = planner.plan(&Statement::Create(create)).unwrap();
 
-        if let LogicalOp::CreateNode { labels, variable, .. } = plan {
+        if let LogicalOp::CreateNode {
+            labels, variable, ..
+        } = plan
+        {
             assert_eq!(labels[0], "Person");
             assert_eq!(variable, Some(String::from("n")));
         } else {

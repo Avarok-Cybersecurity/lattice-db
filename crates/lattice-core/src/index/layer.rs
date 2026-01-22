@@ -45,7 +45,9 @@ impl HnswNode {
 
     /// Get neighbors at a specific layer
     pub fn neighbors_at(&self, layer: u16) -> &[PointId] {
-        self.neighbors.get(layer as usize).map_or(&[], |v| v.as_slice())
+        self.neighbors
+            .get(layer as usize)
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Get mutable neighbors at a specific layer
@@ -60,7 +62,7 @@ impl HnswNode {
     pub fn add_neighbor(&mut self, layer: u16, neighbor: PointId) {
         if let Some(neighbors) = self.neighbors.get_mut(layer as usize) {
             match neighbors.binary_search(&neighbor) {
-                Ok(_) => {} // Already exists
+                Ok(_) => {}                                  // Already exists
                 Err(pos) => neighbors.insert(pos, neighbor), // Insert at sorted position
             }
         }
@@ -151,8 +153,8 @@ impl LayerManager {
             for neighbors in &mut other_node.neighbors {
                 if let Ok(pos) = neighbors.binary_search(&id) {
                     neighbors.swap_remove(pos); // O(1) instead of O(M) shift
-                    // Re-sort to maintain binary_search invariant
-                    // For nearly-sorted arrays, this is very fast (adaptive algorithm)
+                                                // Re-sort to maintain binary_search invariant
+                                                // For nearly-sorted arrays, this is very fast (adaptive algorithm)
                     neighbors.sort_unstable();
                 }
             }

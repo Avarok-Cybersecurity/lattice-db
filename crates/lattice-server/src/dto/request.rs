@@ -318,7 +318,8 @@ impl<'de> Deserialize<'de> for QueryVector {
                         "nearest" => {
                             // Can be array or object with "vector" field
                             let value: serde_json::Value = map.next_value()?;
-                            vector = Some(extract_vector_from_value(&value).map_err(de::Error::custom)?);
+                            vector =
+                                Some(extract_vector_from_value(&value).map_err(de::Error::custom)?);
                         }
                         _ => {
                             // Skip unknown fields

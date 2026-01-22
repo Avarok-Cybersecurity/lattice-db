@@ -297,9 +297,7 @@ impl SimdI64x4 {
     /// Create with all lanes set to the same value
     #[inline]
     pub const fn splat(value: i64) -> Self {
-        Self {
-            values: [value; 4],
-        }
+        Self { values: [value; 4] }
     }
 
     /// Create with all lanes set to null sentinel
@@ -930,11 +928,7 @@ pub fn radix_sort_i64_indexed(data: &mut [(i64, usize)], ascending: bool) {
 /// For ORDER BY ... LIMIT k, we only need the top-k elements.
 /// Uses radix partitioning to efficiently find and sort the top-k.
 #[cfg(feature = "simd")]
-pub fn radix_partial_sort_i64_indexed(
-    data: &mut [(i64, usize)],
-    k: usize,
-    ascending: bool,
-) {
+pub fn radix_partial_sort_i64_indexed(data: &mut [(i64, usize)], k: usize, ascending: bool) {
     if k == 0 || data.is_empty() {
         return;
     }
@@ -1174,14 +1168,7 @@ mod tests {
     #[cfg(feature = "simd")]
     #[test]
     fn test_radix_sort_ascending() {
-        let mut data: Vec<(i64, usize)> = vec![
-            (5, 0),
-            (2, 1),
-            (8, 2),
-            (1, 3),
-            (9, 4),
-            (3, 5),
-        ];
+        let mut data: Vec<(i64, usize)> = vec![(5, 0), (2, 1), (8, 2), (1, 3), (9, 4), (3, 5)];
         radix_sort_i64_indexed(&mut data, true);
 
         let keys: Vec<i64> = data.iter().map(|(k, _)| *k).collect();
@@ -1196,14 +1183,7 @@ mod tests {
     #[cfg(feature = "simd")]
     #[test]
     fn test_radix_sort_descending() {
-        let mut data: Vec<(i64, usize)> = vec![
-            (5, 0),
-            (2, 1),
-            (8, 2),
-            (1, 3),
-            (9, 4),
-            (3, 5),
-        ];
+        let mut data: Vec<(i64, usize)> = vec![(5, 0), (2, 1), (8, 2), (1, 3), (9, 4), (3, 5)];
         radix_sort_i64_indexed(&mut data, false);
 
         let keys: Vec<i64> = data.iter().map(|(k, _)| *k).collect();
@@ -1213,14 +1193,7 @@ mod tests {
     #[cfg(feature = "simd")]
     #[test]
     fn test_radix_sort_negative_numbers() {
-        let mut data: Vec<(i64, usize)> = vec![
-            (-5, 0),
-            (2, 1),
-            (-8, 2),
-            (0, 3),
-            (9, 4),
-            (-3, 5),
-        ];
+        let mut data: Vec<(i64, usize)> = vec![(-5, 0), (2, 1), (-8, 2), (0, 3), (9, 4), (-3, 5)];
         radix_sort_i64_indexed(&mut data, true);
 
         let keys: Vec<i64> = data.iter().map(|(k, _)| *k).collect();

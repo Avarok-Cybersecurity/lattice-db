@@ -3,8 +3,8 @@
 //! Handles point CRUD operations and graph edges.
 
 use crate::dto::{
-    AddEdgeRequest, AddEdgeResult, ApiResponse, DeletePointsRequest, GetPointsRequest,
-    PointRecord, UpdateResult, UpsertPointsRequest, UpsertResult,
+    AddEdgeRequest, AddEdgeResult, ApiResponse, DeletePointsRequest, GetPointsRequest, PointRecord,
+    UpdateResult, UpsertPointsRequest, UpsertResult,
 };
 #[cfg(feature = "openapi")]
 use crate::dto::{
@@ -67,12 +67,10 @@ pub fn upsert_points(
 
     // Upsert into engine
     match engine.upsert_points(points) {
-        Ok(_) => {
-            json_response(&ApiResponse::ok(UpsertResult {
-                operation_id: 0,
-                status: "completed".to_string(),
-            }))
-        }
+        Ok(_) => json_response(&ApiResponse::ok(UpsertResult {
+            operation_id: 0,
+            status: "completed".to_string(),
+        })),
         Err(e) => LatticeResponse::bad_request(&format!("Upsert failed: {}", e)),
     }
 }
@@ -205,7 +203,12 @@ pub fn add_edge(
         }
     };
 
-    match engine.add_edge(request.from_id, request.to_id, &request.relation, request.weight) {
+    match engine.add_edge(
+        request.from_id,
+        request.to_id,
+        &request.relation,
+        request.weight,
+    ) {
         Ok(_) => json_response(&ApiResponse::ok(AddEdgeResult {
             status: "created".to_string(),
         })),
@@ -217,11 +220,7 @@ pub fn add_edge(
 fn payload_to_json(payload: &HashMap<String, Vec<u8>>) -> HashMap<String, serde_json::Value> {
     payload
         .iter()
-        .filter_map(|(k, v)| {
-            serde_json::from_slice(v)
-                .ok()
-                .map(|val| (k.clone(), val))
-        })
+        .filter_map(|(k, v)| serde_json::from_slice(v).ok().map(|val| (k.clone(), val)))
         .collect()
 }
 

@@ -340,12 +340,7 @@ pub fn traverse_graph(
             let traversal_result = TraversalResult {
                 visited: result.paths.iter().map(|p| p.target_id).collect(),
                 edges,
-                max_depth_reached: result
-                    .paths
-                    .iter()
-                    .map(|p| p.depth)
-                    .max()
-                    .unwrap_or(0),
+                max_depth_reached: result.paths.iter().map(|p| p.depth).max().unwrap_or(0),
             };
 
             json_response(&ApiResponse::ok(traversal_result))
@@ -448,9 +443,11 @@ fn json_to_cypher_value(value: serde_json::Value) -> CypherValue {
         serde_json::Value::Array(arr) => {
             CypherValue::List(arr.into_iter().map(json_to_cypher_value).collect())
         }
-        serde_json::Value::Object(obj) => {
-            CypherValue::Map(obj.into_iter().map(|(k, v)| (k.into(), json_to_cypher_value(v))).collect())
-        }
+        serde_json::Value::Object(obj) => CypherValue::Map(
+            obj.into_iter()
+                .map(|(k, v)| (k.into(), json_to_cypher_value(v)))
+                .collect(),
+        ),
     }
 }
 
@@ -469,13 +466,22 @@ fn cypher_value_to_json(value: CypherValue) -> serde_json::Value {
         CypherValue::Date { year, month, day } => {
             serde_json::json!({ "year": year, "month": month, "day": day })
         }
-        CypherValue::Time { hour, minute, second, nanos } => {
+        CypherValue::Time {
+            hour,
+            minute,
+            second,
+            nanos,
+        } => {
             serde_json::json!({ "hour": hour, "minute": minute, "second": second, "nanos": nanos })
         }
         CypherValue::DateTime { date, time } => {
             serde_json::json!({ "date": cypher_value_to_json(*date), "time": cypher_value_to_json(*time) })
         }
-        CypherValue::Duration { months, days, nanos } => {
+        CypherValue::Duration {
+            months,
+            days,
+            nanos,
+        } => {
             serde_json::json!({ "months": months, "days": days, "nanos": nanos })
         }
         CypherValue::Point2D { x, y, srid } => {
@@ -542,7 +548,9 @@ fn json_value_to_map(value: serde_json::Value) -> HashMap<String, serde_json::Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dto::{CreateCollectionRequest, PointStruct, SearchParams, UpsertPointsRequest, VectorParams};
+    use crate::dto::{
+        CreateCollectionRequest, PointStruct, SearchParams, UpsertPointsRequest, VectorParams,
+    };
     use crate::handlers::{collections::create_collection, points::upsert_points};
     use crate::router::new_app_state;
 

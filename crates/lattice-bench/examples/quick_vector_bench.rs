@@ -47,34 +47,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Upsert benchmark
     println!("--- Upsert Benchmark ---");
-    let lattice_upsert = bench_iterations(ITERATIONS, || {
-        lattice.bench_upsert(SEED + 1).unwrap()
-    });
-    println!("LatticeDB: {:>12.2} µs/op", lattice_upsert.as_secs_f64() * 1_000_000.0);
+    let lattice_upsert = bench_iterations(ITERATIONS, || lattice.bench_upsert(SEED + 1).unwrap());
+    println!(
+        "LatticeDB: {:>12.2} µs/op",
+        lattice_upsert.as_secs_f64() * 1_000_000.0
+    );
 
     if let Some(ref q) = qdrant {
-        let qdrant_upsert = bench_iterations(ITERATIONS, || {
-            q.bench_upsert(SEED + 1).unwrap()
-        });
-        println!("Qdrant:    {:>12.2} µs/op", qdrant_upsert.as_secs_f64() * 1_000_000.0);
-        println!("Speedup:   {:>12.1}x", qdrant_upsert.as_secs_f64() / lattice_upsert.as_secs_f64());
+        let qdrant_upsert = bench_iterations(ITERATIONS, || q.bench_upsert(SEED + 1).unwrap());
+        println!(
+            "Qdrant:    {:>12.2} µs/op",
+            qdrant_upsert.as_secs_f64() * 1_000_000.0
+        );
+        println!(
+            "Speedup:   {:>12.1}x",
+            qdrant_upsert.as_secs_f64() / lattice_upsert.as_secs_f64()
+        );
         results.push(("upsert", lattice_upsert, qdrant_upsert));
     }
     println!();
 
     // 2. Search benchmark
     println!("--- Search Benchmark (k={}) ---", SEARCH_K);
-    let lattice_search = bench_iterations(ITERATIONS, || {
-        lattice.bench_search(SEARCH_K, SEED).unwrap()
-    });
-    println!("LatticeDB: {:>12.2} µs/op", lattice_search.as_secs_f64() * 1_000_000.0);
+    let lattice_search =
+        bench_iterations(ITERATIONS, || lattice.bench_search(SEARCH_K, SEED).unwrap());
+    println!(
+        "LatticeDB: {:>12.2} µs/op",
+        lattice_search.as_secs_f64() * 1_000_000.0
+    );
 
     if let Some(ref q) = qdrant {
-        let qdrant_search = bench_iterations(ITERATIONS, || {
-            q.bench_search(SEARCH_K, SEED).unwrap()
-        });
-        println!("Qdrant:    {:>12.2} µs/op", qdrant_search.as_secs_f64() * 1_000_000.0);
-        println!("Speedup:   {:>12.1}x", qdrant_search.as_secs_f64() / lattice_search.as_secs_f64());
+        let qdrant_search =
+            bench_iterations(ITERATIONS, || q.bench_search(SEARCH_K, SEED).unwrap());
+        println!(
+            "Qdrant:    {:>12.2} µs/op",
+            qdrant_search.as_secs_f64() * 1_000_000.0
+        );
+        println!(
+            "Speedup:   {:>12.1}x",
+            qdrant_search.as_secs_f64() / lattice_search.as_secs_f64()
+        );
         results.push(("search", lattice_search, qdrant_search));
     }
     println!();
@@ -82,34 +94,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3. Retrieve benchmark
     println!("--- Retrieve Benchmark (10 IDs) ---");
     let ids: Vec<u64> = (0..10).collect();
-    let lattice_retrieve = bench_iterations(ITERATIONS, || {
-        lattice.bench_retrieve(&ids).unwrap()
-    });
-    println!("LatticeDB: {:>12.2} µs/op", lattice_retrieve.as_secs_f64() * 1_000_000.0);
+    let lattice_retrieve = bench_iterations(ITERATIONS, || lattice.bench_retrieve(&ids).unwrap());
+    println!(
+        "LatticeDB: {:>12.2} µs/op",
+        lattice_retrieve.as_secs_f64() * 1_000_000.0
+    );
 
     if let Some(ref q) = qdrant {
-        let qdrant_retrieve = bench_iterations(ITERATIONS, || {
-            q.bench_retrieve(&ids).unwrap()
-        });
-        println!("Qdrant:    {:>12.2} µs/op", qdrant_retrieve.as_secs_f64() * 1_000_000.0);
-        println!("Speedup:   {:>12.1}x", qdrant_retrieve.as_secs_f64() / lattice_retrieve.as_secs_f64());
+        let qdrant_retrieve = bench_iterations(ITERATIONS, || q.bench_retrieve(&ids).unwrap());
+        println!(
+            "Qdrant:    {:>12.2} µs/op",
+            qdrant_retrieve.as_secs_f64() * 1_000_000.0
+        );
+        println!(
+            "Speedup:   {:>12.1}x",
+            qdrant_retrieve.as_secs_f64() / lattice_retrieve.as_secs_f64()
+        );
         results.push(("retrieve", lattice_retrieve, qdrant_retrieve));
     }
     println!();
 
     // 4. Scroll benchmark
     println!("--- Scroll Benchmark (limit=100) ---");
-    let lattice_scroll = bench_iterations(ITERATIONS, || {
-        lattice.bench_scroll(100).unwrap()
-    });
-    println!("LatticeDB: {:>12.2} µs/op", lattice_scroll.as_secs_f64() * 1_000_000.0);
+    let lattice_scroll = bench_iterations(ITERATIONS, || lattice.bench_scroll(100).unwrap());
+    println!(
+        "LatticeDB: {:>12.2} µs/op",
+        lattice_scroll.as_secs_f64() * 1_000_000.0
+    );
 
     if let Some(ref q) = qdrant {
-        let qdrant_scroll = bench_iterations(ITERATIONS, || {
-            q.bench_scroll(100).unwrap()
-        });
-        println!("Qdrant:    {:>12.2} µs/op", qdrant_scroll.as_secs_f64() * 1_000_000.0);
-        println!("Speedup:   {:>12.1}x", qdrant_scroll.as_secs_f64() / lattice_scroll.as_secs_f64());
+        let qdrant_scroll = bench_iterations(ITERATIONS, || q.bench_scroll(100).unwrap());
+        println!(
+            "Qdrant:    {:>12.2} µs/op",
+            qdrant_scroll.as_secs_f64() * 1_000_000.0
+        );
+        println!(
+            "Speedup:   {:>12.1}x",
+            qdrant_scroll.as_secs_f64() / lattice_scroll.as_secs_f64()
+        );
         results.push(("scroll", lattice_scroll, qdrant_scroll));
     }
     println!();
@@ -117,7 +139,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Summary
     if !results.is_empty() {
         println!("=== SUMMARY ===");
-        println!("{:<12} {:>15} {:>15} {:>10}", "Operation", "LatticeDB (µs)", "Qdrant (µs)", "Speedup");
+        println!(
+            "{:<12} {:>15} {:>15} {:>10}",
+            "Operation", "LatticeDB (µs)", "Qdrant (µs)", "Speedup"
+        );
         println!("{}", "-".repeat(55));
         for (op, lattice_time, qdrant_time) in &results {
             let speedup = qdrant_time.as_secs_f64() / lattice_time.as_secs_f64();

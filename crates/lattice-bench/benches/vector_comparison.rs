@@ -50,7 +50,13 @@ fn bench_upsert(c: &mut Criterion) {
         // LatticeDB
         let mut lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
-            b.iter(|| black_box(lattice.bench_upsert(SEED + 1).expect("LatticeDB upsert failed")))
+            b.iter(|| {
+                black_box(
+                    lattice
+                        .bench_upsert(SEED + 1)
+                        .expect("LatticeDB upsert failed"),
+                )
+            })
         });
         drop(lattice);
 
@@ -58,7 +64,9 @@ fn bench_upsert(c: &mut Criterion) {
         if has_qdrant {
             if let Ok(qdrant) = setup_qdrant(*size) {
                 group.bench_with_input(BenchmarkId::new("Qdrant", size), size, |b, _| {
-                    b.iter(|| black_box(qdrant.bench_upsert(SEED + 1).expect("Qdrant upsert failed")))
+                    b.iter(|| {
+                        black_box(qdrant.bench_upsert(SEED + 1).expect("Qdrant upsert failed"))
+                    })
                 });
             }
         }
@@ -152,9 +160,7 @@ fn bench_scroll(c: &mut Criterion) {
         // LatticeDB
         let lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
-            b.iter(|| {
-                black_box(lattice.bench_scroll(100).expect("LatticeDB scroll failed"))
-            })
+            b.iter(|| black_box(lattice.bench_scroll(100).expect("LatticeDB scroll failed")))
         });
         drop(lattice);
 

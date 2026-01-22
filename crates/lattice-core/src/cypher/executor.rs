@@ -309,9 +309,7 @@ impl<'a> ExecutionContext<'a> {
                     if start + label_bytes.len() < labels_bytes.len() {
                         // Check if the label matches
                         let end = start + label_bytes.len();
-                        if &labels_bytes[start..end] == label_bytes
-                            && labels_bytes[end] == quote
-                        {
+                        if &labels_bytes[start..end] == label_bytes && labels_bytes[end] == quote {
                             return true;
                         }
                     }
@@ -381,7 +379,11 @@ impl QueryExecutor {
     }
 
     /// Execute a logical plan
-    pub fn execute(&self, plan: &LogicalOp, ctx: &mut ExecutionContext) -> CypherResult<QueryResult> {
+    pub fn execute(
+        &self,
+        plan: &LogicalOp,
+        ctx: &mut ExecutionContext,
+    ) -> CypherResult<QueryResult> {
         let start = std::time::Instant::now();
 
         let (internal_rows, mut stats) = self.execute_op(plan, ctx)?;
@@ -392,10 +394,8 @@ impl QueryExecutor {
         stats.execution_time_ms = start.elapsed().as_millis() as u64;
 
         // Convert internal SmallVec rows to Vec for public API
-        let rows: Vec<Vec<CypherValue>> = internal_rows
-            .into_iter()
-            .map(|row| row.to_vec())
-            .collect();
+        let rows: Vec<Vec<CypherValue>> =
+            internal_rows.into_iter().map(|row| row.to_vec()).collect();
 
         Ok(QueryResult {
             columns,
@@ -412,12 +412,12 @@ impl QueryExecutor {
     ) -> CypherResult<(InternalRows, QueryStats)> {
         match op {
             LogicalOp::AllNodesScan { variable } => self.execute_all_nodes_scan(variable, ctx),
-            LogicalOp::NodeByLabelScan { variable, label, predicate } => {
-                self.execute_label_scan(variable, label, predicate.as_deref(), ctx)
-            }
-            LogicalOp::NodeByIdSeek { variable, ids } => {
-                self.execute_id_seek(variable, ids, ctx)
-            }
+            LogicalOp::NodeByLabelScan {
+                variable,
+                label,
+                predicate,
+            } => self.execute_label_scan(variable, label, predicate.as_deref(), ctx),
+            LogicalOp::NodeByIdSeek { variable, ids } => self.execute_id_seek(variable, ids, ctx),
             LogicalOp::Expand {
                 input,
                 from,
@@ -440,7 +440,11 @@ impl QueryExecutor {
             ),
             LogicalOp::Filter { input, predicate } => self.execute_filter(input, predicate, ctx),
             LogicalOp::Project { input, items } => self.execute_project(input, items, ctx),
-            LogicalOp::Sort { input, items, limit } => self.execute_sort(input, items, *limit, ctx),
+            LogicalOp::Sort {
+                input,
+                items,
+                limit,
+            } => self.execute_sort(input, items, *limit, ctx),
             LogicalOp::Skip { input, count } => self.execute_skip(input, *count, ctx),
             LogicalOp::Limit { input, count } => self.execute_limit(input, *count, ctx),
             LogicalOp::Distinct { input } => self.execute_distinct(input, ctx),
@@ -455,7 +459,14 @@ impl QueryExecutor {
                 rel_type,
                 properties,
                 variable,
-            } => self.execute_create_relationship(from, to, rel_type, properties, variable.as_ref(), ctx),
+            } => self.execute_create_relationship(
+                from,
+                to,
+                rel_type,
+                properties,
+                variable.as_ref(),
+                ctx,
+            ),
             LogicalOp::DeleteNode {
                 input,
                 variable,
@@ -536,7 +547,10 @@ impl QueryExecutor {
         let rows: InternalRows = ids
             .iter()
             .zip(points.iter())
-            .filter_map(|(&id, opt)| opt.as_ref().map(|_| ExecutorRow::single(CypherValue::NodeRef(id))))
+            .filter_map(|(&id, opt)| {
+                opt.as_ref()
+                    .map(|_| ExecutorRow::single(CypherValue::NodeRef(id)))
+            })
             .collect();
 
         Ok((rows, QueryStats::default()))
@@ -798,7 +812,9 @@ impl QueryExecutor {
         stats: QueryStats,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         // Create (key, index) pairs for sorting
-        let mut keyed_indices: Vec<(i64, usize)> = keys.into_iter().enumerate()
+        let mut keyed_indices: Vec<(i64, usize)> = keys
+            .into_iter()
+            .enumerate()
             .map(|(idx, key)| (key, idx))
             .collect();
 
@@ -908,7 +924,9 @@ impl QueryExecutor {
         let node_ids = Self::extract_node_ids(input_rows)?;
 
         // Use the highly optimized i64 extraction (no cloning, no CypherValue overhead)
-        let keys = ctx.collection.batch_extract_i64_property(&node_ids, property);
+        let keys = ctx
+            .collection
+            .batch_extract_i64_property(&node_ids, property);
         Some((keys, items[0].ascending))
     }
 
@@ -941,12 +959,13 @@ impl QueryExecutor {
         let node_ids = Self::extract_node_ids(input_rows)?;
 
         // Batch extract raw property bytes (single lock acquisition, no Point clone)
-        let raw_properties = ctx.collection.batch_extract_properties(&node_ids, &property_names);
+        let raw_properties = ctx
+            .collection
+            .batch_extract_properties(&node_ids, &property_names);
 
         // Parallel deserialize JSON bytes to CypherValues
-        let prefetched: Vec<Vec<CypherValue>> = parallel::enumerate_map_collect(
-            &raw_properties,
-            |_idx, row_properties| {
+        let prefetched: Vec<Vec<CypherValue>> =
+            parallel::enumerate_map_collect(&raw_properties, |_idx, row_properties| {
                 row_properties
                     .iter()
                     .map(|opt_bytes| {
@@ -956,8 +975,7 @@ impl QueryExecutor {
                             .unwrap_or(CypherValue::Null)
                     })
                     .collect()
-            },
-        );
+            });
 
         Some(prefetched)
     }
@@ -1033,8 +1051,7 @@ impl QueryExecutor {
 
         // Use HashMap with collision detection to avoid hash collision bugs
         // Key: hash, Value: indices of rows with that hash
-        let mut seen: HashMap<u64, SmallVec<[usize; 1]>> =
-            HashMap::with_capacity(input_rows.len());
+        let mut seen: HashMap<u64, SmallVec<[usize; 1]>> = HashMap::with_capacity(input_rows.len());
         let mut result_rows = Vec::with_capacity(input_rows.len());
 
         for (idx, row) in input_rows.iter().enumerate() {
@@ -1177,8 +1194,10 @@ impl QueryExecutor {
         let label_bitmap = if !labels.is_empty() {
             // Store labels as JSON array (for backwards compatibility)
             let labels_json: Vec<&str> = labels.iter().map(|l| l.as_str()).collect();
-            let labels_bytes = serde_json::to_vec(&labels_json)
-                .map_err(|e| CypherError::Internal { message: e.to_string() })?;
+            let labels_bytes =
+                serde_json::to_vec(&labels_json).map_err(|e| CypherError::Internal {
+                    message: e.to_string(),
+                })?;
             payload.insert("_labels".to_string(), labels_bytes);
 
             // Compute bitmap for fast label checks
@@ -1206,7 +1225,9 @@ impl QueryExecutor {
 
         ctx.collection
             .upsert_points(vec![point])
-            .map_err(|e| CypherError::Internal { message: e.to_string() })?;
+            .map_err(|e| CypherError::Internal {
+                message: e.to_string(),
+            })?;
 
         let mut stats = QueryStats::default();
         stats.nodes_created = 1;
@@ -1267,7 +1288,9 @@ impl QueryExecutor {
 
         ctx.collection
             .add_edge(from_id, to_id, rel_type.as_str(), weight)
-            .map_err(|e| CypherError::Internal { message: e.to_string() })?;
+            .map_err(|e| CypherError::Internal {
+                message: e.to_string(),
+            })?;
 
         let mut stats = QueryStats::default();
         stats.relationships_created = 1;
@@ -1337,7 +1360,9 @@ impl QueryExecutor {
 
                 // For now, assume first column is the variable
                 // TODO: Proper variable binding
-                row.first().cloned().ok_or_else(|| CypherError::unknown_variable(name.as_str()))
+                row.first()
+                    .cloned()
+                    .ok_or_else(|| CypherError::unknown_variable(name.as_str()))
             }
 
             Expr::Property { expr, property } => {
@@ -1649,7 +1674,10 @@ impl QueryExecutor {
                 if let Some(labels_bytes) = point.payload.get("_labels") {
                     if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
                         return Ok(CypherValue::list(
-                            labels.into_iter().map(CypherValue::from).collect::<Vec<_>>(),
+                            labels
+                                .into_iter()
+                                .map(CypherValue::from)
+                                .collect::<Vec<_>>(),
                         ));
                     }
                 }
@@ -1715,8 +1743,10 @@ impl QueryExecutor {
         }
 
         // Fall back to serde_json for complex types (arrays, objects, escaped strings)
-        let json: serde_json::Value = serde_json::from_slice(bytes)
-            .map_err(|e| CypherError::Internal { message: e.to_string() })?;
+        let json: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|e| CypherError::Internal {
+                message: e.to_string(),
+            })?;
 
         self.json_to_cypher_value(&json)
     }
@@ -1787,7 +1817,9 @@ impl QueryExecutor {
     /// Convert CypherValue to JSON bytes
     fn cypher_value_to_json_bytes(&self, value: &CypherValue) -> CypherResult<Vec<u8>> {
         let json = self.cypher_value_to_json(value)?;
-        serde_json::to_vec(&json).map_err(|e| CypherError::Internal { message: e.to_string() })
+        serde_json::to_vec(&json).map_err(|e| CypherError::Internal {
+            message: e.to_string(),
+        })
     }
 
     /// Convert CypherValue to JSON

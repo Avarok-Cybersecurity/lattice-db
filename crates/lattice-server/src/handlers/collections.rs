@@ -8,7 +8,9 @@ use crate::dto::{
     HnswConfigResponse, OptimizersConfigResponse, OptimizersStatus, VectorParamsResponse,
 };
 #[cfg(feature = "openapi")]
-use crate::dto::{ApiResponseBoolResult, ApiResponseCollectionInfo, ApiResponseCollectionsResponse};
+use crate::dto::{
+    ApiResponseBoolResult, ApiResponseCollectionInfo, ApiResponseCollectionsResponse,
+};
 use crate::router::{json_response, AppState};
 use lattice_core::{
     CollectionConfig, CollectionEngine, Distance, HnswConfig, LatticeResponse, VectorConfig,

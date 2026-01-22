@@ -88,7 +88,13 @@ impl ProductQuantizer {
     /// Create with default parameters for a given dimension
     pub fn default_for_dim(dim: usize) -> Self {
         // Choose M based on dimension
-        let m = if dim >= 128 { 8 } else if dim >= 64 { 4 } else { 2 };
+        let m = if dim >= 128 {
+            8
+        } else if dim >= 64 {
+            4
+        } else {
+            2
+        };
         Self::new(dim, m, DEFAULT_K)
     }
 
@@ -117,13 +123,12 @@ impl ProductQuantizer {
             let end = start + self.dsub;
 
             // Extract subvectors for this segment
-            let subvectors: Vec<Vec<f32>> = vectors
-                .iter()
-                .map(|v| v[start..end].to_vec())
-                .collect();
+            let subvectors: Vec<Vec<f32>> =
+                vectors.iter().map(|v| v[start..end].to_vec()).collect();
 
             // Run k-means clustering
-            let centroids = kmeans_clustering(&subvectors, self.k, max_iters, self.anisotropic_weight);
+            let centroids =
+                kmeans_clustering(&subvectors, self.k, max_iters, self.anisotropic_weight);
 
             self.codebooks[sub_idx] = centroids;
         }
@@ -258,9 +263,9 @@ impl ProductQuantizer {
 
     /// Check if trained (has non-zero codebooks)
     pub fn is_trained(&self) -> bool {
-        self.codebooks.iter().any(|cb| {
-            cb.iter().any(|c| c.iter().any(|&v| v != 0.0))
-        })
+        self.codebooks
+            .iter()
+            .any(|cb| cb.iter().any(|c| c.iter().any(|&v| v != 0.0)))
     }
 }
 
@@ -363,7 +368,8 @@ impl PQIndex {
         let table = self.pq.build_distance_table(query);
 
         // Compute distances to all vectors
-        let mut candidates: Vec<(PointId, f32)> = self.codes
+        let mut candidates: Vec<(PointId, f32)> = self
+            .codes
             .iter()
             .map(|(&id, code)| {
                 let dist = self.pq.asymmetric_distance(&table, code);
@@ -430,9 +436,10 @@ impl PQIndex {
     /// Get memory usage in bytes
     pub fn memory_bytes(&self) -> usize {
         let codes_size = self.codes.len() * self.pq.num_subvectors();
-        let vectors_size = self.vectors.as_ref().map_or(0, |v| {
-            v.len() * self.pq.dim * std::mem::size_of::<f32>()
-        });
+        let vectors_size = self
+            .vectors
+            .as_ref()
+            .map_or(0, |v| v.len() * self.pq.dim * std::mem::size_of::<f32>());
         codes_size + vectors_size
     }
 }
@@ -748,9 +755,7 @@ mod tests {
         let n = 100;
         let k = 10;
 
-        let vectors: Vec<Vec<f32>> = (0..n)
-            .map(|i| random_vector(dim, i as u64))
-            .collect();
+        let vectors: Vec<Vec<f32>> = (0..n).map(|i| random_vector(dim, i as u64)).collect();
 
         let centroids = kmeans_clustering(&vectors, k, 50, 0.0);
 

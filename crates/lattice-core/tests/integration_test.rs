@@ -151,8 +151,11 @@ fn test_full_workflow_graph_operations() {
     let traversal_similar = traversal_similar.unwrap();
 
     // With "similar" relation only: 1 -> 2 -> 3 -> 6
-    let similar_targets: HashSet<PointId> =
-        traversal_similar.paths.iter().map(|p| p.target_id).collect();
+    let similar_targets: HashSet<PointId> = traversal_similar
+        .paths
+        .iter()
+        .map(|p| p.target_id)
+        .collect();
     assert!(similar_targets.contains(&2));
     assert!(similar_targets.contains(&3));
     assert!(similar_targets.contains(&6));
@@ -267,9 +270,7 @@ fn test_point_with_payload() {
     point
         .payload
         .insert("category".to_string(), br#""test""#.to_vec());
-    point
-        .payload
-        .insert("score".to_string(), b"42".to_vec());
+    point.payload.insert("score".to_string(), b"42".to_vec());
 
     engine.upsert_points(vec![point]).unwrap();
 
@@ -435,7 +436,10 @@ fn test_combined_vector_and_graph_search() {
     let traversal = engine.traverse(entry_point, 3, None).unwrap();
 
     // Should discover related content through graph
-    assert!(traversal.nodes_visited >= 2, "Should discover connected nodes");
+    assert!(
+        traversal.nodes_visited >= 2,
+        "Should discover connected nodes"
+    );
 }
 
 #[test]
@@ -448,7 +452,9 @@ fn test_scroll_pagination() {
     // Insert 25 points
     for i in 0..25 {
         let vector = vec![i as f32 * 0.1, 0.0, 0.0, 0.0];
-        engine.upsert_points(vec![Point::new_vector(i, vector)]).unwrap();
+        engine
+            .upsert_points(vec![Point::new_vector(i, vector)])
+            .unwrap();
     }
 
     // First page
@@ -489,6 +495,12 @@ fn test_score_threshold() {
     let results = engine.search(query).unwrap();
 
     // Point 1 should be returned (score ~0), point 3 should be filtered (score ~1.0)
-    assert!(results.iter().any(|r| r.id == 1), "Point 1 should pass threshold");
-    assert!(!results.iter().any(|r| r.id == 3), "Point 3 should be filtered by threshold");
+    assert!(
+        results.iter().any(|r| r.id == 1),
+        "Point 1 should pass threshold"
+    );
+    assert!(
+        !results.iter().any(|r| r.id == 3),
+        "Point 3 should be filtered by threshold"
+    );
 }

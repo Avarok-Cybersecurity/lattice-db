@@ -470,7 +470,7 @@ mod tests {
     fn test_partial_sort_by_descending() {
         let mut data = vec![3, 1, 4, 1, 5, 9, 2, 6, 5, 3];
         partial_sort_by(&mut data, 3, |a, b| b.cmp(a)); // Descending
-        // Top 3 largest should be sorted at the beginning
+                                                        // Top 3 largest should be sorted at the beginning
         assert_eq!(&data[..3], &[9, 6, 5]);
     }
 }

@@ -82,6 +82,8 @@ pub use executor::{ExecutionContext, QueryResult, QueryStats};
 pub use handler::{CypherHandler, DefaultCypherHandler};
 pub use parser::CypherParser;
 pub use planner::{LogicalOp, QueryPlanner};
-pub use row::{ExecutorRow, PackedI64, ParallelRow, ParallelRowItem, Row, RowItem, SimdIntRow, SmallRow};
 #[cfg(feature = "simd")]
 pub use row::{radix_partial_sort_i64_indexed, radix_sort_i64_indexed, SimdI64x4, SimdRowBatch};
+pub use row::{
+    ExecutorRow, PackedI64, ParallelRow, ParallelRowItem, Row, RowItem, SimdIntRow, SmallRow,
+};

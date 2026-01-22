@@ -257,27 +257,36 @@ mod tests {
         assert!(config.validate().is_ok());
 
         // Invalid m
-        let config = HnswConfig { m: 1, ..config.clone() };
+        let config = HnswConfig {
+            m: 1,
+            ..config.clone()
+        };
         assert!(config.validate().is_err());
 
         // Invalid m0 < m
-        let config = HnswConfig { m0: 8, ..HnswConfig {
-            m: 16,
-            m0: 32,
-            ml: HnswConfig::recommended_ml(16),
-            ef: 100,
-            ef_construction: 200,
-        }};
+        let config = HnswConfig {
+            m0: 8,
+            ..HnswConfig {
+                m: 16,
+                m0: 32,
+                ml: HnswConfig::recommended_ml(16),
+                ef: 100,
+                ef_construction: 200,
+            }
+        };
         assert!(config.validate().is_err());
 
         // Invalid ml
-        let config = HnswConfig { ml: 0.0, ..HnswConfig {
-            m: 16,
-            m0: 32,
-            ml: HnswConfig::recommended_ml(16),
-            ef: 100,
-            ef_construction: 200,
-        }};
+        let config = HnswConfig {
+            ml: 0.0,
+            ..HnswConfig {
+                m: 16,
+                m0: 32,
+                ml: HnswConfig::recommended_ml(16),
+                ef: 100,
+                ef_construction: 200,
+            }
+        };
         assert!(config.validate().is_err());
     }
 
@@ -346,9 +355,6 @@ mod tests {
             serde_json::to_string(&Distance::Euclid).unwrap(),
             r#""euclid""#
         );
-        assert_eq!(
-            serde_json::to_string(&Distance::Dot).unwrap(),
-            r#""dot""#
-        );
+        assert_eq!(serde_json::to_string(&Distance::Dot).unwrap(), r#""dot""#);
     }
 }

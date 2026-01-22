@@ -144,7 +144,7 @@ impl HnswIndex {
             distance: DistanceCalculator::new(metric),
             layers: LayerManager::new(),
             vectors: DenseVectorStore::new(0), // Dimension set from first vector
-            rng_state: 42, // Deterministic for testing
+            rng_state: 42,                     // Deterministic for testing
         }
     }
 
@@ -184,12 +184,8 @@ impl HnswIndex {
             let layer = layer as u16;
 
             // Find ef_construction nearest neighbors
-            let neighbors = self.search_layer(
-                &vector,
-                &[current],
-                self.config.ef_construction,
-                layer,
-            );
+            let neighbors =
+                self.search_layer(&vector, &[current], self.config.ef_construction, layer);
 
             // Select M best neighbors (M0 for layer 0)
             let max_neighbors = if layer == 0 {
@@ -302,12 +298,7 @@ impl HnswIndex {
     /// # Returns
     /// Vector of results for each query, in the same order as input
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn search_batch(
-        &self,
-        queries: &[&[f32]],
-        k: usize,
-        ef: usize,
-    ) -> Vec<Vec<SearchResult>> {
+    pub fn search_batch(&self, queries: &[&[f32]], k: usize, ef: usize) -> Vec<Vec<SearchResult>> {
         if queries.is_empty() || self.layers.is_empty() {
             return vec![vec![]; queries.len()];
         }
@@ -321,12 +312,7 @@ impl HnswIndex {
 
     /// Batch search for multiple queries (WASM version - sequential)
     #[cfg(target_arch = "wasm32")]
-    pub fn search_batch(
-        &self,
-        queries: &[&[f32]],
-        k: usize,
-        ef: usize,
-    ) -> Vec<Vec<SearchResult>> {
+    pub fn search_batch(&self, queries: &[&[f32]], k: usize, ef: usize) -> Vec<Vec<SearchResult>> {
         queries
             .iter()
             .map(|query| self.search(query, k, ef))
@@ -392,7 +378,8 @@ impl HnswIndex {
     ///
     /// Returns estimated memory used by vectors (not including graph structure).
     pub fn vector_memory_bytes(&self) -> usize {
-        self.vectors.len() * (self.vectors.dim() * std::mem::size_of::<f32>() + std::mem::size_of::<PointId>())
+        self.vectors.len()
+            * (self.vectors.dim() * std::mem::size_of::<f32>() + std::mem::size_of::<PointId>())
     }
 
     // --- Private methods ---
@@ -400,7 +387,10 @@ impl HnswIndex {
     /// Generate random level for new node
     fn random_level(&mut self) -> u16 {
         // Simple LCG random number generator
-        self.rng_state = self.rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.rng_state = self
+            .rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1);
         let random = (self.rng_state >> 33) as f64 / (1u64 << 31) as f64;
 
         // Level = floor(-ln(uniform) * ml)
@@ -496,8 +486,14 @@ impl HnswIndex {
             for &ep in entry_points {
                 scratch.visited.insert(ep);
                 let dist = self.calc_distance(query, ep);
-                scratch.candidates.push(Reverse(Candidate { id: ep, distance: dist }));
-                scratch.results.push(Candidate { id: ep, distance: dist });
+                scratch.candidates.push(Reverse(Candidate {
+                    id: ep,
+                    distance: dist,
+                }));
+                scratch.results.push(Candidate {
+                    id: ep,
+                    distance: dist,
+                });
                 if dist > scratch.worst_distance {
                     scratch.worst_distance = dist;
                 }
@@ -532,10 +528,14 @@ impl HnswIndex {
                     // Process results
                     for (neighbor, dist) in neighbor_dists {
                         // Add to results if better than worst or room available
-                        let should_add = scratch.results.len() < ef || dist < scratch.worst_distance;
+                        let should_add =
+                            scratch.results.len() < ef || dist < scratch.worst_distance;
 
                         if should_add {
-                            let candidate = Candidate { id: neighbor, distance: dist };
+                            let candidate = Candidate {
+                                id: neighbor,
+                                distance: dist,
+                            };
                             scratch.candidates.push(Reverse(candidate));
                             scratch.results.push(candidate);
 
@@ -545,10 +545,8 @@ impl HnswIndex {
                                     a.distance.partial_cmp(&b.distance).unwrap()
                                 });
                                 scratch.results.truncate(ef);
-                                scratch.worst_distance = scratch
-                                    .results
-                                    .last()
-                                    .map_or(f32::MAX, |c| c.distance);
+                                scratch.worst_distance =
+                                    scratch.results.last().map_or(f32::MAX, |c| c.distance);
                             }
                         }
                     }
@@ -556,7 +554,9 @@ impl HnswIndex {
             }
 
             // Final sort and return (closest first)
-            scratch.results.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+            scratch
+                .results
+                .sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
             scratch.results.truncate(ef);
             scratch.results.drain(..).collect()
         })
@@ -583,8 +583,14 @@ impl HnswIndex {
         // Initialize with entry points
         for &ep in entry_points {
             let dist = self.calc_distance(query, ep);
-            candidates.push(Reverse(Candidate { id: ep, distance: dist }));
-            results.push(Candidate { id: ep, distance: dist });
+            candidates.push(Reverse(Candidate {
+                id: ep,
+                distance: dist,
+            }));
+            results.push(Candidate {
+                id: ep,
+                distance: dist,
+            });
             if dist > worst_distance {
                 worst_distance = dist;
             }
@@ -622,7 +628,10 @@ impl HnswIndex {
                     let should_add = results.len() < ef || dist < worst_distance;
 
                     if should_add {
-                        let candidate = Candidate { id: neighbor, distance: dist };
+                        let candidate = Candidate {
+                            id: neighbor,
+                            distance: dist,
+                        };
                         candidates.push(Reverse(candidate));
                         results.push(candidate);
 
@@ -663,7 +672,9 @@ impl HnswIndex {
         if ids.len() >= PARALLEL_THRESHOLD {
             ids.par_iter()
                 .filter_map(|&id| {
-                    self.vectors.get(id).map(|vec| (id, self.distance.calculate(query, vec)))
+                    self.vectors
+                        .get(id)
+                        .map(|vec| (id, self.distance.calculate(query, vec)))
                 })
                 .collect()
         } else {
@@ -801,17 +812,18 @@ impl HnswIndex {
         let mut pq = ProductQuantizer::new(dim, m, 256);
 
         // Collect training vectors
-        let training_vectors: Vec<Vector> = if training_sample_size > 0 && training_sample_size < self.vectors.len() {
-            // Sample subset for training
-            self.vectors
-                .values()
-                .take(training_sample_size)
-                .map(|v| v.to_vec())
-                .collect()
-        } else {
-            // Use all vectors
-            self.vectors.values().map(|v| v.to_vec()).collect()
-        };
+        let training_vectors: Vec<Vector> =
+            if training_sample_size > 0 && training_sample_size < self.vectors.len() {
+                // Sample subset for training
+                self.vectors
+                    .values()
+                    .take(training_sample_size)
+                    .map(|v| v.to_vec())
+                    .collect()
+            } else {
+                // Use all vectors
+                self.vectors.values().map(|v| v.to_vec()).collect()
+            };
 
         // Train the quantizer
         pq.train_default(&training_vectors);
@@ -865,7 +877,8 @@ impl HnswIndex {
                 let mut changed = false;
                 if let Some(node) = self.layers.get_node(current) {
                     for &neighbor in node.neighbors_at(layer as u16) {
-                        let dist = accelerator.approximate_distance_with_table(&dist_table, neighbor);
+                        let dist =
+                            accelerator.approximate_distance_with_table(&dist_table, neighbor);
                         if dist < current_dist {
                             current = neighbor;
                             current_dist = dist;
@@ -880,7 +893,13 @@ impl HnswIndex {
         }
 
         // Phase 2: Search layer 0 with PQ-accelerated distances
-        let candidates = self.search_layer_pq(query, &[current], ef * rerank_factor, &dist_table, accelerator);
+        let candidates = self.search_layer_pq(
+            query,
+            &[current],
+            ef * rerank_factor,
+            &dist_table,
+            accelerator,
+        );
 
         // Phase 3: Re-rank top candidates with exact distances
         let rerank_count = k * rerank_factor;
@@ -888,7 +907,9 @@ impl HnswIndex {
             .into_iter()
             .take(rerank_count)
             .filter_map(|c| {
-                self.vectors.get(c.id).map(|v| (c.id, self.distance.calculate(query, v)))
+                self.vectors
+                    .get(c.id)
+                    .map(|v| (c.id, self.distance.calculate(query, v)))
             })
             .collect();
 
@@ -917,8 +938,14 @@ impl HnswIndex {
         // Initialize with entry points
         for &ep in entry_points {
             let dist = accelerator.approximate_distance_with_table(dist_table, ep);
-            candidates.push(Reverse(Candidate { id: ep, distance: dist }));
-            results.push(Candidate { id: ep, distance: dist });
+            candidates.push(Reverse(Candidate {
+                id: ep,
+                distance: dist,
+            }));
+            results.push(Candidate {
+                id: ep,
+                distance: dist,
+            });
         }
 
         while let Some(Reverse(current)) = candidates.pop() {
@@ -933,8 +960,12 @@ impl HnswIndex {
             if let Some(node) = self.layers.get_node(current.id) {
                 for &neighbor in node.neighbors_at(0) {
                     if visited.insert(neighbor) {
-                        let dist = accelerator.approximate_distance_with_table(dist_table, neighbor);
-                        let candidate = Candidate { id: neighbor, distance: dist };
+                        let dist =
+                            accelerator.approximate_distance_with_table(dist_table, neighbor);
+                        let candidate = Candidate {
+                            id: neighbor,
+                            distance: dist,
+                        };
 
                         let should_add = results.len() < ef
                             || results.peek().map_or(true, |w| dist < w.distance);
@@ -1249,9 +1280,7 @@ mod tests {
         }
 
         // Create 10 batch queries
-        let queries: Vec<Vec<f32>> = (0..10)
-            .map(|i| random_vector(32, 1000 + i))
-            .collect();
+        let queries: Vec<Vec<f32>> = (0..10).map(|i| random_vector(32, 1000 + i)).collect();
 
         // Convert to references for batch search API
         let query_refs: Vec<&[f32]> = queries.iter().map(|q| q.as_slice()).collect();
@@ -1363,7 +1392,8 @@ mod tests {
 
         // PQ results should have reasonable recall (at least 4/10 overlap)
         // Note: PQ is an approximation, exact recall depends on data distribution
-        let regular_ids: std::collections::HashSet<_> = regular_results.iter().map(|r| r.id).collect();
+        let regular_ids: std::collections::HashSet<_> =
+            regular_results.iter().map(|r| r.id).collect();
         let pq_ids: std::collections::HashSet<_> = pq_results.iter().map(|r| r.id).collect();
         let overlap = regular_ids.intersection(&pq_ids).count();
 

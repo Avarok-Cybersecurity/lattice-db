@@ -566,7 +566,8 @@ impl CypherParser {
             }
         }
 
-        let mut result = comparison.ok_or_else(|| CypherError::syntax(0, 0, "Missing comparison"))?;
+        let mut result =
+            comparison.ok_or_else(|| CypherError::syntax(0, 0, "Missing comparison"))?;
 
         // Apply NOT operators (odd number = NOT, even = no-op)
         if not_count % 2 == 1 {
@@ -1241,9 +1242,8 @@ mod tests {
     #[test]
     fn test_parse_complex_where() {
         let parser = CypherParser::new();
-        let result = parser.parse(
-            "MATCH (n:Person) WHERE n.age > 25 AND n.name = \"Alice\" RETURN n"
-        );
+        let result =
+            parser.parse("MATCH (n:Person) WHERE n.age > 25 AND n.name = \"Alice\" RETURN n");
         assert!(result.is_ok(), "Failed: {:?}", result);
     }
 

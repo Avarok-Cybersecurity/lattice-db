@@ -27,7 +27,9 @@ pub type Vector = Vec<f32>;
 ///
 /// Uses `#[repr(C)]` for consistent memory layout across WASM boundaries.
 /// The `rkyv` derives enable zero-copy deserialization.
-#[derive(Archive, RkyvDeserialize, RkyvSerialize, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(
+    Archive, RkyvDeserialize, RkyvSerialize, Serialize, Deserialize, Debug, Clone, PartialEq,
+)]
 #[rkyv(compare(PartialEq))]
 #[repr(C)]
 pub struct Edge {
@@ -195,10 +197,7 @@ mod tests {
 
     #[test]
     fn test_point_new_graph() {
-        let edges = SmallVec::from_vec(vec![
-            Edge::new(2, 0.9, 0),
-            Edge::new(3, 0.8, 1),
-        ]);
+        let edges = SmallVec::from_vec(vec![Edge::new(2, 0.9, 0), Edge::new(3, 0.8, 1)]);
         let point = Point::new_graph(1, vec![0.1, 0.2], edges);
         assert!(point.has_edges());
         assert_eq!(point.edge_count(), 2);
@@ -206,8 +205,7 @@ mod tests {
 
     #[test]
     fn test_point_with_payload() {
-        let point = Point::new_vector(1, vec![0.1])
-            .with_field("name", b"test".to_vec());
+        let point = Point::new_vector(1, vec![0.1]).with_field("name", b"test".to_vec());
         assert_eq!(point.payload.get("name"), Some(&b"test".to_vec()));
     }
 
@@ -231,10 +229,7 @@ mod tests {
         let mut payload = HashMap::new();
         payload.insert("category".to_string(), b"test".to_vec());
 
-        let edges = SmallVec::from_vec(vec![
-            Edge::new(10, 0.9, 0),
-            Edge::new(20, 0.8, 1),
-        ]);
+        let edges = SmallVec::from_vec(vec![Edge::new(10, 0.9, 0), Edge::new(20, 0.8, 1)]);
 
         let point = Point {
             id: 42,
@@ -270,8 +265,7 @@ mod tests {
         let bytes = rkyv::to_bytes::<Error>(&edge).expect("serialize edge");
 
         // Deserialize back to owned type
-        let deserialized: Edge = rkyv::from_bytes::<Edge, Error>(&bytes)
-            .expect("deserialize edge");
+        let deserialized: Edge = rkyv::from_bytes::<Edge, Error>(&bytes).expect("deserialize edge");
 
         assert_eq!(deserialized, edge);
     }

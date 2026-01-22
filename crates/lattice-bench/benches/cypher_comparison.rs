@@ -53,7 +53,8 @@ fn setup_lattice(size: usize) -> LatticeRunner {
 
 /// Setup Neo4j with test data
 async fn setup_neo4j(size: usize) -> Result<Neo4jRunner, Box<dyn std::error::Error + Send + Sync>> {
-    let runner = Neo4jRunner::connect("bolt://localhost:7687", "neo4j", "benchmarkpassword").await?;
+    let runner =
+        Neo4jRunner::connect("bolt://localhost:7687", "neo4j", "benchmarkpassword").await?;
     runner.clear().await?;
     let people = generate_people(size, SEED);
     runner.load_people(&people).await?;
@@ -88,7 +89,9 @@ fn bench_match_all(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_match_all().await.unwrap()) })
@@ -125,7 +128,9 @@ fn bench_match_by_label(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_match_by_label().await.unwrap()) })
@@ -160,7 +165,9 @@ fn bench_match_with_limit(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_match_by_label_limit().await.unwrap()) })
@@ -197,7 +204,9 @@ fn bench_match_with_filter(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_match_with_filter(30).await.unwrap()) })
@@ -232,7 +241,9 @@ fn bench_complex_filter(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt).iter(|| async {
                     black_box(
@@ -273,7 +284,9 @@ fn bench_projection(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_projection().await.unwrap()) })
@@ -296,19 +309,15 @@ fn bench_order_by(c: &mut Criterion) {
         // LatticeDB
         let mut lattice = setup_lattice(*size);
         group.bench_with_input(BenchmarkId::new("LatticeDB", size), size, |b, _| {
-            b.iter(|| {
-                black_box(
-                    lattice
-                        .bench_order_by()
-                        .expect("LatticeDB order_by failed"),
-                )
-            })
+            b.iter(|| black_box(lattice.bench_order_by().expect("LatticeDB order_by failed")))
         });
         drop(lattice);
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_order_by().await.unwrap()) })
@@ -343,7 +352,9 @@ fn bench_skip_limit(c: &mut Criterion) {
 
         // Neo4j (if available)
         if has_neo4j {
-            let neo4j = rt.block_on(setup_neo4j(*size)).expect("Failed to setup Neo4j");
+            let neo4j = rt
+                .block_on(setup_neo4j(*size))
+                .expect("Failed to setup Neo4j");
             group.bench_with_input(BenchmarkId::new("Neo4j", size), size, |b, _| {
                 b.to_async(&rt)
                     .iter(|| async { black_box(neo4j.bench_skip_limit().await.unwrap()) })

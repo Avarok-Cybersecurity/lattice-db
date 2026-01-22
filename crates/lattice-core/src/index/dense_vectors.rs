@@ -254,10 +254,8 @@ impl DenseVectorStore {
         // Rebuild with only live entries
         let mut new_data = Vec::with_capacity(self.id_to_idx.len() * self.dim);
         let mut new_idx_to_id = Vec::with_capacity(self.id_to_idx.len());
-        let mut new_id_to_idx = FxHashMap::with_capacity_and_hasher(
-            self.id_to_idx.len(),
-            Default::default(),
-        );
+        let mut new_id_to_idx =
+            FxHashMap::with_capacity_and_hasher(self.id_to_idx.len(), Default::default());
 
         for (&id, &old_idx) in &self.id_to_idx {
             let new_idx = new_idx_to_id.len() as DenseIdx;

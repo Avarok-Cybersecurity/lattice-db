@@ -213,11 +213,17 @@ mod tests {
 
         // Set
         storage.set_meta("key", b"value").await.unwrap();
-        assert_eq!(storage.get_meta("key").await.unwrap(), Some(b"value".to_vec()));
+        assert_eq!(
+            storage.get_meta("key").await.unwrap(),
+            Some(b"value".to_vec())
+        );
 
         // Overwrite
         storage.set_meta("key", b"new_value").await.unwrap();
-        assert_eq!(storage.get_meta("key").await.unwrap(), Some(b"new_value".to_vec()));
+        assert_eq!(
+            storage.get_meta("key").await.unwrap(),
+            Some(b"new_value".to_vec())
+        );
 
         // Delete
         storage.delete_meta("key").await.unwrap();
@@ -263,7 +269,10 @@ mod tests {
         let storage = MemStorage::new();
 
         for i in 0..100 {
-            storage.write_page(i, format!("page_{}", i).as_bytes()).await.unwrap();
+            storage
+                .write_page(i, format!("page_{}", i).as_bytes())
+                .await
+                .unwrap();
         }
 
         assert_eq!(storage.page_count(), 100);

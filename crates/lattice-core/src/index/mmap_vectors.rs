@@ -90,11 +90,12 @@ impl MmapVectorStore {
         let index_start = 32;
         for i in 0..count {
             let entry_offset = index_start + i * 16;
-            let point_id = u64::from_le_bytes(
-                mmap[entry_offset..entry_offset + 8].try_into().unwrap(),
-            );
+            let point_id =
+                u64::from_le_bytes(mmap[entry_offset..entry_offset + 8].try_into().unwrap());
             let vector_offset = u64::from_le_bytes(
-                mmap[entry_offset + 8..entry_offset + 16].try_into().unwrap(),
+                mmap[entry_offset + 8..entry_offset + 16]
+                    .try_into()
+                    .unwrap(),
             ) as usize;
             offsets.insert(point_id, vector_offset);
         }
@@ -113,9 +114,7 @@ impl MmapVectorStore {
             // SAFETY: The file format guarantees proper alignment and the
             // data was written as f32 values. We verify the magic number
             // and version on load.
-            unsafe {
-                std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim)
-            }
+            unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) }
         })
     }
 
@@ -235,9 +234,8 @@ impl MmapVectorBuilder {
                 .copy_from_slice(&(vector_offset as u64).to_le_bytes());
 
             // Vector data
-            let vector_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(vector.as_ptr() as *const u8, self.dim * 4)
-            };
+            let vector_bytes: &[u8] =
+                unsafe { std::slice::from_raw_parts(vector.as_ptr() as *const u8, self.dim * 4) };
             mmap[vector_offset..vector_offset + self.dim * 4].copy_from_slice(vector_bytes);
         }
 
@@ -279,11 +277,7 @@ impl HybridVectorStore {
         if mmap.dim() != dim {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "Dimension mismatch: expected {}, got {}",
-                    dim,
-                    mmap.dim()
-                ),
+                format!("Dimension mismatch: expected {}, got {}", dim, mmap.dim()),
             ));
         }
         Ok(Self {
@@ -324,8 +318,7 @@ impl HybridVectorStore {
 
     /// Check if a point exists
     pub fn contains(&self, id: PointId) -> bool {
-        self.hot.contains_key(&id)
-            || self.mmap.as_ref().map_or(false, |m| m.contains(id))
+        self.hot.contains_key(&id) || self.mmap.as_ref().map_or(false, |m| m.contains(id))
     }
 
     /// Get total count (hot + cold)

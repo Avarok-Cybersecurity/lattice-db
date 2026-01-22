@@ -28,9 +28,8 @@ mod wasm_impl {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{
-        File, FileSystemDirectoryHandle, FileSystemFileHandle,
-        FileSystemGetDirectoryOptions, FileSystemGetFileOptions,
-        FileSystemReadWriteOptions, FileSystemSyncAccessHandle,
+        File, FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetDirectoryOptions,
+        FileSystemGetFileOptions, FileSystemReadWriteOptions, FileSystemSyncAccessHandle,
         FileSystemWritableFileStream,
     };
 
@@ -280,9 +279,11 @@ mod wasm_impl {
         let storage = navigator.storage();
 
         let promise = storage.get_directory();
-        let result = JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to get OPFS root: {:?}", e),
-        })?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to get OPFS root: {:?}", e),
+            })?;
 
         Ok(result.unchecked_into())
     }
@@ -296,9 +297,11 @@ mod wasm_impl {
         options.set_create(true);
 
         let promise = parent.get_directory_handle_with_options(name, &options);
-        let result = JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to get/create directory '{}': {:?}", name, e),
-        })?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to get/create directory '{}': {:?}", name, e),
+            })?;
 
         Ok(result.unchecked_into())
     }
@@ -312,9 +315,11 @@ mod wasm_impl {
         options.set_create(true);
 
         let promise = dir.get_file_handle_with_options(name, &options);
-        let result = JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to get/create file '{}': {:?}", name, e),
-        })?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to get/create file '{}': {:?}", name, e),
+            })?;
 
         Ok(result.unchecked_into())
     }
@@ -324,9 +329,11 @@ mod wasm_impl {
         file: &FileSystemFileHandle,
     ) -> StorageResult<FileSystemSyncAccessHandle> {
         let promise = file.create_sync_access_handle();
-        let result = JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to create sync access handle: {:?}", e),
-        })?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to create sync access handle: {:?}", e),
+            })?;
 
         Ok(result.unchecked_into())
     }
@@ -336,9 +343,11 @@ mod wasm_impl {
         file: &FileSystemFileHandle,
     ) -> StorageResult<FileSystemWritableFileStream> {
         let promise = file.create_writable();
-        let result = JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to create writable stream: {:?}", e),
-        })?;
+        let result = JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to create writable stream: {:?}", e),
+            })?;
 
         Ok(result.unchecked_into())
     }
@@ -351,12 +360,16 @@ mod wasm_impl {
         let array = Uint8Array::new_with_length(data.len() as u32);
         array.copy_from(data);
 
-        let promise = stream.write_with_buffer_source(&array).map_err(|e| StorageError::Io {
-            message: format!("Failed to start write: {:?}", e),
-        })?;
-        JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to write to stream: {:?}", e),
-        })?;
+        let promise = stream
+            .write_with_buffer_source(&array)
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to start write: {:?}", e),
+            })?;
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to write to stream: {:?}", e),
+            })?;
 
         Ok(())
     }
@@ -364,9 +377,11 @@ mod wasm_impl {
     /// Close a writable stream
     async fn close_stream(stream: &FileSystemWritableFileStream) -> StorageResult<()> {
         let promise = stream.close();
-        JsFuture::from(promise).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to close stream: {:?}", e),
-        })?;
+        JsFuture::from(promise)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to close stream: {:?}", e),
+            })?;
 
         Ok(())
     }
@@ -382,11 +397,12 @@ mod wasm_impl {
 
         let file_obj: File = blob.unchecked_into();
         let array_buffer_promise = file_obj.array_buffer();
-        let array_buffer = JsFuture::from(array_buffer_promise).await.map_err(|e| {
-            StorageError::Io {
-                message: format!("Failed to read meta file: {:?}", e),
-            }
-        })?;
+        let array_buffer =
+            JsFuture::from(array_buffer_promise)
+                .await
+                .map_err(|e| StorageError::Io {
+                    message: format!("Failed to read meta file: {:?}", e),
+                })?;
 
         let uint8_array = Uint8Array::new(&array_buffer);
         let bytes = uint8_array.to_vec();

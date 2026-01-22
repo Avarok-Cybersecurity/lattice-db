@@ -52,10 +52,7 @@ impl LatticeVectorRunner {
             let points: Vec<Point> = (batch_start..batch_end)
                 .map(|i| {
                     let mut payload = HashMap::new();
-                    payload.insert(
-                        "index".to_string(),
-                        serde_json::to_vec(&i).unwrap(),
-                    );
+                    payload.insert("index".to_string(), serde_json::to_vec(&i).unwrap());
                     payload.insert(
                         "name".to_string(),
                         serde_json::to_vec(&format!("point_{}", i)).unwrap(),
