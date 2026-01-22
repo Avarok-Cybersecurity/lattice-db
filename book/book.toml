@@ -1,0 +1,25 @@
+[book]
+title = "LatticeDB Documentation"
+authors = ["Avarok Team"]
+description = "The hybrid graph/vector database that runs in your browser"
+src = "src"
+language = "en"
+
+[build]
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/Avarok-Cybersecurity/lattice-db"
+edit-url-template = "https://github.com/Avarok-Cybersecurity/lattice-db/edit/main/book/{path}"
+site-url = "/lattice-db/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+editable = false
+copyable = true

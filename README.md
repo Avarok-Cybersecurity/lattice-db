@@ -8,6 +8,8 @@
 
 *Democratizing AI databases for frontend developers*
 
+[![CI](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/ci.yml/badge.svg)](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-book-blue.svg)](https://Avarok-Cybersecurity.github.io/lattice-db/)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![WASM](https://img.shields.io/badge/wasm-SIMD-blueviolet.svg)](https://webassembly.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -22,7 +24,26 @@
 
 ---
 
-## Why LatticeDB?
+## 📑 Table of Contents
+
+| Section | Description |
+|---------|-------------|
+| [🎯 Why LatticeDB?](#-why-latticedb) | The problem we solve |
+| [⚡ Performance](#-performance) | Benchmark results vs Qdrant & Neo4j |
+| [✨ Features](#-features) | Hybrid graph/vector, platform support |
+| [💡 Use Cases](#-use-cases) | RAG, knowledge graphs, AI assistants |
+| [🚀 Quick Start](#-quick-start) | Installation & first steps |
+| [🏗️ Architecture](#️-architecture) | SBIO pattern & crate structure |
+| [⚙️ Optimizations](#️-optimizations) | 8 state-of-the-art techniques |
+| [📚 API Reference](#-api-reference) | REST endpoints |
+| [🗺️ Roadmap](#️-roadmap) | What's next |
+| [🔬 Research](#-research) | Papers we build on |
+| [🤝 Contributing](#-contributing) | How to help |
+| [📄 License](#-license) | MIT License |
+
+---
+
+## 🎯 Why LatticeDB?
 
 **LatticeDB is the only database that lets you run production-grade vector search AND graph queries entirely in the browser.**
 
@@ -35,45 +56,52 @@
 
 ### Who Is This For?
 
-- **LLM app developers** - Build RAG-powered apps without server costs
-- **Frontend developers** - Add semantic search to any web app
-- **Startups** - Ship faster without infrastructure overhead
-- **Privacy-conscious apps** - Data never leaves the user's browser
+- 🤖 **LLM app developers** - Build RAG-powered apps without server costs
+- 🌐 **Frontend developers** - Add semantic search to any web app
+- 🚀 **Startups** - Ship faster without infrastructure overhead
+- 🔒 **Privacy-conscious apps** - Data never leaves the user's browser
 
 ---
 
-## Performance
+## ⚡ Performance
+
+**LatticeDB wins ALL operations against both Qdrant and Neo4j.**
 
 ### Vector Operations: LatticeDB vs Qdrant
 
-<p align="center">
-  <img src="docs/benchmarks/charts/vector_comparison.svg" alt="LatticeDB vs Qdrant Benchmark" width="700">
-</p>
-
-**Benchmark Results** (1000 points, 128D vectors, 100 iterations)
+**Benchmark**: 10,000 vectors, 128 dimensions, cosine distance
 
 | Operation | LatticeDB | Qdrant | LatticeDB Advantage |
 |-----------|-----------|--------|---------------------|
-| **Upsert** | 0.59 µs | 83.32 µs | **141x faster** |
-| **Retrieve** | 2.45 µs | 106.91 µs | **44x faster** |
-| **Scroll** | 19.30 µs | 87.88 µs | **4.6x faster** |
-| Search (k=10) | 493.56 µs | 141.34 µs | Qdrant 3.5x |
+| **Search** | 106 µs | 150 µs | **1.4x faster** |
+| **Upsert** | 0.51 µs | 90 µs | **177x faster** |
+| **Retrieve** | 2.61 µs | 135 µs | **52x faster** |
+| **Scroll** | 18 µs | 133 µs | **7.4x faster** |
 
-> **LatticeDB wins 3 of 4 operations.** The search performance gap disappears when you factor in network latency - browser-native LatticeDB eliminates the ~50-100ms round-trip to a remote Qdrant server.
+> **LatticeDB wins ALL 4 vector operations!** SIMD-accelerated distance calculations, dense vector storage, and thread-local scratch space eliminate overhead.
 
 ### Graph Operations: LatticeDB vs Neo4j
 
+**Benchmark**: 1,000 nodes with labels and properties, Cypher queries
+
 | Operation | LatticeDB | Neo4j | Speedup |
 |-----------|-----------|-------|---------|
-| Node MATCH | 15.2 µs | 1.2 ms | **79x** |
-| Filter + ORDER BY | 42.3 µs | 3.8 ms | **90x** |
-| 2-hop traversal | 89.7 µs | 8.1 ms | **90x** |
+| `MATCH (n) RETURN n LIMIT 100` | 60 µs | 3,724 µs | **62x** |
+| `MATCH (n:Person) RETURN n LIMIT 100` | 58 µs | 3,454 µs | **59x** |
+| `MATCH (n:Person) RETURN n LIMIT 10` | 11 µs | 505 µs | **45x** |
+| `SKIP 50 LIMIT 20` | 37 µs | 543 µs | **15x** |
+| `ORDER BY n.name LIMIT 50` | 117 µs | 968 µs | **8x** |
+| `WHERE n.name = 'Alice'` | 107 µs | 622 µs | **6x** |
+| `WHERE n.age > 25 LIMIT 50` | 114 µs | 589 µs | **5x** |
+| Complex filter with AND | 649 µs | 998 µs | **1.5x** |
 
-> Full Cypher query language support. See [cypher docs](#cypher-query-language).
+> **LatticeDB wins ALL 8 graph operations (5-62x faster)!** No JVM overhead, native Rust data structures, and direct query execution.
+
+📖 [Full benchmark details](https://Avarok-Cybersecurity.github.io/lattice-db/book/performance/benchmarks.html)
 
 ---
 
-## Features
+## ✨ Features
 
 ### Hybrid Graph + Vector
 
@@ -101,20 +129,20 @@ The only embedded database that combines:
 
 | Platform | Status | SIMD Support |
 |----------|--------|--------------|
-| **Browser (WASM)** | Production | SIMD128 |
-| **Linux x86_64** | Production | AVX2/AVX-512 |
-| **macOS Apple Silicon** | Production | ARM NEON |
-| **Windows x86_64** | Production | AVX2 |
+| 🌐 **Browser (WASM)** | Production | SIMD128 |
+| 🐧 **Linux x86_64** | Production | AVX2/AVX-512 |
+| 🍎 **macOS Apple Silicon** | Production | ARM NEON |
+| 🪟 **Windows x86_64** | Production | AVX2 |
 
 ### API Compatibility
 
-- **Qdrant REST API** - Drop-in replacement, use existing SDKs
-- **Cypher Query Language** - Neo4j-compatible graph queries
-- **Service Worker** - Offline-first browser operation
+- 🔌 **Qdrant REST API** - Drop-in replacement, use existing SDKs
+- 📊 **Cypher Query Language** - Neo4j-compatible graph queries
+- 📴 **Service Worker** - Offline-first browser operation
 
 ---
 
-## Use Cases
+## 💡 Use Cases
 
 ### Frontend RAG (No Backend)
 
@@ -143,10 +171,10 @@ const answer = await llm.generate(query, context);
 ```
 
 **Benefits:**
-- No server costs for vector storage
-- Data persists in IndexedDB/OPFS
-- Works offline
-- Sub-millisecond search latency
+- 💰 No server costs for vector storage
+- 💾 Data persists in IndexedDB/OPFS
+- 📴 Works offline
+- ⚡ Sub-millisecond search latency
 
 ### Knowledge Graphs with Semantic Search
 
@@ -180,13 +208,13 @@ await db.upsert('memories', [{
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/avarok/lattice-db.git
+git clone https://github.com/Avarok-Cybersecurity/lattice-db.git
 cd lattice-db
 
 # Build release binary
@@ -266,7 +294,7 @@ RETURN DISTINCT fof.name
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 lattice-db/
@@ -319,24 +347,24 @@ lattice-db/
 
 ---
 
-## Optimizations
+## ⚙️ Optimizations
 
 LatticeDB implements **8 state-of-the-art optimizations**:
 
 | Optimization | Technique | Impact |
 |--------------|-----------|--------|
-| **SIMD Distance** | AVX2/NEON/SIMD128 | 4-8x faster cosine |
-| **HNSW Shortcuts** | VLDB 2025 paper | Skip redundant layers |
-| **Thread-Local Scratch** | Pre-allocated pools | 10-20% faster search |
-| **Product Quantization** | ScaNN-style | 64x compression |
-| **Memory Mapping** | Zero-copy access | Large dataset support |
-| **Async Indexing** | Background HNSW updates | Non-blocking upserts |
-| **Batch Search** | Parallel with rayon | High throughput |
-| **Scalar Quantization** | int8 vectors | 4x memory reduction |
+| ⚡ **SIMD Distance** | AVX2/NEON/SIMD128 | 4-8x faster cosine |
+| 🔗 **HNSW Shortcuts** | VLDB 2025 paper | Skip redundant layers |
+| 🧵 **Thread-Local Scratch** | Pre-allocated pools | 10-20% faster search |
+| 📦 **Product Quantization** | ScaNN-style | 64x compression |
+| 💾 **Memory Mapping** | Zero-copy access | Large dataset support |
+| 🔄 **Async Indexing** | Background HNSW updates | Non-blocking upserts |
+| 📊 **Batch Search** | Parallel with rayon | High throughput |
+| 🗜️ **Scalar Quantization** | int8 vectors | 4x memory reduction |
 
 ---
 
-## API Reference
+## 📚 API Reference
 
 ### Collections
 
@@ -370,11 +398,13 @@ LatticeDB implements **8 state-of-the-art optimizations**:
 |----------|--------|-------------|
 | `/cypher` | POST | Execute Cypher query |
 
+📖 [Full API documentation](https://Avarok-Cybersecurity.github.io/lattice-db/book/api/rest.html)
+
 ---
 
-## Roadmap
+## 🗺️ Roadmap
 
-### Implemented
+### ✅ Implemented
 
 - [x] HNSW index with shortcuts (VLDB 2025)
 - [x] SIMD distance (AVX2, NEON, WASM SIMD128)
@@ -383,13 +413,13 @@ LatticeDB implements **8 state-of-the-art optimizations**:
 - [x] Qdrant API compatibility
 - [x] WASM browser support
 
-### In Progress
+### 🔨 In Progress
 
 - [ ] npm package for easy browser integration
 - [ ] IndexedDB/OPFS persistence for WASM
 - [ ] Hybrid vector+graph queries in Cypher
 
-### Planned
+### 📋 Planned
 
 | Feature | Impact |
 |---------|--------|
@@ -400,7 +430,7 @@ LatticeDB implements **8 state-of-the-art optimizations**:
 
 ---
 
-## Research
+## 🔬 Research
 
 LatticeDB incorporates techniques from cutting-edge research:
 
@@ -413,7 +443,7 @@ LatticeDB incorporates techniques from cutting-edge research:
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions!
 
@@ -422,15 +452,17 @@ We welcome contributions!
 cargo test --all
 
 # Run WASM tests (requires Chrome)
-cargo make test-wasm
+wasm-pack test --headless --chrome crates/lattice-core
 
 # Run benchmarks
 cargo bench -p lattice-bench
 ```
 
+📖 [Contributing guide](https://Avarok-Cybersecurity.github.io/lattice-db/book/contributing/setup.html)
+
 ---
 
-## License
+## 📄 License
 
 MIT License - see [LICENSE](LICENSE) for details.
 
@@ -438,10 +470,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**Built with Rust for the AI-native future**
+**Built with 🦀 Rust for the AI-native future**
 
 *The database that runs where your users are*
 
-[Documentation](https://lattice-db.dev/docs) | [Discord](https://discord.gg/lattice-db) | [Twitter](https://twitter.com/lattice_db)
+[📖 Documentation](https://Avarok-Cybersecurity.github.io/lattice-db/) | [📚 API Reference](https://Avarok-Cybersecurity.github.io/lattice-db/api/) | [💬 Discord](https://discord.gg/lattice-db)
 
 </div>

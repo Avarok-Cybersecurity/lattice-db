@@ -9,6 +9,7 @@
 //! The index stores vectors in memory and uses the LatticeStorage trait
 //! for persistence. Core algorithm is pure computation - no I/O calls.
 
+use crate::index::dense_vectors::DenseVectorStore;
 use crate::index::distance::DistanceCalculator;
 use crate::index::layer::{HnswNode, LayerManager};
 use crate::index::scann::{DistanceTable, PQCode, ProductQuantizer};
@@ -28,13 +29,35 @@ use rayon::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::RefCell;
 
+// Software prefetching for memory latency hiding
+#[cfg(not(target_arch = "wasm32"))]
+mod prefetch {
+    /// Prefetch data into L1 cache for read
+    #[inline]
+    pub fn prefetch_read<T>(ptr: *const T) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            std::arch::asm!("prfm pldl1keep, [{x}]", x = in(reg) ptr, options(nostack, preserves_flags));
+        }
+    }
+}
+
 /// Pre-allocated scratch space for search operations
 /// Avoids repeated allocation of HashSet, BinaryHeap, Vec per search
 #[cfg(not(target_arch = "wasm32"))]
 struct SearchScratch {
     visited: FxHashSet<PointId>,
     candidates: BinaryHeap<Reverse<Candidate>>,
-    results: BinaryHeap<Candidate>,
+    /// Results stored as Vec instead of BinaryHeap for reduced overhead.
+    /// Sorted and truncated periodically instead of maintaining heap invariant.
+    results: Vec<Candidate>,
+    /// Track worst distance separately for O(1) comparison
+    worst_distance: f32,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -43,7 +66,8 @@ impl SearchScratch {
         Self {
             visited: FxHashSet::with_capacity_and_hasher(1000, Default::default()),
             candidates: BinaryHeap::with_capacity(200),
-            results: BinaryHeap::with_capacity(200),
+            results: Vec::with_capacity(400),
+            worst_distance: f32::MAX,
         }
     }
 
@@ -51,6 +75,7 @@ impl SearchScratch {
         self.visited.clear();
         self.candidates.clear();
         self.results.clear();
+        self.worst_distance = f32::MAX;
     }
 }
 
@@ -105,8 +130,8 @@ pub struct HnswIndex {
     distance: DistanceCalculator,
     /// Layer manager (graph structure)
     layers: LayerManager,
-    /// Vector storage: point_id -> vector (FxHashMap for faster integer hashing)
-    vectors: FxHashMap<PointId, Vector>,
+    /// Dense vector storage for cache-friendly O(1) indexed access
+    vectors: DenseVectorStore,
     /// Random number generator state for layer selection
     rng_state: u64,
 }
@@ -118,7 +143,7 @@ impl HnswIndex {
             config,
             distance: DistanceCalculator::new(metric),
             layers: LayerManager::new(),
-            vectors: FxHashMap::default(),
+            vectors: DenseVectorStore::new(0), // Dimension set from first vector
             rng_state: 42, // Deterministic for testing
         }
     }
@@ -310,7 +335,7 @@ impl HnswIndex {
 
     /// Delete a point from the index
     pub fn delete(&mut self, id: PointId) -> bool {
-        self.vectors.remove(&id);
+        self.vectors.delete(id);
         self.layers.remove_node(id).is_some()
     }
 
@@ -324,9 +349,9 @@ impl HnswIndex {
         self.vectors.is_empty()
     }
 
-    /// Get a vector by ID
-    pub fn get_vector(&self, id: PointId) -> Option<&Vector> {
-        self.vectors.get(&id)
+    /// Get a vector by ID (returns slice reference for efficiency)
+    pub fn get_vector(&self, id: PointId) -> Option<&[f32]> {
+        self.vectors.get(id)
     }
 
     /// Get layer counts for debugging
@@ -336,7 +361,7 @@ impl HnswIndex {
 
     /// Iterate over all vector IDs
     pub fn vector_ids(&self) -> impl Iterator<Item = PointId> + '_ {
-        self.vectors.keys().copied()
+        self.vectors.ids()
     }
 
     // --- Mmap support (native only with mmap feature) ---
@@ -353,11 +378,11 @@ impl HnswIndex {
     ) -> std::io::Result<super::mmap_vectors::MmapVectorStore> {
         use super::mmap_vectors::MmapVectorBuilder;
 
-        let dim = self.vectors.values().next().map(|v| v.len()).unwrap_or(0);
+        let dim = self.vectors.dim();
         let mut builder = MmapVectorBuilder::new(dim);
 
-        for (&id, vector) in &self.vectors {
-            builder.add(id, vector.clone());
+        for (id, vector) in self.vectors.iter() {
+            builder.add(id, vector.to_vec());
         }
 
         builder.build(path)
@@ -367,10 +392,7 @@ impl HnswIndex {
     ///
     /// Returns estimated memory used by vectors (not including graph structure).
     pub fn vector_memory_bytes(&self) -> usize {
-        self.vectors
-            .values()
-            .map(|v| v.len() * std::mem::size_of::<f32>() + std::mem::size_of::<PointId>())
-            .sum()
+        self.vectors.len() * (self.vectors.dim() * std::mem::size_of::<f32>() + std::mem::size_of::<PointId>())
     }
 
     // --- Private methods ---
@@ -476,16 +498,18 @@ impl HnswIndex {
                 let dist = self.calc_distance(query, ep);
                 scratch.candidates.push(Reverse(Candidate { id: ep, distance: dist }));
                 scratch.results.push(Candidate { id: ep, distance: dist });
+                if dist > scratch.worst_distance {
+                    scratch.worst_distance = dist;
+                }
             }
+
+            // Threshold for compacting results (2x ef to amortize sort cost)
+            let compact_threshold = ef * 2;
 
             while let Some(Reverse(current)) = scratch.candidates.pop() {
                 // Stop if current is farther than worst result and we have enough
-                if scratch.results.len() >= ef {
-                    if let Some(worst) = scratch.results.peek() {
-                        if current.distance > worst.distance {
-                            break;
-                        }
-                    }
+                if scratch.results.len() >= ef && current.distance > scratch.worst_distance {
+                    break;
                 }
 
                 // Explore neighbors
@@ -507,27 +531,34 @@ impl HnswIndex {
 
                     // Process results
                     for (neighbor, dist) in neighbor_dists {
-                        let candidate = Candidate { id: neighbor, distance: dist };
-
-                        let should_add = scratch.results.len() < ef
-                            || scratch.results.peek().map_or(true, |w| dist < w.distance);
+                        // Add to results if better than worst or room available
+                        let should_add = scratch.results.len() < ef || dist < scratch.worst_distance;
 
                         if should_add {
+                            let candidate = Candidate { id: neighbor, distance: dist };
                             scratch.candidates.push(Reverse(candidate));
                             scratch.results.push(candidate);
 
-                            while scratch.results.len() > ef {
-                                scratch.results.pop();
+                            // Compact results when exceeding threshold (amortized O(1))
+                            if scratch.results.len() >= compact_threshold {
+                                scratch.results.sort_unstable_by(|a, b| {
+                                    a.distance.partial_cmp(&b.distance).unwrap()
+                                });
+                                scratch.results.truncate(ef);
+                                scratch.worst_distance = scratch
+                                    .results
+                                    .last()
+                                    .map_or(f32::MAX, |c| c.distance);
                             }
                         }
                     }
                 }
             }
 
-            // Convert to sorted vec (closest first)
-            let mut result_vec: Vec<Candidate> = scratch.results.drain().collect();
-            result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
-            result_vec
+            // Final sort and return (closest first)
+            scratch.results.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+            scratch.results.truncate(ef);
+            scratch.results.drain(..).collect()
         })
     }
 
@@ -545,24 +576,27 @@ impl HnswIndex {
         // Min-heap: candidates to explore (closest first)
         let mut candidates: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
 
-        // Max-heap: best results found (farthest first for easy pruning)
-        let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
+        // Vec-based results tracking (more efficient than BinaryHeap for this use case)
+        let mut results: Vec<Candidate> = Vec::with_capacity(ef * 2);
+        let mut worst_distance = f32::MAX;
 
         // Initialize with entry points
         for &ep in entry_points {
             let dist = self.calc_distance(query, ep);
             candidates.push(Reverse(Candidate { id: ep, distance: dist }));
             results.push(Candidate { id: ep, distance: dist });
+            if dist > worst_distance {
+                worst_distance = dist;
+            }
         }
+
+        // Threshold for compacting results (2x ef to amortize sort cost)
+        let compact_threshold = ef * 2;
 
         while let Some(Reverse(current)) = candidates.pop() {
             // Stop if current is farther than worst result and we have enough
-            if results.len() >= ef {
-                if let Some(worst) = results.peek() {
-                    if current.distance > worst.distance {
-                        break;
-                    }
-                }
+            if results.len() >= ef && current.distance > worst_distance {
+                break;
             }
 
             // Explore neighbors - collect unvisited first, then calculate distances
@@ -584,54 +618,73 @@ impl HnswIndex {
 
                 // Process results
                 for (neighbor, dist) in neighbor_dists {
-                    let candidate = Candidate { id: neighbor, distance: dist };
-
                     // Add to results if better than worst or room available
-                    let should_add = results.len() < ef
-                        || results.peek().map_or(true, |w| dist < w.distance);
+                    let should_add = results.len() < ef || dist < worst_distance;
 
                     if should_add {
+                        let candidate = Candidate { id: neighbor, distance: dist };
                         candidates.push(Reverse(candidate));
                         results.push(candidate);
 
-                        // Prune results to ef size
-                        while results.len() > ef {
-                            results.pop();
+                        // Compact results when exceeding threshold (amortized O(1))
+                        if results.len() >= compact_threshold {
+                            results.sort_unstable_by(|a, b| {
+                                a.distance.partial_cmp(&b.distance).unwrap()
+                            });
+                            results.truncate(ef);
+                            worst_distance = results.last().map_or(f32::MAX, |c| c.distance);
                         }
                     }
                 }
             }
         }
 
-        // Convert to sorted vec (closest first)
-        let mut result_vec: Vec<Candidate> = results.into_vec();
-        result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
-        result_vec
+        // Final sort and return (closest first)
+        results.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        results.truncate(ef);
+        results
     }
 
     /// Calculate distances to multiple points
     ///
     /// On native builds with large batches (>64), uses parallel processing.
     /// For smaller batches, sequential is faster due to parallel overhead.
+    ///
+    /// Optimized with:
+    /// - Batch HashMap lookups followed by direct array indexing
+    /// - Software prefetching to hide memory latency
     #[cfg(not(target_arch = "wasm32"))]
     fn calc_distances_batch(&self, query: &[f32], ids: &[PointId]) -> Vec<(PointId, f32)> {
         // Parallel overhead is only worth it for larger batches
         // Typical neighbor count is 16-32, so use sequential for small counts
         const PARALLEL_THRESHOLD: usize = 64;
+        const PREFETCH_DISTANCE: usize = 4; // Prefetch 4 vectors ahead
 
         if ids.len() >= PARALLEL_THRESHOLD {
             ids.par_iter()
                 .filter_map(|&id| {
-                    self.vectors.get(&id).map(|vec| (id, self.distance.calculate(query, vec)))
+                    self.vectors.get(id).map(|vec| (id, self.distance.calculate(query, vec)))
                 })
                 .collect()
         } else {
-            // Pre-allocate to avoid reallocation during collection
-            let mut results = Vec::with_capacity(ids.len());
-            for &id in ids {
-                if let Some(vec) = self.vectors.get(&id) {
-                    results.push((id, self.distance.calculate(query, vec)));
+            // Phase 1: Batch convert PointId -> DenseIdx (all HashMap lookups upfront)
+            let indices: SmallVec<[(PointId, super::dense_vectors::DenseIdx); 32]> = ids
+                .iter()
+                .filter_map(|&id| self.vectors.get_idx(id).map(|idx| (id, idx)))
+                .collect();
+
+            let mut results = Vec::with_capacity(indices.len());
+
+            // Phase 2: Calculate distances with prefetching
+            for (i, &(id, idx)) in indices.iter().enumerate() {
+                // Prefetch future vectors to hide memory latency
+                if i + PREFETCH_DISTANCE < indices.len() {
+                    let future_idx = indices[i + PREFETCH_DISTANCE].1;
+                    prefetch::prefetch_read(self.vectors.get_ptr(future_idx));
                 }
+
+                let vec = self.vectors.get_by_idx(idx);
+                results.push((id, self.distance.calculate(query, vec)));
             }
             results
         }
@@ -643,7 +696,8 @@ impl HnswIndex {
         // Pre-allocate to avoid reallocation during collection
         let mut results = Vec::with_capacity(ids.len());
         for &id in ids {
-            if let Some(vec) = self.vectors.get(&id) {
+            if let Some(idx) = self.vectors.get_idx(id) {
+                let vec = self.vectors.get_by_idx(idx);
                 results.push((id, self.distance.calculate(query, vec)));
             }
         }
@@ -671,7 +725,7 @@ impl HnswIndex {
     ) {
         // Get neighbors and their distances, using known distance when available
         let neighbors_with_dist: Vec<(PointId, f32)> = {
-            let vector = match self.vectors.get(&node_id) {
+            let vector = match self.vectors.get(node_id) {
                 Some(v) => v,
                 None => return,
             };
@@ -688,7 +742,7 @@ impl HnswIndex {
                         // Use pre-computed distance (symmetric: dist(a,b) = dist(b,a))
                         Some((nid, known_distance))
                     } else {
-                        self.vectors.get(&nid).map(|neighbor_vec| {
+                        self.vectors.get(nid).map(|neighbor_vec| {
                             (nid, self.distance.calculate(vector, neighbor_vec))
                         })
                     }
@@ -715,9 +769,13 @@ impl HnswIndex {
 
     /// Calculate distance between query and stored vector
     #[inline]
+    #[inline]
     fn calc_distance(&self, query: &[f32], id: PointId) -> f32 {
-        match self.vectors.get(&id) {
-            Some(vec) => self.distance.calculate(query, vec),
+        match self.vectors.get_idx(id) {
+            Some(idx) => {
+                let vec = self.vectors.get_by_idx(idx);
+                self.distance.calculate(query, vec)
+            }
             None => f32::MAX,
         }
     }
@@ -739,7 +797,7 @@ impl HnswIndex {
     /// * `m` - Number of subvectors (typically 8 for 128-dim vectors)
     /// * `training_sample_size` - Number of vectors to sample for training (0 = use all)
     pub fn build_pq_accelerator(&self, m: usize, training_sample_size: usize) -> PQAccelerator {
-        let dim = self.vectors.values().next().map(|v| v.len()).unwrap_or(128);
+        let dim = self.vectors.dim();
         let mut pq = ProductQuantizer::new(dim, m, 256);
 
         // Collect training vectors
@@ -748,11 +806,11 @@ impl HnswIndex {
             self.vectors
                 .values()
                 .take(training_sample_size)
-                .cloned()
+                .map(|v| v.to_vec())
                 .collect()
         } else {
             // Use all vectors
-            self.vectors.values().cloned().collect()
+            self.vectors.values().map(|v| v.to_vec()).collect()
         };
 
         // Train the quantizer
@@ -760,7 +818,7 @@ impl HnswIndex {
 
         // Encode all vectors
         let mut codes: FxHashMap<PointId, PQCode> = FxHashMap::default();
-        for (&id, vector) in &self.vectors {
+        for (id, vector) in self.vectors.iter() {
             codes.insert(id, pq.encode(vector));
         }
 
@@ -830,7 +888,7 @@ impl HnswIndex {
             .into_iter()
             .take(rerank_count)
             .filter_map(|c| {
-                self.vectors.get(&c.id).map(|v| (c.id, self.distance.calculate(query, v)))
+                self.vectors.get(c.id).map(|v| (c.id, self.distance.calculate(query, v)))
             })
             .collect();
 

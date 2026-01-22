@@ -2,6 +2,7 @@
 //!
 //! This module contains the HNSW index implementation and distance functions.
 
+pub mod dense_vectors;
 pub mod distance;
 pub mod hnsw;
 pub mod layer;
@@ -12,6 +13,7 @@ pub mod scann;
 #[cfg(all(feature = "mmap", not(target_arch = "wasm32")))]
 pub mod mmap_vectors;
 
+pub use dense_vectors::{DenseIdx, DenseVectorStore};
 pub use distance::DistanceCalculator;
 pub use hnsw::{HnswIndex, PQAccelerator};
 pub use quantization::QuantizedVector;

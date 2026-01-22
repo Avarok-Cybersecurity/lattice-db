@@ -86,6 +86,12 @@ impl LatticeVectorRunner {
         self.engine.point_count()
     }
 
+    /// Flush pending points to HNSW index
+    /// Call this after load_data to ensure fair benchmark comparison
+    pub fn flush_pending(&self) {
+        self.engine.flush_pending();
+    }
+
     // === Benchmark methods ===
 
     /// Benchmark single point upsert
@@ -123,7 +129,7 @@ impl LatticeVectorRunner {
             ef: Some(100),
             score_threshold: None,
             with_vector: false,
-            with_payload: true,
+            with_payload: false, // Disable payload retrieval for fair benchmark
         };
 
         let timer = Timer::start();

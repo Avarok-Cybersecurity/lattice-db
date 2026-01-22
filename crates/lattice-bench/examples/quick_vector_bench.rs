@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let setup_start = Instant::now();
     let mut lattice = LatticeVectorRunner::new("bench_quick", VECTOR_DIM)?;
     lattice.load_data(DATASET_SIZE, SEED)?;
+    lattice.flush_pending(); // Ensure all points are indexed before benchmark
     let lattice_setup = setup_start.elapsed();
     println!("LatticeDB setup: {:?}\n", lattice_setup);
 

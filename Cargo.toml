@@ -11,7 +11,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/avarok/lattice-db"
+repository = "https://github.com/Avarok-Cybersecurity/lattice-db"
 rust-version = "1.75"
 
 [workspace.dependencies]
@@ -61,3 +61,9 @@ utoipa-swagger-ui = { version = "8", features = ["axum"] }
 lattice-core = { path = "crates/lattice-core" }
 lattice-storage = { path = "crates/lattice-storage", default-features = false }
 lattice-server = { path = "crates/lattice-server" }
+
+# Optimized release profile for maximum performance
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3

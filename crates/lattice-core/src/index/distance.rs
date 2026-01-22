@@ -357,7 +357,10 @@ mod simd_x86 {
 mod simd_neon {
     use std::arch::aarch64::*;
 
-    /// NEON cosine distance with 2x unrolling (processes 8 floats at a time)
+    /// NEON cosine distance with 4x unrolling (processes 16 floats at a time)
+    ///
+    /// M1/M2 can sustain 4 FMA operations per cycle, so 4x unrolling
+    /// maximizes throughput for 128D+ vectors (8 iterations for 128D).
     ///
     /// # Safety
     /// Requires aarch64 NEON support (always available on aarch64)
@@ -365,44 +368,60 @@ mod simd_neon {
     pub unsafe fn cosine_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
 
-        // Process 8 floats per iteration (2x unrolling)
-        let chunks8 = len / 8;
+        // Process 16 floats per iteration (4x unrolling for M1/M2)
+        let chunks16 = len / 16;
 
         let mut dot_sum0 = vdupq_n_f32(0.0);
         let mut dot_sum1 = vdupq_n_f32(0.0);
+        let mut dot_sum2 = vdupq_n_f32(0.0);
+        let mut dot_sum3 = vdupq_n_f32(0.0);
         let mut norm_a_sum0 = vdupq_n_f32(0.0);
         let mut norm_a_sum1 = vdupq_n_f32(0.0);
+        let mut norm_a_sum2 = vdupq_n_f32(0.0);
+        let mut norm_a_sum3 = vdupq_n_f32(0.0);
         let mut norm_b_sum0 = vdupq_n_f32(0.0);
         let mut norm_b_sum1 = vdupq_n_f32(0.0);
+        let mut norm_b_sum2 = vdupq_n_f32(0.0);
+        let mut norm_b_sum3 = vdupq_n_f32(0.0);
 
-        for i in 0..chunks8 {
-            let base = i * 8;
-            // Load 8 floats (2 NEON registers)
+        for i in 0..chunks16 {
+            let base = i * 16;
+            // Load 16 floats (4 NEON registers each)
             let va0 = vld1q_f32(a.as_ptr().add(base));
             let va1 = vld1q_f32(a.as_ptr().add(base + 4));
+            let va2 = vld1q_f32(a.as_ptr().add(base + 8));
+            let va3 = vld1q_f32(a.as_ptr().add(base + 12));
             let vb0 = vld1q_f32(b.as_ptr().add(base));
             let vb1 = vld1q_f32(b.as_ptr().add(base + 4));
+            let vb2 = vld1q_f32(b.as_ptr().add(base + 8));
+            let vb3 = vld1q_f32(b.as_ptr().add(base + 12));
 
             dot_sum0 = vfmaq_f32(dot_sum0, va0, vb0);
             dot_sum1 = vfmaq_f32(dot_sum1, va1, vb1);
+            dot_sum2 = vfmaq_f32(dot_sum2, va2, vb2);
+            dot_sum3 = vfmaq_f32(dot_sum3, va3, vb3);
             norm_a_sum0 = vfmaq_f32(norm_a_sum0, va0, va0);
             norm_a_sum1 = vfmaq_f32(norm_a_sum1, va1, va1);
+            norm_a_sum2 = vfmaq_f32(norm_a_sum2, va2, va2);
+            norm_a_sum3 = vfmaq_f32(norm_a_sum3, va3, va3);
             norm_b_sum0 = vfmaq_f32(norm_b_sum0, vb0, vb0);
             norm_b_sum1 = vfmaq_f32(norm_b_sum1, vb1, vb1);
+            norm_b_sum2 = vfmaq_f32(norm_b_sum2, vb2, vb2);
+            norm_b_sum3 = vfmaq_f32(norm_b_sum3, vb3, vb3);
         }
 
-        // Combine the two accumulators
-        let dot_sum = vaddq_f32(dot_sum0, dot_sum1);
-        let norm_a_sum = vaddq_f32(norm_a_sum0, norm_a_sum1);
-        let norm_b_sum = vaddq_f32(norm_b_sum0, norm_b_sum1);
+        // Combine the four accumulators
+        let dot_sum = vaddq_f32(vaddq_f32(dot_sum0, dot_sum1), vaddq_f32(dot_sum2, dot_sum3));
+        let norm_a_sum = vaddq_f32(vaddq_f32(norm_a_sum0, norm_a_sum1), vaddq_f32(norm_a_sum2, norm_a_sum3));
+        let norm_b_sum = vaddq_f32(vaddq_f32(norm_b_sum0, norm_b_sum1), vaddq_f32(norm_b_sum2, norm_b_sum3));
 
         // Horizontal sum
         let mut dot = vaddvq_f32(dot_sum);
         let mut norm_a = vaddvq_f32(norm_a_sum);
         let mut norm_b = vaddvq_f32(norm_b_sum);
 
-        // Handle remainder with scalar
-        for i in (chunks8 * 8)..len {
+        // Handle remainder (for vectors not divisible by 16)
+        for i in (chunks16 * 16)..len {
             dot += a[i] * b[i];
             norm_a += a[i] * a[i];
             norm_b += b[i] * b[i];
@@ -416,32 +435,42 @@ mod simd_neon {
         1.0 - (dot / norm_product)
     }
 
-    /// NEON euclidean distance with 2x unrolling (processes 8 floats at a time)
+    /// NEON euclidean distance with 4x unrolling (processes 16 floats at a time)
     #[inline]
     pub unsafe fn euclidean_distance_neon(a: &[f32], b: &[f32]) -> f32 {
         let len = a.len();
-        let chunks8 = len / 8;
+        let chunks16 = len / 16;
 
         let mut sum0 = vdupq_n_f32(0.0);
         let mut sum1 = vdupq_n_f32(0.0);
+        let mut sum2 = vdupq_n_f32(0.0);
+        let mut sum3 = vdupq_n_f32(0.0);
 
-        for i in 0..chunks8 {
-            let base = i * 8;
+        for i in 0..chunks16 {
+            let base = i * 16;
             let va0 = vld1q_f32(a.as_ptr().add(base));
             let va1 = vld1q_f32(a.as_ptr().add(base + 4));
+            let va2 = vld1q_f32(a.as_ptr().add(base + 8));
+            let va3 = vld1q_f32(a.as_ptr().add(base + 12));
             let vb0 = vld1q_f32(b.as_ptr().add(base));
             let vb1 = vld1q_f32(b.as_ptr().add(base + 4));
+            let vb2 = vld1q_f32(b.as_ptr().add(base + 8));
+            let vb3 = vld1q_f32(b.as_ptr().add(base + 12));
             let diff0 = vsubq_f32(va0, vb0);
             let diff1 = vsubq_f32(va1, vb1);
+            let diff2 = vsubq_f32(va2, vb2);
+            let diff3 = vsubq_f32(va3, vb3);
             sum0 = vfmaq_f32(sum0, diff0, diff0);
             sum1 = vfmaq_f32(sum1, diff1, diff1);
+            sum2 = vfmaq_f32(sum2, diff2, diff2);
+            sum3 = vfmaq_f32(sum3, diff3, diff3);
         }
 
-        let sum = vaddq_f32(sum0, sum1);
+        let sum = vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3));
         let mut result = vaddvq_f32(sum);
 
         // Handle remainder with scalar
-        for i in (chunks8 * 8)..len {
+        for i in (chunks16 * 16)..len {
             let diff = a[i] - b[i];
             result += diff * diff;
         }
