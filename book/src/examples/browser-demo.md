@@ -25,10 +25,8 @@ Import directly from GitHub Pages:
 <script type="module">
     const CDN = 'https://avarok-cybersecurity.github.io/lattice-db/js';
 
-    const { default: init, LatticeDB } = await import(`${CDN}/lattice-db.min.js`);
-    await init(`${CDN}/lattice_server_bg.wasm`);
-
-    const db = new LatticeDB();
+    const { LatticeDB } = await import(`${CDN}/lattice-db.min.js`);
+    const db = await LatticeDB.init(`${CDN}/lattice_server_bg.wasm`);
 
     // Create a collection
     db.createCollection('vectors', {

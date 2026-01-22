@@ -31,13 +31,13 @@
 
     <h2>How It Works</h2>
     <pre><code>// Import from GitHub Pages CDN (or use npm: import { LatticeDB } from 'lattice-db')
-import init, { LatticeDB } from
+import { LatticeDB } from
     'https://avarok-cybersecurity.github.io/lattice-db/js/lattice-db.min.js';
 
-// Initialize WASM (downloads ~500KB)
-await init('https://avarok-cybersecurity.github.io/lattice-db/js/lattice_server_bg.wasm');
-
-const db = new LatticeDB();
+// Initialize WASM and create database instance (~500KB download)
+const db = await LatticeDB.init(
+    'https://avarok-cybersecurity.github.io/lattice-db/js/lattice_server_bg.wasm'
+);
 
 // Create collection for 128-dim vectors
 db.createCollection('docs', {
@@ -62,14 +62,11 @@ const results = db.search('docs', queryVector, 5);</code></pre>
 
             try {
                 // Dynamic import from GitHub Pages (proper CORS support)
-                const module = await import(`${CDN_BASE}/lattice-db.min.js`);
-                const init = module.default;
-                const LatticeDB = module.LatticeDB;
+                const { LatticeDB } = await import(`${CDN_BASE}/lattice-db.min.js`);
 
                 output.innerHTML += '<div class="output">Initializing database...</div>';
-                await init(`${CDN_BASE}/lattice_server_bg.wasm`);
-
-                const db = new LatticeDB();
+                // LatticeDB.init() loads WASM and returns an initialized instance
+                const db = await LatticeDB.init(`${CDN_BASE}/lattice_server_bg.wasm`);
 
                 // Create collection
                 output.innerHTML += '<div class="output">Creating collection with 4-dim vectors...</div>';
