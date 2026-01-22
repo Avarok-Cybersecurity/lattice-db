@@ -243,10 +243,10 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
-            artifacts/js-bundle/lattice-db.js
-            artifacts/js-bundle/lattice-db.esm.js
-            artifacts/js-bundle/lattice-db.min.js
-            artifacts/js-bundle/lattice_server_bg.wasm
+            artifacts/js-bundle/dist/lattice-db.js
+            artifacts/js-bundle/dist/lattice-db.esm.js
+            artifacts/js-bundle/dist/lattice-db.min.js
+            artifacts/js-bundle/wasm/lattice_server_bg.wasm
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
