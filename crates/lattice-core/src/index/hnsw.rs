@@ -134,15 +134,13 @@ impl HnswIndex {
         let id = point.id;
         let vector = point.vector.clone();
 
-        // Store vector
-        self.vectors.insert(id, vector.clone());
-
         // Select random layer for this node
         let level = self.random_level();
         let mut node = HnswNode::new(id, level);
 
         // If this is the first point, just insert it
         if self.layers.is_empty() {
+            self.vectors.insert(id, vector);
             self.layers.insert_node(node);
             return;
         }
@@ -205,6 +203,8 @@ impl HnswIndex {
             }
         }
 
+        // Store vector and node (move, no second clone)
+        self.vectors.insert(id, vector);
         self.layers.insert_node(node);
     }
 
