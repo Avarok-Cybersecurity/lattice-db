@@ -125,8 +125,8 @@ export class LatticeDB {
    */
   static async init(wasmPath?: string): Promise<LatticeDB> {
     if (!initialized) {
-      // Dynamic import for the WASM module
-      wasmModule = (await import('../wasm/lattice_server.js')) as WasmModule;
+      // Dynamic import for the WASM module (cast through unknown for wasm-bindgen compatibility)
+      wasmModule = (await import('../wasm/lattice_server.js')) as unknown as WasmModule;
       await wasmModule.default(wasmPath);
       initialized = true;
     }
