@@ -5,6 +5,7 @@
  * Integration tests with actual WASM run in wasm-bindgen-test (Rust).
  */
 
+import { jest, describe, it, expect, beforeAll, beforeEach } from '@jest/globals';
 import type {
   CollectionConfig,
   Point,
