@@ -33,7 +33,9 @@
 pub mod datasets;
 pub mod http_runner;
 pub mod lattice_runner;
+pub mod lattice_vector_runner;
 pub mod neo4j_runner;
+pub mod qdrant_runner;
 pub mod results;
 
 use std::time::{Duration, Instant};

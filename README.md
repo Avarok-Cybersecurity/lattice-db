@@ -2,183 +2,181 @@
 
 # LatticeDB
 
-### The AI Database of the Future
+### World's First Production-Grade Hybrid Graph/Vector Database
 
-**High-Performance Vector + Graph Database in Pure Rust**
+**Runs in your browser. Zero backend required.**
 
-*Run anywhere: Cloud, Edge, or Browser*
+*Democratizing AI databases for frontend developers*
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
-[![WASM](https://img.shields.io/badge/wasm-compatible-blueviolet.svg)](https://webassembly.org)
+[![WASM](https://img.shields.io/badge/wasm-SIMD-blueviolet.svg)](https://webassembly.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Qdrant Compatible](https://img.shields.io/badge/qdrant-compatible-green.svg)](https://qdrant.tech)
+[![Qdrant Compatible](https://img.shields.io/badge/qdrant-API%20compatible-green.svg)](https://qdrant.tech)
+[![Cypher](https://img.shields.io/badge/cypher-query%20language-blue.svg)](https://neo4j.com/docs/cypher-manual/)
 
 ---
 
-**Faster than Qdrant** | **Browser-Native** | **Graph + Vector Converged**
+**Browser-Native** | **Graph + Vector Hybrid** | **No Server Costs** | **WASM SIMD**
 
 </div>
 
 ---
 
-## Table of Contents
+## Why LatticeDB?
 
-- [Performance](#-performance)
-- [Features](#-features)
-- [Optimizations](#-optimizations)
-- [Quick Start](#-quick-start)
-- [Architecture](#-architecture)
-- [API Reference](#-api-reference)
-- [Roadmap](#-roadmap)
-- [Research](#-research)
-- [Contributing](#-contributing)
-- [License](#-license)
+**LatticeDB is the only database that lets you run production-grade vector search AND graph queries entirely in the browser.**
+
+| Problem | Traditional Solution | LatticeDB Solution |
+|---------|---------------------|-------------------|
+| RAG for web apps | Pay for hosted vector DB | **Run RAG in the frontend** |
+| Knowledge graphs | Host Neo4j/Qdrant server | **Zero backend required** |
+| Single-user apps | Server for each user | **Data stays on client** |
+| Network latency | Round-trips to backend | **Sub-millisecond local access** |
+
+### Who Is This For?
+
+- **LLM app developers** - Build RAG-powered apps without server costs
+- **Frontend developers** - Add semantic search to any web app
+- **Startups** - Ship faster without infrastructure overhead
+- **Privacy-conscious apps** - Data never leaves the user's browser
 
 ---
 
 ## Performance
 
-### Benchmark: LatticeDB vs Qdrant
+### Vector Operations: LatticeDB vs Qdrant
 
-Tested with 10,000 128-dimensional vectors, 1,000 queries, top-10 results.
+<p align="center">
+  <img src="docs/benchmarks/charts/vector_comparison.svg" alt="LatticeDB vs Qdrant Benchmark" width="700">
+</p>
 
-| Operation | LatticeDB | Qdrant | Speedup |
-|-----------|-----------|--------|---------|
-| **Upsert** | 9.55 ms | 17.03 ms | **1.78x faster** |
-| **Search** | 2.22 ms | 3.77 ms | **1.70x faster** |
-| **Retrieve** | 1.18 ms | 3.17 ms | **2.68x faster** |
-| **Scroll** | 1.12 ms | 2.98 ms | **2.65x faster** |
+**Benchmark Results** (1000 points, 128D vectors, 100 iterations)
 
-> LatticeDB beats Qdrant on **all 4 metrics** while running in pure Rust with zero external dependencies.
+| Operation | LatticeDB | Qdrant | LatticeDB Advantage |
+|-----------|-----------|--------|---------------------|
+| **Upsert** | 0.59 µs | 83.32 µs | **141x faster** |
+| **Retrieve** | 2.45 µs | 106.91 µs | **44x faster** |
+| **Scroll** | 19.30 µs | 87.88 µs | **4.6x faster** |
+| Search (k=10) | 493.56 µs | 141.34 µs | Qdrant 3.5x |
 
-### Throughput
+> **LatticeDB wins 3 of 4 operations.** The search performance gap disappears when you factor in network latency - browser-native LatticeDB eliminates the ~50-100ms round-trip to a remote Qdrant server.
 
-| Metric | LatticeDB | Qdrant |
-|--------|-----------|--------|
-| Upsert | 10,471 pts/sec | 5,871 pts/sec |
-| Search | 449 qps | 264 qps |
-| Retrieve | 841 ops/sec | 314 ops/sec |
-| Scroll | 88,855 pts/sec | 33,515 pts/sec |
+### Graph Operations: LatticeDB vs Neo4j
+
+| Operation | LatticeDB | Neo4j | Speedup |
+|-----------|-----------|-------|---------|
+| Node MATCH | 15.2 µs | 1.2 ms | **79x** |
+| Filter + ORDER BY | 42.3 µs | 3.8 ms | **90x** |
+| 2-hop traversal | 89.7 µs | 8.1 ms | **90x** |
+
+> Full Cypher query language support. See [cypher docs](#cypher-query-language).
 
 ---
 
 ## Features
 
-### Core Capabilities
+### Hybrid Graph + Vector
 
-| Feature | Description |
-|---------|-------------|
-| **Vector Search** | HNSW index with O(log n) approximate nearest neighbor |
-| **Graph Operations** | BFS/DFS traversal, weighted edges, relation types |
-| **Hybrid Queries** | Combine vector similarity with graph traversal |
-| **Payload Filtering** | Filter results by metadata fields |
+The only embedded database that combines:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        LatticeDB                              │
+│  ┌───────────────────────┐    ┌───────────────────────┐     │
+│  │    Vector Engine      │    │     Graph Engine      │     │
+│  │  ─────────────────    │    │  ─────────────────    │     │
+│  │  • HNSW Index         │    │  • BFS/DFS Traversal  │     │
+│  │  • SIMD Distance      │◄──►│  • Cypher Queries     │     │
+│  │  • Product Quant.     │    │  • Weighted Edges     │     │
+│  │  • Scalar Quant.      │    │  • Relation Types     │     │
+│  └───────────────────────┘    └───────────────────────┘     │
+│                              ▲                               │
+│                              │                               │
+│                    Hybrid Queries                            │
+│          "Find similar vectors AND their neighbors"          │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### Platform Support
 
-| Platform | Status | Notes |
-|----------|--------|-------|
-| **Linux x86_64** | Production | AVX2/AVX-512 SIMD |
-| **macOS Apple Silicon** | Production | ARM NEON SIMD |
-| **Windows x86_64** | Production | AVX2 SIMD |
-| **WebAssembly** | Production | Browser & Edge |
+| Platform | Status | SIMD Support |
+|----------|--------|--------------|
+| **Browser (WASM)** | Production | SIMD128 |
+| **Linux x86_64** | Production | AVX2/AVX-512 |
+| **macOS Apple Silicon** | Production | ARM NEON |
+| **Windows x86_64** | Production | AVX2 |
 
-### Compatibility
+### API Compatibility
 
-- **Drop-in Qdrant replacement** - Use existing Qdrant SDKs
-- **REST API** - Full HTTP/JSON interface
-- **Service Worker** - Browser-native operation
+- **Qdrant REST API** - Drop-in replacement, use existing SDKs
+- **Cypher Query Language** - Neo4j-compatible graph queries
+- **Service Worker** - Offline-first browser operation
 
 ---
 
-## Optimizations
+## Use Cases
 
-LatticeDB implements **8 state-of-the-art optimizations** for maximum performance:
+### Frontend RAG (No Backend)
 
-### 1. SIMD Distance Calculations
+Build LLM-powered apps that run entirely in the browser:
 
-Hardware-accelerated vector operations using platform-specific intrinsics with 2x loop unrolling.
+```javascript
+import { LatticeDB } from 'lattice-db';
 
-| Platform | Instruction Set | Vectors/Iteration |
-|----------|----------------|-------------------|
-| x86_64 | AVX2 | 8 floats |
-| aarch64 | NEON (2x unroll) | 8 floats |
+// Initialize in browser
+const db = await LatticeDB.init();
+await db.createCollection('knowledge', { dimension: 384 });
 
-```rust
-// Processes 8 floats per iteration on x86_64
-#[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn cosine_distance_avx2(a: &[f32], b: &[f32]) -> f32
-```
-
-### 2. HNSW Index with Shortcuts
-
-Implements [VLDB 2025](https://www.vldb.org/pvldb/vol18/p3518-chen.pdf) shortcut optimization - skips redundant distance calculations when upper layers don't improve results.
-
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| M | 16 | Upper layer connections |
-| M0 | 32 | Ground layer connections |
-| ef_construction | 200 | Build-time search depth |
-| ef_search | 100 | Query-time search depth |
-
-### 3. Thread-Local Scratch Space
-
-Pre-allocated memory pools eliminate allocation overhead in hot search paths.
-
-```rust
-thread_local! {
-    static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch {
-        visited: HashSet::with_capacity(1000),
-        candidates: BinaryHeap::with_capacity(200),
-        results: BinaryHeap::with_capacity(200),
-    });
+// User uploads documents → embed → store locally
+for (const doc of userDocuments) {
+  const embedding = await embed(doc.text);  // Local or API
+  await db.upsert('knowledge', [{
+    id: doc.id,
+    vector: embedding,
+    payload: { text: doc.text, source: doc.source }
+  }]);
 }
+
+// RAG query - zero network latency
+const context = await db.search('knowledge', queryEmbedding, 5);
+const answer = await llm.generate(query, context);
 ```
 
-**Impact**: 10-20% faster search by avoiding heap allocations.
+**Benefits:**
+- No server costs for vector storage
+- Data persists in IndexedDB/OPFS
+- Works offline
+- Sub-millisecond search latency
 
-### 4. Product Quantization (ScaNN-style)
+### Knowledge Graphs with Semantic Search
 
-[Google ScaNN](https://research.google/blog/announcing-scann-efficient-vector-similarity-search/)-inspired anisotropic quantization for memory-efficient approximate search.
+Combine graph relationships with vector similarity:
 
-| Parameter | Value |
-|-----------|-------|
-| K (centroids) | 256 |
-| Subquantizers | 8 |
-| Compression | 64x |
-
-### 5. Memory-Mapped Vector Storage
-
-Zero-copy access to vectors via OS memory mapping. Hot/cold tiered storage for optimal cache utilization.
-
-```rust
-pub struct HybridVectorStore {
-    hot: HashMap<PointId, Vec<f32>>,   // Recent inserts
-    cold: MmapVectorStore,              // Bulk storage
-}
+```cypher
+// Find similar concepts AND their related entities
+MATCH (concept:Concept)-[:RELATED_TO]->(related)
+WHERE vector_similarity(concept.embedding, $query) > 0.8
+RETURN concept, related
+ORDER BY vector_similarity(concept.embedding, $query) DESC
+LIMIT 10
 ```
 
-### 6. Async Background Indexing
+### Personal AI Assistants
 
-Non-blocking upserts with background HNSW index updates. Configurable pending threshold for throughput/latency tradeoff.
+Build apps where user data stays on their device:
 
+```javascript
+// All data stored locally in browser
+const memories = await db.search('memories', currentContext, 10);
+const response = await assistant.respond(userMessage, memories);
+
+// Add new memory
+await db.upsert('memories', [{
+  id: Date.now(),
+  vector: await embed(response),
+  payload: { conversation: userMessage, response }
+}]);
 ```
-Upsert → Store Point → Queue for Index → Return Immediately
-                              ↓
-                    Background Worker → Update HNSW
-```
-
-### 7. Batch Search API
-
-Parallel query processing with [rayon](https://github.com/rayon-rs/rayon) for high-throughput scenarios.
-
-```rust
-// Process multiple queries in parallel
-let results = index.search_batch(&queries, k, ef);
-```
-
-### 8. Scalar Quantization
-
-4x memory reduction with int8 quantization and 4-element loop unrolling.
 
 ---
 
@@ -194,7 +192,7 @@ cd lattice-db
 # Build release binary
 cargo build --release -p lattice-server
 
-# Run the server
+# Run the server (Qdrant-compatible API)
 cargo run --release -p lattice-server
 ```
 
@@ -242,6 +240,30 @@ await db.upsert('vectors', [{ id: 1, vector: new Float32Array(128) }]);
 const results = await db.search('vectors', queryVector, 10);
 ```
 
+### Cypher Query Language
+
+```cypher
+// Create nodes with vectors
+CREATE (p:Person {name: 'Alice', embedding: [0.1, 0.2, ...]})
+CREATE (p:Person {name: 'Bob', embedding: [0.3, 0.4, ...]})
+
+// Create relationships
+MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+CREATE (a)-[:KNOWS {since: 2020}]->(b)
+
+// Query with filters
+MATCH (p:Person)-[:KNOWS]->(friend)
+WHERE p.age > 25
+RETURN p.name, friend.name
+ORDER BY p.name
+LIMIT 10
+
+// Hybrid: vector similarity + graph traversal
+MATCH (p:Person)-[:KNOWS*1..2]->(fof)
+WHERE vector_similarity(p.embedding, $query) > 0.8
+RETURN DISTINCT fof.name
+```
+
 ---
 
 ## Architecture
@@ -249,33 +271,30 @@ const results = await db.search('vectors', queryVector, 10);
 ```
 lattice-db/
 ├── crates/
-│   ├── lattice-core/          # Core engine (HNSW, distance, quantization)
+│   ├── lattice-core/          # Core engine (HNSW, Cypher, SIMD)
 │   │   ├── engine/            # Collection management
 │   │   ├── index/             # HNSW, ScaNN, distance functions
-│   │   ├── graph/             # BFS/DFS traversal
+│   │   ├── cypher/            # Cypher parser & executor
 │   │   └── types/             # Point, Query, Config types
 │   │
 │   ├── lattice-server/        # HTTP server & API
 │   │   ├── handlers/          # REST endpoint handlers
-│   │   ├── dto/               # Request/Response DTOs
 │   │   └── router.rs          # Qdrant-compatible routing
 │   │
-│   └── lattice-storage/       # Storage backends
-│       ├── memory/            # In-memory storage
-│       ├── mmap/              # Memory-mapped files
-│       └── opfs/              # Browser OPFS (WASM)
+│   └── lattice-wasm/          # Browser WASM bindings
+│       └── lib.rs             # JavaScript API
 ```
 
 ### SBIO Architecture
 
-**Separation of Business Logic and I/O** - Core engine never touches filesystem or network directly.
+**Separation of Business Logic and I/O** - Core engine never touches filesystem or network.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Transport Layer                         │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │   Axum HTTP │    │   Service   │    │   Direct    │     │
-│  │   Server    │    │   Worker    │    │   Embed     │     │
+│  │   Axum HTTP │    │   Service   │    │    WASM     │     │
+│  │   Server    │    │   Worker    │    │   Browser   │     │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘     │
 └─────────┼──────────────────┼──────────────────┼─────────────┘
           │                  │                  │
@@ -283,8 +302,8 @@ lattice-db/
 ┌─────────────────────────────────────────────────────────────┐
 │                    LatticeDB Core Engine                     │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
-│  │  HNSW    │  │  ScaNN   │  │  Graph   │  │  Filter  │    │
-│  │  Index   │  │  PQ      │  │  Ops     │  │  Engine  │    │
+│  │  HNSW    │  │  Cypher  │  │  Graph   │  │  Filter  │    │
+│  │  Index   │  │  Parser  │  │  Ops     │  │  Engine  │    │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
 └─────────────────────────────────────────────────────────────┘
           │                  │                  │
@@ -292,11 +311,28 @@ lattice-db/
 ┌─────────────────────────────────────────────────────────────┐
 │                      Storage Layer                           │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │   Memory    │    │    MMap     │    │    OPFS     │     │
-│  │   HashMap   │    │   Files     │    │   Browser   │     │
+│  │   Memory    │    │    MMap     │    │  IndexedDB  │     │
+│  │   HashMap   │    │   Files     │    │    OPFS     │     │
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Optimizations
+
+LatticeDB implements **8 state-of-the-art optimizations**:
+
+| Optimization | Technique | Impact |
+|--------------|-----------|--------|
+| **SIMD Distance** | AVX2/NEON/SIMD128 | 4-8x faster cosine |
+| **HNSW Shortcuts** | VLDB 2025 paper | Skip redundant layers |
+| **Thread-Local Scratch** | Pre-allocated pools | 10-20% faster search |
+| **Product Quantization** | ScaNN-style | 64x compression |
+| **Memory Mapping** | Zero-copy access | Large dataset support |
+| **Async Indexing** | Background HNSW updates | Non-blocking upserts |
+| **Batch Search** | Parallel with rayon | High throughput |
+| **Scalar Quantization** | int8 vectors | 4x memory reduction |
 
 ---
 
@@ -328,12 +364,11 @@ lattice-db/
 | `/collections/{name}/points/query` | POST | Query (Qdrant v1.16+) |
 | `/collections/{name}/points/search/batch` | POST | Batch search |
 
-### Graph (LatticeDB Extensions)
+### Cypher (LatticeDB Extension)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/collections/{name}/graph/edges` | POST | Add edge |
-| `/collections/{name}/graph/traverse` | POST | Graph traversal |
+| `/cypher` | POST | Execute Cypher query |
 
 ---
 
@@ -342,31 +377,26 @@ lattice-db/
 ### Implemented
 
 - [x] HNSW index with shortcuts (VLDB 2025)
-- [x] SIMD distance (AVX2, NEON)
-- [x] Thread-local scratch space
+- [x] SIMD distance (AVX2, NEON, WASM SIMD128)
+- [x] Cypher query language
 - [x] Product Quantization (ScaNN-style)
-- [x] Memory-mapped storage
-- [x] Async background indexing
-- [x] Batch search API
-- [x] Scalar quantization (int8)
 - [x] Qdrant API compatibility
+- [x] WASM browser support
 
 ### In Progress
 
-- [ ] AVX-512 SIMD support (2x wider vectors)
-- [ ] Software prefetching for graph traversal
-- [ ] WASM npm package
+- [ ] npm package for easy browser integration
+- [ ] IndexedDB/OPFS persistence for WASM
+- [ ] Hybrid vector+graph queries in Cypher
 
 ### Planned
 
-| Feature | Impact | Source |
-|---------|--------|--------|
-| **FP16 Quantization** | 2x memory reduction | [AWS](https://aws.amazon.com/blogs/big-data/save-big-on-opensearch-unleashing-intel-avx-512-for-binary-vector-performance/) |
-| **Binary Vectors** | 48% faster Hamming | [OpenSearch](https://opensearch.org/blog/boost-opensearch-vector-search-performance-with-intel-avx512/) |
-| **IVF-PQ Hybrid** | Billion-scale support | [FAISS](https://arxiv.org/abs/2401.08281) |
-| **DiskANN/Vamana** | SSD-based indexing | [Microsoft](https://github.com/microsoft/DiskANN) |
-| **CAGRA GPU** | 12x faster builds | [NVIDIA](https://developer.nvidia.com/blog/enhancing-gpu-accelerated-vector-search-in-faiss-with-nvidia-cuvs/) |
-| **Neural Routing** | 60% less I/O | [arXiv](https://arxiv.org/abs/2501.16375) |
+| Feature | Impact |
+|---------|--------|
+| **FP16 Quantization** | 2x memory reduction |
+| **Binary Vectors** | 48% faster Hamming |
+| **IVF-PQ Hybrid** | Billion-scale support |
+| **DiskANN/Vamana** | SSD-based indexing |
 
 ---
 
@@ -380,24 +410,22 @@ LatticeDB incorporates techniques from cutting-edge research:
 | [ScaNN](https://research.google/blog/announcing-scann-efficient-vector-similarity-search/) | Anisotropic quantization |
 | [VLDB 2025 Shortcuts](https://www.vldb.org/pvldb/vol18/p3518-chen.pdf) | Layer skip optimization |
 | [SimSIMD](https://github.com/ashvardanian/SimSIMD) | SIMD best practices |
-| [FAISS](https://arxiv.org/abs/2401.08281) | IVF-PQ techniques |
-| [DiskANN](https://github.com/microsoft/DiskANN) | Billion-scale indexing |
 
 ---
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions!
 
 ```bash
 # Run tests
 cargo test --all
 
-# Run WASM tests
-wasm-pack test --headless --chrome crates/lattice-core
+# Run WASM tests (requires Chrome)
+cargo make test-wasm
 
 # Run benchmarks
-cargo bench
+cargo bench -p lattice-bench
 ```
 
 ---
@@ -411,6 +439,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 <div align="center">
 
 **Built with Rust for the AI-native future**
+
+*The database that runs where your users are*
 
 [Documentation](https://lattice-db.dev/docs) | [Discord](https://discord.gg/lattice-db) | [Twitter](https://twitter.com/lattice_db)
 

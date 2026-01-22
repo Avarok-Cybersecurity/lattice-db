@@ -1,0 +1,18 @@
+{
+  "vector_benchmarks": {
+    "dataset_size": 1000,
+    "vector_dim": 128,
+    "results": [
+      {"operation": "upsert", "lattice_us": 0.59, "qdrant_us": 83.32, "speedup": 141.2},
+      {"operation": "search", "lattice_us": 493.56, "qdrant_us": 141.34, "speedup": 0.29},
+      {"operation": "retrieve", "lattice_us": 2.45, "qdrant_us": 106.91, "speedup": 43.7},
+      {"operation": "scroll", "lattice_us": 19.30, "qdrant_us": 87.88, "speedup": 4.6}
+    ]
+  },
+  "notes": {
+    "environment": "Apple Silicon M-series, macOS",
+    "lattice_version": "native release build",
+    "qdrant_version": "docker latest",
+    "iterations": 100
+  }
+}

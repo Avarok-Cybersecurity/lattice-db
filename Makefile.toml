@@ -168,6 +168,21 @@ command = "cargo"
 args = ["doc", "--workspace", "--no-deps", "--open"]
 
 # =============================================================================
+# Benchmark Tasks
+# =============================================================================
+
+[tasks.bench]
+description = "Run native benchmarks"
+command = "cargo"
+args = ["bench", "-p", "lattice-bench"]
+
+[tasks.bench-wasm]
+description = "Run WASM benchmarks in headless Chrome"
+install_crate = { crate_name = "wasm-pack", binary = "wasm-pack", test_arg = "--version" }
+command = "wasm-pack"
+args = ["test", "--headless", "--chrome", "crates/lattice-wasm-bench", "--release"]
+
+# =============================================================================
 # CI Tasks
 # =============================================================================
 

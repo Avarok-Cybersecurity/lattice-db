@@ -1,0 +1,4 @@
+# WASM SIMD configuration
+# Enables simd128 for WASM builds, providing significant speedups for vector operations
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

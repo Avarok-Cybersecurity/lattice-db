@@ -19,8 +19,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 # Benchmarking
 criterion = { workspace = true, features = ["async_tokio"] }
 
-# HTTP client for LatticeDB benchmarks
-reqwest = { version = "0.12", features = ["json"] }
+# HTTP client for LatticeDB and Qdrant benchmarks
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 # Utilities
 rand = { workspace = true }
@@ -30,6 +30,10 @@ chrono = { version = "0.4", features = ["serde"] }
 
 [[bench]]
 name = "cypher_comparison"
+harness = false
+
+[[bench]]
+name = "vector_comparison"
 harness = false
 
 [features]
