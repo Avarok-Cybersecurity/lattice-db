@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LatticeDB Browser Demo</title>
+    <style>
+        body { font-family: system-ui; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; border-radius: 4px; }
+        code { font-family: 'SF Mono', Monaco, 'Courier New', monospace; }
+        button { margin: 0.5rem 0; padding: 0.5rem 1rem; cursor: pointer; font-size: 1rem; }
+        .output { background: #e8f5e9; padding: 1rem; margin: 0.5rem 0; border-radius: 4px; }
+        .error { background: #ffebee; }
+        h1 { color: #1a1a2e; }
+        h2 { color: #16213e; margin-top: 2rem; }
+        a { color: #0066cc; }
+    </style>
+</head>
+<body>
+    <h1>LatticeDB Browser Demo</h1>
+    <p>Hybrid Graph/Vector Database running entirely in your browser via WebAssembly.</p>
+    <p>
+        <a href="https://github.com/Avarok-Cybersecurity/lattice-db">GitHub</a> |
+        <a href="https://avarok-cybersecurity.github.io/lattice-db/book/">Documentation</a> |
+        <a href="https://www.npmjs.com/package/lattice-db">NPM Package</a>
+    </p>
+
+    <h2>Try It</h2>
+    <button onclick="runDemo()">Run Demo</button>
+    <div id="output"></div>
+
+    <h2>How It Works</h2>
+    <pre><code>// Import from GitHub releases (or use npm: import { LatticeDB } from 'lattice-db')
+import init, { LatticeDB } from
+    'https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db.min.js';
+
+// Initialize WASM (downloads ~500KB)
+await init('https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice_server_bg.wasm');
+
+const db = new LatticeDB();
+
+// Create collection for 128-dim vectors
+db.createCollection('docs', {
+    vectors: { size: 128, distance: 'Cosine' }
+});
+
+// Insert vectors with payloads
+db.upsert('docs', [
+    { id: 1, vector: [...], payload: { title: 'Hello World' } }
+]);
+
+// Search nearest neighbors
+const results = db.search('docs', queryVector, 5);</code></pre>
+
+    <script type="module">
+        // GitHub release URL pattern
+        const RELEASE_BASE = 'https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download';
+
+        window.runDemo = async function() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<div class="output">Loading WASM module from GitHub releases...</div>';
+
+            try {
+                // Dynamic import from GitHub releases
+                const module = await import(`${RELEASE_BASE}/lattice-db.min.js`);
+                const init = module.default;
+                const LatticeDB = module.LatticeDB;
+
+                output.innerHTML += '<div class="output">Initializing database...</div>';
+                await init(`${RELEASE_BASE}/lattice_server_bg.wasm`);
+
+                const db = new LatticeDB();
+
+                // Create collection
+                output.innerHTML += '<div class="output">Creating collection with 4-dim vectors...</div>';
+                db.createCollection('demo', {
+                    vectors: { size: 4, distance: 'Cosine' }
+                });
+
+                // Upsert points representing cardinal directions
+                output.innerHTML += '<div class="output">Inserting vectors for cardinal directions...</div>';
+                db.upsert('demo', [
+                    { id: 1, vector: [1, 0, 0, 0], payload: { name: 'North', emoji: '\u2B06\uFE0F' } },
+                    { id: 2, vector: [0, 1, 0, 0], payload: { name: 'East', emoji: '\u27A1\uFE0F' } },
+                    { id: 3, vector: [-1, 0, 0, 0], payload: { name: 'South', emoji: '\u2B07\uFE0F' } },
+                    { id: 4, vector: [0, -1, 0, 0], payload: { name: 'West', emoji: '\u2B05\uFE0F' } },
+                ]);
+
+                // Vector search: find directions closest to "slightly north-east"
+                output.innerHTML += '<div class="output">Searching for neighbors of [0.9, 0.1, 0, 0] (slightly north-east)...</div>';
+                const results = db.search('demo', [0.9, 0.1, 0, 0], 2);
+
+                output.innerHTML += `<div class="output"><strong>Vector Search Results:</strong>
+<pre>${JSON.stringify(results, null, 2)}</pre></div>`;
+
+                // Graph operations: connect directions in a ring
+                output.innerHTML += '<div class="output">Adding graph edges (N-E-S-W ring)...</div>';
+                db.addEdge('demo', 1, 2, 'ADJACENT');
+                db.addEdge('demo', 2, 3, 'ADJACENT');
+                db.addEdge('demo', 3, 4, 'ADJACENT');
+                db.addEdge('demo', 4, 1, 'ADJACENT');
+
+                // Traverse: find all nodes within 2 hops of North
+                const traversal = db.traverse('demo', 1, 2);
+                output.innerHTML += `<div class="output"><strong>Graph Traversal from North (depth=2):</strong>
+<pre>${JSON.stringify(traversal, null, 2)}</pre></div>`;
+
+                // Cypher query: find paths
+                output.innerHTML += '<div class="output">Running Cypher query...</div>';
+                const cypherResult = db.cypher('demo', 'MATCH (a)-[r:ADJACENT]->(b) RETURN a.name, b.name LIMIT 4');
+                output.innerHTML += `<div class="output"><strong>Cypher Query Results:</strong>
+<pre>${JSON.stringify(cypherResult, null, 2)}</pre></div>`;
+
+                output.innerHTML += '<div class="output" style="background: #e3f2fd;"><strong>Demo complete!</strong> LatticeDB is running entirely in your browser with no server required.</div>';
+
+            } catch (error) {
+                output.innerHTML += `<div class="output error"><strong>Error:</strong> ${error.message}
+<pre>${error.stack || ''}</pre></div>`;
+            }
+        };
+    </script>
+</body>
+</html>

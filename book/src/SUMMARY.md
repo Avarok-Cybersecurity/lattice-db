@@ -38,6 +38,10 @@
 - [Benchmarks](./performance/benchmarks.md)
 - [Tuning Guide](./performance/tuning.md)
 
+# Examples
+
+- [Browser Demo](./examples/browser-demo.md)
+
 # Contributing
 
 - [Development Setup](./contributing/setup.md)
