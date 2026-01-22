@@ -108,6 +108,8 @@ pub fn get_points(
 
     let results = engine.get_points(&request.ids);
 
+    // Native get_points returns owned Points, WASM returns references
+    #[cfg(not(target_arch = "wasm32"))]
     let points: Vec<PointRecord> = request
         .ids
         .iter()
@@ -122,6 +124,28 @@ pub fn get_points(
                 },
                 vector: if request.with_vector {
                     Some(point.vector)
+                } else {
+                    None
+                },
+            })
+        })
+        .collect();
+
+    #[cfg(target_arch = "wasm32")]
+    let points: Vec<PointRecord> = request
+        .ids
+        .iter()
+        .zip(results.into_iter())
+        .filter_map(|(&id, opt)| {
+            opt.map(|point| PointRecord {
+                id,
+                payload: if request.with_payload {
+                    Some(payload_to_json(&point.payload))
+                } else {
+                    None
+                },
+                vector: if request.with_vector {
+                    Some(point.vector.clone())
                 } else {
                     None
                 },

@@ -1283,6 +1283,13 @@ impl CollectionEngine {
         Ok(results)
     }
 
+    /// Batch search for multiple queries (sequential processing on WASM)
+    ///
+    /// WASM version processes queries sequentially since rayon is not available.
+    pub fn search_batch(&self, queries: Vec<SearchQuery>) -> LatticeResult<Vec<Vec<SearchResult>>> {
+        queries.into_iter().map(|q| self.search(q)).collect()
+    }
+
     /// Scroll through points (paginated retrieval)
     ///
     /// Uses BTreeMap range iteration for O(log n + limit) instead of O(n log n).
