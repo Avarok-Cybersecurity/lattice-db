@@ -116,14 +116,14 @@ where
     let t_start = Instant::now();
 
     // Extract method directly - use static string slices (zero allocation)
-    let method: &'static str = match req.method() {
-        &Method::GET => "GET",
-        &Method::POST => "POST",
-        &Method::PUT => "PUT",
-        &Method::DELETE => "DELETE",
-        &Method::PATCH => "PATCH",
-        &Method::HEAD => "HEAD",
-        &Method::OPTIONS => "OPTIONS",
+    let method: &'static str = match *req.method() {
+        Method::GET => "GET",
+        Method::POST => "POST",
+        Method::PUT => "PUT",
+        Method::DELETE => "DELETE",
+        Method::PATCH => "PATCH",
+        Method::HEAD => "HEAD",
+        Method::OPTIONS => "OPTIONS",
         _ => {
             return Ok(Response::builder()
                 .status(StatusCode::METHOD_NOT_ALLOWED)

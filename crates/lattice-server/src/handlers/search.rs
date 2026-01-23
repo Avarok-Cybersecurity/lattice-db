@@ -396,7 +396,7 @@ pub fn cypher_query(
     let start = Instant::now();
 
     // Execute the query
-    match handler.query(&request.query, &mut *engine, parameters) {
+    match handler.query(&request.query, &mut engine, parameters) {
         Ok(result) => {
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
