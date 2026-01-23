@@ -57,9 +57,10 @@ impl LatticeTransport for HyperTransport {
         H: Fn(LatticeRequest) -> Fut + Send + Sync + Clone + 'static,
         Fut: Future<Output = LatticeResponse> + Send + 'static,
     {
-        let addr: SocketAddr = self.addr.parse().map_err(|e| {
-            HyperError::Server(format!("Invalid address '{}': {}", self.addr, e))
-        })?;
+        let addr: SocketAddr = self
+            .addr
+            .parse()
+            .map_err(|e| HyperError::Server(format!("Invalid address '{}': {}", self.addr, e)))?;
 
         let listener = TcpListener::bind(addr).await?;
         println!("LatticeDB server (Hyper) listening on {}", addr);
@@ -144,7 +145,10 @@ where
         Err(e) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(format!("Failed to read body: {}", e))))
+                .body(Full::new(Bytes::from(format!(
+                    "Failed to read body: {}",
+                    e
+                ))))
                 .unwrap());
         }
     };
@@ -200,9 +204,7 @@ where
         builder = builder.header(key, value);
     }
 
-    Ok(builder
-        .body(Full::new(Bytes::from(response.body)))
-        .unwrap())
+    Ok(builder.body(Full::new(Bytes::from(response.body))).unwrap())
 }
 
 #[cfg(test)]

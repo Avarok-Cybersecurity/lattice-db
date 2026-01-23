@@ -53,11 +53,7 @@ fn setup_qdrant(size: usize) -> Result<QdrantRunner, Box<dyn std::error::Error>>
     } else {
         "http://localhost:6333"
     };
-    let runner = QdrantRunner::new(
-        url,
-        &format!("bench_vector_{}", size),
-        VECTOR_DIM,
-    )?;
+    let runner = QdrantRunner::new(url, &format!("bench_vector_{}", size), VECTOR_DIM)?;
     runner.create_collection()?;
     runner.load_data(size, SEED)?;
     Ok(runner)
@@ -70,11 +66,7 @@ fn setup_http_lattice(size: usize) -> Result<HttpVectorRunner, Box<dyn std::erro
     } else {
         "http://localhost:6334"
     };
-    let runner = HttpVectorRunner::new(
-        url,
-        &format!("bench_http_vector_{}", size),
-        VECTOR_DIM,
-    )?;
+    let runner = HttpVectorRunner::new(url, &format!("bench_http_vector_{}", size), VECTOR_DIM)?;
     runner.create_collection()?;
     runner.load_data(size, SEED)?;
     Ok(runner)
@@ -239,7 +231,11 @@ fn bench_http_upsert(c: &mut Criterion) {
             if let Ok(runner) = setup_http_lattice(*size) {
                 group.bench_with_input(BenchmarkId::new("LatticeDB_HTTP", size), size, |b, _| {
                     b.iter(|| {
-                        black_box(runner.bench_upsert(SEED + 1).expect("LatticeDB HTTP upsert failed"))
+                        black_box(
+                            runner
+                                .bench_upsert(SEED + 1)
+                                .expect("LatticeDB HTTP upsert failed"),
+                        )
                     })
                 });
             }
@@ -249,7 +245,9 @@ fn bench_http_upsert(c: &mut Criterion) {
         if has_qdrant {
             if let Ok(qdrant) = setup_qdrant(*size) {
                 group.bench_with_input(BenchmarkId::new("Qdrant_HTTP", size), size, |b, _| {
-                    b.iter(|| black_box(qdrant.bench_upsert(SEED + 1).expect("Qdrant upsert failed")))
+                    b.iter(|| {
+                        black_box(qdrant.bench_upsert(SEED + 1).expect("Qdrant upsert failed"))
+                    })
                 });
             }
         }
@@ -276,7 +274,11 @@ fn bench_http_search(c: &mut Criterion) {
             if let Ok(runner) = setup_http_lattice(*size) {
                 group.bench_with_input(BenchmarkId::new("LatticeDB_HTTP", size), size, |b, _| {
                     b.iter(|| {
-                        black_box(runner.bench_search(10, SEED).expect("LatticeDB HTTP search failed"))
+                        black_box(
+                            runner
+                                .bench_search(10, SEED)
+                                .expect("LatticeDB HTTP search failed"),
+                        )
                     })
                 });
             }
@@ -286,7 +288,9 @@ fn bench_http_search(c: &mut Criterion) {
         if has_qdrant {
             if let Ok(qdrant) = setup_qdrant(*size) {
                 group.bench_with_input(BenchmarkId::new("Qdrant_HTTP", size), size, |b, _| {
-                    b.iter(|| black_box(qdrant.bench_search(10, SEED).expect("Qdrant search failed")))
+                    b.iter(|| {
+                        black_box(qdrant.bench_search(10, SEED).expect("Qdrant search failed"))
+                    })
                 });
             }
         }
@@ -329,7 +333,9 @@ fn bench_http_retrieve(c: &mut Criterion) {
         if has_qdrant {
             if let Ok(qdrant) = setup_qdrant(*size) {
                 group.bench_with_input(BenchmarkId::new("Qdrant_HTTP", size), size, |b, _| {
-                    b.iter(|| black_box(qdrant.bench_retrieve(&ids).expect("Qdrant retrieve failed")))
+                    b.iter(|| {
+                        black_box(qdrant.bench_retrieve(&ids).expect("Qdrant retrieve failed"))
+                    })
                 });
             }
         }
@@ -356,7 +362,11 @@ fn bench_http_scroll(c: &mut Criterion) {
             if let Ok(runner) = setup_http_lattice(*size) {
                 group.bench_with_input(BenchmarkId::new("LatticeDB_HTTP", size), size, |b, _| {
                     b.iter(|| {
-                        black_box(runner.bench_scroll(100).expect("LatticeDB HTTP scroll failed"))
+                        black_box(
+                            runner
+                                .bench_scroll(100)
+                                .expect("LatticeDB HTTP scroll failed"),
+                        )
                     })
                 });
             }

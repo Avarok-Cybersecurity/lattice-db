@@ -19,15 +19,18 @@ LatticeDB is benchmarked against industry-standard databases: **Qdrant** for vec
 
 ² HTTP server uses simd-json, Hyper with pipelining, TCP_NODELAY
 
-### Graph Operations: LatticeDB vs Neo4j
+### Graph Operations: LatticeDB In-Memory³ vs Neo4j Bolt
 
-| Operation | LatticeDB | Neo4j | Speedup |
-|-----------|-----------|-------|---------|
+| Operation | LatticeDB In-Memory | Neo4j Bolt | Speedup |
+|-----------|---------------------|------------|---------|
 | match_all | **63 µs** | 3,543 µs | **56x** |
 | match_by_label | **57 µs** | 3,689 µs | **65x** |
 | match_with_limit | **12 µs** | 610 µs | **51x** |
 | order_by | **116 µs** | 953 µs | **8x** |
 | where_property | **555 µs** | 2,538 µs | **5x** |
+
+³ In-memory graph queries have no HTTP overhead. For server deployments,
+  use `http_graph_profiler` to benchmark LatticeDB HTTP vs Neo4j Bolt.
 
 ## Benchmark Setup
 
@@ -218,10 +221,16 @@ MATCH (n:Person) WHERE n.age > 30 RETURN n
 
 ### vs Neo4j
 
+**In-Memory Mode (embedded/browser):**
 1. **Lightweight runtime**: No JVM overhead
 2. **Efficient data structures**: Rust-native HashMap, Vec
 3. **Query compilation**: Direct execution vs interpreted Cypher
 4. **Cache-friendly layout**: Sequential memory access
+
+**HTTP Mode (server deployments):**
+- LatticeDB HTTP uses the same optimized Cypher engine
+- Neo4j Bolt is a binary protocol (more efficient than HTTP)
+- Use `http_graph_profiler` to compare server deployment performance
 
 ## Running Benchmarks
 
@@ -236,10 +245,17 @@ docker run -p 6333:6333 qdrant/qdrant
 docker run -p 7474:7474 -p 7687:7687 neo4j
 ```
 
-### Quick Benchmark
+### Quick Benchmarks
 
 ```bash
-cargo run -p lattice-bench --release --example quick_vector_bench
+# Vector operations (HTTP)
+cargo run -p lattice-bench --release --example http_profiler
+
+# Graph operations (in-memory)
+cargo run -p lattice-bench --release --example graph_profiler
+
+# Graph operations (HTTP vs Bolt)
+cargo run -p lattice-bench --release --example http_graph_profiler
 ```
 
 ### Full Criterion Benchmarks

@@ -149,7 +149,10 @@ impl HttpVectorRunner {
                 .map(|i| {
                     let mut payload = HashMap::new();
                     payload.insert("index".to_string(), serde_json::json!(i));
-                    payload.insert("name".to_string(), serde_json::json!(format!("point_{}", i)));
+                    payload.insert(
+                        "name".to_string(),
+                        serde_json::json!(format!("point_{}", i)),
+                    );
                     let categories = ["A", "B", "C"];
                     payload.insert("category".to_string(), serde_json::json!(categories[i % 3]));
 
