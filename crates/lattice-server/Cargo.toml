@@ -18,6 +18,7 @@ serde_json.workspace = true
 simd-json = { workspace = true, optional = true }
 async-trait.workspace = true
 thiserror.workspace = true
+parking_lot = "0.12"
 
 # Native HTTP server (Hyper - fast, or Axum - convenient)
 hyper = { workspace = true, optional = true }

@@ -9,7 +9,8 @@ use crate::dto::{
 };
 use crate::handlers::{collections, points, search};
 use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 /// Application state shared across all requests
 pub type AppState = Arc<AppStateInner>;
@@ -37,17 +38,17 @@ impl AppStateInner {
 
     /// Get a collection handle (fast - only holds outer lock briefly)
     pub fn get_collection(&self, name: &str) -> Option<CollectionHandle> {
-        self.collections.read().unwrap().get(name).cloned()
+        self.collections.read().get(name).cloned()
     }
 
     /// List collection names
     pub fn list_collection_names(&self) -> Vec<String> {
-        self.collections.read().unwrap().keys().cloned().collect()
+        self.collections.read().keys().cloned().collect()
     }
 
     /// Insert a new collection (requires write lock on outer HashMap)
     pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> bool {
-        let mut collections = self.collections.write().unwrap();
+        let mut collections = self.collections.write();
         if collections.contains_key(&name) {
             return false;
         }
@@ -57,7 +58,7 @@ impl AppStateInner {
 
     /// Remove a collection (requires write lock on outer HashMap)
     pub fn remove_collection(&self, name: &str) -> bool {
-        self.collections.write().unwrap().remove(name).is_some()
+        self.collections.write().remove(name).is_some()
     }
 }
 
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn test_new_app_state() {
         let state = new_app_state();
-        let collections = state.collections.read().unwrap();
+        let collections = state.collections.read();
         assert!(collections.is_empty());
     }
 

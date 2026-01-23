@@ -132,7 +132,7 @@ pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
         Some(h) => h,
         None => return LatticeResponse::not_found(&format!("Collection '{}' not found", name)),
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     let config = engine.config();
     let point_count = engine.point_count() as u64;

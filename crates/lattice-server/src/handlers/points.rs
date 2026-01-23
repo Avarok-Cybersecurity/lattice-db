@@ -44,7 +44,7 @@ pub fn upsert_points(
             ))
         }
     };
-    let mut engine = handle.write().unwrap();
+    let mut engine = handle.write();
 
     // Convert DTO points to core Points
     let points: Vec<Point> = request
@@ -102,7 +102,7 @@ pub fn get_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     let results = engine.get_points(&request.ids);
 
@@ -182,7 +182,7 @@ pub fn delete_points(
             ))
         }
     };
-    let mut engine = handle.write().unwrap();
+    let mut engine = handle.write();
 
     let _deleted = engine.delete_points(&request.points);
 
@@ -221,7 +221,7 @@ pub fn add_edge(
             ))
         }
     };
-    let mut engine = handle.write().unwrap();
+    let mut engine = handle.write();
 
     match engine.add_edge(
         request.from_id,

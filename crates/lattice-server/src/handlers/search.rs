@@ -54,7 +54,7 @@ pub fn search_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -111,7 +111,7 @@ pub fn search_batch(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Convert SearchRequest DTOs to SearchQuery
     let queries: Vec<SearchQuery> = request
@@ -180,7 +180,7 @@ pub fn query_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -251,7 +251,7 @@ pub fn scroll_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build scroll query
     let mut query = ScrollQuery::new(request.limit);
@@ -314,7 +314,7 @@ pub fn traverse_graph(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Convert relation strings to references for the API
     let relations: Option<Vec<&str>> = request
@@ -380,7 +380,7 @@ pub fn cypher_query(
             ))
         }
     };
-    let mut engine = handle.write().unwrap();
+    let mut engine = handle.write();
 
     // Create the Cypher handler
     let handler = DefaultCypherHandler::new();
