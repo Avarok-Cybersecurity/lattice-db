@@ -53,21 +53,28 @@ db.upsert('docs', [
 const results = db.search('docs', queryVector, 5);</code></pre>
 
     <script type="module">
-        // GitHub Pages CDN URL (serves files with proper CORS headers)
-        const CDN_BASE = 'https://avarok-cybersecurity.github.io/lattice-db';
+        // Toggle for local testing vs CDN
+        const USE_LOCAL = false; // Set to true for local testing
+
+        const CDN_BASE = USE_LOCAL
+            ? '../packages/lattice-db-js'
+            : 'https://avarok-cybersecurity.github.io/lattice-db';
+
+        const JS_PATH = USE_LOCAL
+            ? `${CDN_BASE}/dist/lattice-db.esm.js`
+            : `${CDN_BASE}/js/lattice-db.min.js`;
+
+        const WASM_PATH = `${CDN_BASE}/wasm/lattice_server_bg.wasm`;
 
         window.runDemo = async function() {
             const output = document.getElementById('output');
-            output.innerHTML = '<div class="output">Loading WASM module from GitHub Pages CDN...</div>';
+            output.innerHTML = `<div class="output">Loading WASM module from ${USE_LOCAL ? 'local' : 'CDN'}...</div>`;
 
             try {
-                // Dynamic import from GitHub Pages (proper CORS support)
-                const { LatticeDB } = await import(`${CDN_BASE}/js/lattice-db.min.js`);
+                const { LatticeDB } = await import(JS_PATH);
 
                 output.innerHTML += '<div class="output">Initializing database...</div>';
-                // LatticeDB.init() loads WASM and returns an initialized instance
-                // The wasm-bindgen glue at /wasm/lattice_server.js loads /wasm/lattice_server_bg.wasm
-                const db = await LatticeDB.init(`${CDN_BASE}/wasm/lattice_server_bg.wasm`);
+                const db = await LatticeDB.init(WASM_PATH);
 
                 // Create collection
                 output.innerHTML += '<div class="output">Creating collection with 4-dim vectors...</div>';
@@ -105,7 +112,7 @@ const results = db.search('docs', queryVector, 5);</code></pre>
 
                 // Cypher query: find paths
                 output.innerHTML += '<div class="output">Running Cypher query...</div>';
-                const cypherResult = db.cypher('demo', 'MATCH (a)-[r:ADJACENT]->(b) RETURN a.name, b.name LIMIT 4');
+                const cypherResult = db.query('demo', 'MATCH (a)-[r:ADJACENT]->(b) RETURN a.name, b.name LIMIT 4');
                 output.innerHTML += `<div class="output"><strong>Cypher Query Results:</strong>
 <pre>${JSON.stringify(cypherResult, null, 2)}</pre></div>`;
 

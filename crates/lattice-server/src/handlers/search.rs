@@ -18,6 +18,13 @@ use lattice_core::CypherValue;
 use lattice_core::{LatticeResponse, ScrollQuery, SearchQuery};
 use std::collections::HashMap;
 
+// Use wasmtimer for WASM, std::time for native
+#[cfg(target_arch = "wasm32")]
+use wasmtimer::std::Instant;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
 /// Search for nearest neighbors
 #[cfg_attr(feature = "openapi", utoipa::path(
     post,
@@ -392,7 +399,7 @@ pub fn cypher_query(
         .collect();
 
     // Record start time
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     // Execute the query
     match handler.query(&request.query, engine, parameters) {

@@ -48,6 +48,7 @@ web-sys = "0.3"
 js-sys = "0.3"
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1"
+wasmtimer = "0.4.3"
 
 # Testing & benchmarking
 rand = "0.8"

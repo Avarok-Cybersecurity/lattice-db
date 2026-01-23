@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LatticeDB Debug Demo</title>
+    <style>
+        body { font-family: system-ui; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; border-radius: 4px; }
+        button { margin: 0.5rem 0; padding: 0.5rem 1rem; cursor: pointer; font-size: 1rem; }
+        .output { background: #e8f5e9; padding: 1rem; margin: 0.5rem 0; border-radius: 4px; }
+        .error { background: #ffebee; }
+    </style>
+</head>
+<body>
+    <h1>LatticeDB Debug Demo</h1>
+    <p>Testing raw WASM bindings vs TypeScript wrapper</p>
+
+    <h2>Test 1: Raw WASM (wasm-bindgen direct)</h2>
+    <button onclick="testRawWasm()">Test Raw WASM</button>
+    <div id="raw-output"></div>
+
+    <h2>Test 2: TypeScript Wrapper</h2>
+    <button onclick="testWrapper()">Test Wrapper</button>
+    <div id="wrapper-output"></div>
+
+    <script type="module">
+        // Toggle between CDN and local for testing
+        const USE_LOCAL = true; // Set to false for CDN
+        const CDN_BASE = USE_LOCAL
+            ? '../packages/lattice-db-js'  // Local path (relative to examples/)
+            : 'https://avarok-cybersecurity.github.io/lattice-db';
+
+        // Test 1: Raw WASM bindings
+        window.testRawWasm = async function() {
+            const output = document.getElementById('raw-output');
+            output.innerHTML = '<div class="output">Loading raw WASM module...</div>';
+
+            try {
+                // Import the wasm-bindgen glue directly
+                const wasmPath = USE_LOCAL ? `${CDN_BASE}/wasm/lattice_server.js` : `${CDN_BASE}/wasm/lattice_server.js`;
+                const wasmBinaryPath = USE_LOCAL ? `${CDN_BASE}/wasm/lattice_server_bg.wasm` : `${CDN_BASE}/wasm/lattice_server_bg.wasm`;
+
+                const wasmModule = await import(wasmPath);
+                output.innerHTML += `<div class="output">Module exports: ${Object.keys(wasmModule).join(', ')}</div>`;
+
+                // Initialize WASM
+                output.innerHTML += '<div class="output">Calling init (default export)...</div>';
+                await wasmModule.default(wasmBinaryPath);
+                output.innerHTML += '<div class="output">WASM initialized!</div>';
+
+                // Create LatticeDB instance
+                output.innerHTML += '<div class="output">Creating LatticeDB instance...</div>';
+                const db = new wasmModule.LatticeDB();
+                output.innerHTML += `<div class="output">LatticeDB created: ${db}</div>`;
+                output.innerHTML += `<div class="output">Methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(db)).join(', ')}</div>`;
+
+                // Try createCollection
+                output.innerHTML += '<div class="output">Calling createCollection...</div>';
+                try {
+                    const result = db.createCollection('test', {
+                        vectors: { size: 4, distance: 'Cosine' }
+                    });
+                    output.innerHTML += `<div class="output">Result type: ${typeof result}</div>`;
+                    output.innerHTML += `<div class="output">Result value: ${JSON.stringify(result)}</div>`;
+                    output.innerHTML += `<div class="output">Result.status: ${result?.status}</div>`;
+                    output.innerHTML += `<div class="output">Result.result: ${result?.result}</div>`;
+                } catch (e) {
+                    output.innerHTML += `<div class="output error">createCollection threw: ${e.message}</div>`;
+                }
+
+                // Try listCollections
+                output.innerHTML += '<div class="output">Calling listCollections...</div>';
+                try {
+                    const result = db.listCollections();
+                    output.innerHTML += `<div class="output">listCollections result: ${JSON.stringify(result)}</div>`;
+                } catch (e) {
+                    output.innerHTML += `<div class="output error">listCollections threw: ${e.message}</div>`;
+                }
+
+            } catch (error) {
+                output.innerHTML += `<div class="output error"><strong>Error:</strong> ${error.message}
+<pre>${error.stack || ''}</pre></div>`;
+            }
+        };
+
+        // Test 2: TypeScript wrapper
+        window.testWrapper = async function() {
+            const output = document.getElementById('wrapper-output');
+            output.innerHTML = '<div class="output">Loading TypeScript wrapper...</div>';
+
+            try {
+                const jsPath = USE_LOCAL ? `${CDN_BASE}/dist/lattice-db.esm.js` : `${CDN_BASE}/js/lattice-db.min.js`;
+                const { LatticeDB } = await import(jsPath);
+                output.innerHTML += '<div class="output">LatticeDB class imported</div>';
+
+                const wasmBinaryPath = USE_LOCAL ? `${CDN_BASE}/wasm/lattice_server_bg.wasm` : `${CDN_BASE}/wasm/lattice_server_bg.wasm`;
+                const db = await LatticeDB.init(wasmBinaryPath);
+                output.innerHTML += '<div class="output">LatticeDB initialized</div>';
+
+                output.innerHTML += '<div class="output">Calling createCollection...</div>';
+                db.createCollection('wrapper_test', {
+                    vectors: { size: 4, distance: 'Cosine' }
+                });
+                output.innerHTML += '<div class="output">Collection created!</div>';
+
+                const collections = db.listCollections();
+                output.innerHTML += `<div class="output">Collections: ${JSON.stringify(collections)}</div>`;
+
+            } catch (error) {
+                output.innerHTML += `<div class="output error"><strong>Error:</strong> ${error.message}
+<pre>${error.stack || ''}</pre></div>`;
+            }
+        };
+    </script>
+</body>
+</html>
