@@ -394,11 +394,10 @@ struct ScrollOptions {
 /// Convert LatticeResponse to JsValue
 fn response_to_js(response: lattice_core::LatticeResponse) -> Result<JsValue, JsValue> {
     if response.status >= 200 && response.status < 300 {
-        // Parse the JSON body and convert to JsValue
-        let value: serde_json::Value = serde_json::from_slice(&response.body)
-            .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
-        serde_wasm_bindgen::to_value(&value)
-            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+        // Convert body to string and use JS JSON.parse for reliable conversion
+        let json_str = String::from_utf8_lossy(&response.body);
+        js_sys::JSON::parse(&json_str)
+            .map_err(|e| JsValue::from_str(&format!("JSON parse error: {:?}", e)))
     } else {
         // Return error with message from body
         let msg = String::from_utf8_lossy(&response.body);
