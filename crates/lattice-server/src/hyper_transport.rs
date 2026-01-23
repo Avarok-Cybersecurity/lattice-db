@@ -102,6 +102,20 @@ impl LatticeTransport for HyperTransport {
 // Static error responses to avoid allocations
 static METHOD_NOT_ALLOWED: &[u8] = b"Method not allowed";
 static CONTENT_TYPE_JSON: &str = "application/json";
+static PAYLOAD_TOO_LARGE: &[u8] = b"{\"status\":\"error\",\"result\":\"Request body too large\"}";
+
+/// Maximum request body size (16 MB)
+///
+/// This prevents memory exhaustion from oversized requests.
+/// Adjust via environment variable LATTICE_MAX_BODY_SIZE if needed.
+const DEFAULT_MAX_BODY_SIZE: usize = 16 * 1024 * 1024;
+
+fn max_body_size() -> usize {
+    std::env::var("LATTICE_MAX_BODY_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_MAX_BODY_SIZE)
+}
 
 /// Handle incoming HTTP requests with minimal overhead
 async fn handle_request<H, Fut>(
@@ -135,10 +149,34 @@ where
     // Extract path - single allocation
     let path = req.uri().path().to_owned();
 
+    // Check Content-Length header to reject oversized requests early
+    let max_size = max_body_size();
+    if let Some(content_length) = req.headers().get(hyper::header::CONTENT_LENGTH) {
+        if let Ok(len_str) = content_length.to_str() {
+            if let Ok(len) = len_str.parse::<usize>() {
+                if len > max_size {
+                    return Ok(Response::builder()
+                        .status(StatusCode::PAYLOAD_TOO_LARGE)
+                        .header("Content-Type", CONTENT_TYPE_JSON)
+                        .body(Full::new(Bytes::from_static(PAYLOAD_TOO_LARGE)))
+                        .unwrap());
+                }
+            }
+        }
+    }
+
     // Read body - zero-copy when Bytes has exclusive ownership
     let body: Vec<u8> = match req.collect().await {
         Ok(collected) => {
             let bytes = collected.to_bytes();
+            // Check actual body size (in case Content-Length was missing or wrong)
+            if bytes.len() > max_size {
+                return Ok(Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header("Content-Type", CONTENT_TYPE_JSON)
+                    .body(Full::new(Bytes::from_static(PAYLOAD_TOO_LARGE)))
+                    .unwrap());
+            }
             // Bytes::into() is zero-copy when it has exclusive ownership
             bytes.into()
         }

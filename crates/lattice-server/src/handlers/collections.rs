@@ -17,6 +17,47 @@ use lattice_core::{
 };
 use std::collections::HashMap;
 
+/// Maximum allowed collection name length
+const MAX_COLLECTION_NAME_LENGTH: usize = 255;
+
+/// Validate collection name to prevent path traversal and injection attacks
+///
+/// Returns `Ok(())` if valid, or an error message if invalid.
+fn validate_collection_name(name: &str) -> Result<(), &'static str> {
+    // Check empty
+    if name.is_empty() {
+        return Err("Collection name cannot be empty");
+    }
+
+    // Check length
+    if name.len() > MAX_COLLECTION_NAME_LENGTH {
+        return Err("Collection name exceeds maximum length (255 characters)");
+    }
+
+    // Check for null bytes
+    if name.contains('\0') {
+        return Err("Collection name cannot contain null bytes");
+    }
+
+    // Check for path traversal sequences
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        return Err("Collection name cannot contain path traversal characters");
+    }
+
+    // Only allow alphanumeric, underscore, hyphen, and dot (but not starting with dot)
+    if name.starts_with('.') {
+        return Err("Collection name cannot start with a dot");
+    }
+
+    for c in name.chars() {
+        if !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != '.' {
+            return Err("Collection name can only contain alphanumeric characters, underscores, hyphens, and dots");
+        }
+    }
+
+    Ok(())
+}
+
 /// List all collections
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
@@ -57,6 +98,11 @@ pub fn create_collection(
     name: &str,
     request: CreateCollectionRequest,
 ) -> LatticeResponse {
+    // Validate collection name (security: prevent path traversal)
+    if let Err(e) = validate_collection_name(name) {
+        return LatticeResponse::bad_request(e);
+    }
+
     // Parse distance metric
     let distance = match request.vectors.distance.to_lowercase().as_str() {
         "cosine" => Distance::Cosine,
@@ -296,6 +342,53 @@ mod tests {
         };
 
         let response = create_collection(&state, "test", request);
+        assert_eq!(response.status, 400);
+    }
+
+    #[test]
+    fn test_collection_name_validation() {
+        // Valid names
+        assert!(validate_collection_name("test").is_ok());
+        assert!(validate_collection_name("my_collection").is_ok());
+        assert!(validate_collection_name("collection-123").is_ok());
+        assert!(validate_collection_name("v1.0.0").is_ok());
+
+        // Invalid: empty
+        assert!(validate_collection_name("").is_err());
+
+        // Invalid: path traversal
+        assert!(validate_collection_name("../etc").is_err());
+        assert!(validate_collection_name("foo/bar").is_err());
+        assert!(validate_collection_name("foo\\bar").is_err());
+        assert!(validate_collection_name("..").is_err());
+
+        // Invalid: starts with dot
+        assert!(validate_collection_name(".hidden").is_err());
+
+        // Invalid: special characters
+        assert!(validate_collection_name("test@name").is_err());
+        assert!(validate_collection_name("test name").is_err());
+        assert!(validate_collection_name("test\0name").is_err());
+    }
+
+    #[test]
+    fn test_create_collection_with_invalid_name() {
+        let state = new_app_state();
+
+        let request = CreateCollectionRequest {
+            vectors: VectorParams {
+                size: 128,
+                distance: "Cosine".to_string(),
+            },
+            hnsw_config: None,
+        };
+
+        // Path traversal attempt
+        let response = create_collection(&state, "../etc/passwd", request.clone());
+        assert_eq!(response.status, 400);
+
+        // Empty name
+        let response = create_collection(&state, "", request);
         assert_eq!(response.status, 400);
     }
 }
