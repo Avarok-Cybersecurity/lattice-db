@@ -1,27 +1,31 @@
-//! Qdrant benchmark runner for vector operation comparisons
+//! HTTP-based LatticeDB vector benchmark runner
 //!
-//! Connects to Qdrant HTTP API (localhost:6333) to benchmark vector operations.
+//! Connects to a running LatticeDB server via HTTP for fair comparison with Qdrant
+//! (both include network latency).
 //!
 //! ## Prerequisites
 //!
-//! Start Qdrant:
+//! Start LatticeDB server:
 //! ```bash
-//! docker run -d --name qdrant-bench -p 6333:6333 qdrant/qdrant
+//! cargo run --release -p lattice-server
 //! ```
 
 use crate::Timer;
 use rand::prelude::*;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 
-/// Qdrant benchmark runner
-pub struct QdrantRunner {
+/// LatticeDB HTTP vector benchmark runner
+pub struct HttpVectorRunner {
     client: Client,
     base_url: String,
     collection_name: String,
     vector_dim: usize,
 }
+
+// === Request/Response DTOs ===
 
 #[derive(Serialize)]
 struct CreateCollectionRequest {
@@ -43,7 +47,8 @@ struct UpsertRequest {
 struct PointStruct {
     id: u64,
     vector: Vec<f32>,
-    payload: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Serialize)]
@@ -51,6 +56,7 @@ struct SearchRequest {
     vector: Vec<f32>,
     limit: usize,
     with_payload: bool,
+    with_vector: bool,
 }
 
 #[derive(Serialize)]
@@ -61,21 +67,22 @@ struct ScrollRequest {
 }
 
 #[derive(Serialize)]
-struct RetrieveRequest {
+struct GetPointsRequest {
     ids: Vec<u64>,
     with_payload: bool,
     with_vector: bool,
 }
 
 #[derive(Deserialize)]
-struct QdrantResponse {
+struct ApiResponse<T> {
+    #[allow(dead_code)]
     status: String,
     #[serde(default)]
-    result: serde_json::Value,
+    result: Option<T>,
 }
 
-impl QdrantRunner {
-    /// Create a new Qdrant runner
+impl HttpVectorRunner {
+    /// Create a new HTTP vector runner
     pub fn new(
         base_url: &str,
         collection_name: &str,
@@ -131,7 +138,7 @@ impl QdrantRunner {
         (0..dim).map(|_| rng.gen_range(-1.0..1.0)).collect()
     }
 
-    /// Load test data into Qdrant
+    /// Load test data into LatticeDB via HTTP
     pub fn load_data(&self, count: usize, seed: u64) -> Result<(), Box<dyn std::error::Error>> {
         let mut rng = StdRng::seed_from_u64(seed);
         let batch_size = 100;
@@ -139,17 +146,18 @@ impl QdrantRunner {
         for batch_start in (0..count).step_by(batch_size) {
             let batch_end = (batch_start + batch_size).min(count);
             let points: Vec<PointStruct> = (batch_start..batch_end)
-                .map(|i| PointStruct {
-                    id: i as u64,
-                    vector: Self::random_vector(self.vector_dim, &mut rng),
-                    payload: {
-                        let categories = ["A", "B", "C"];
-                        serde_json::json!({
-                            "index": i,
-                            "name": format!("point_{}", i),
-                            "category": categories[i % 3],
-                        })
-                    },
+                .map(|i| {
+                    let mut payload = HashMap::new();
+                    payload.insert("index".to_string(), serde_json::json!(i));
+                    payload.insert("name".to_string(), serde_json::json!(format!("point_{}", i)));
+                    let categories = ["A", "B", "C"];
+                    payload.insert("category".to_string(), serde_json::json!(categories[i % 3]));
+
+                    PointStruct {
+                        id: i as u64,
+                        vector: Self::random_vector(self.vector_dim, &mut rng),
+                        payload: Some(payload),
+                    }
                 })
                 .collect();
 
@@ -169,8 +177,8 @@ impl QdrantRunner {
             }
         }
 
-        // Wait for indexing to complete
-        std::thread::sleep(Duration::from_millis(100));
+        // Small delay to allow indexing
+        std::thread::sleep(Duration::from_millis(50));
 
         Ok(())
     }
@@ -183,7 +191,11 @@ impl QdrantRunner {
         let point = PointStruct {
             id: 999_999,
             vector: Self::random_vector(self.vector_dim, &mut rng),
-            payload: serde_json::json!({"bench": true}),
+            payload: Some({
+                let mut p = HashMap::new();
+                p.insert("bench".to_string(), serde_json::json!(true));
+                p
+            }),
         };
 
         let body = UpsertRequest {
@@ -221,7 +233,8 @@ impl QdrantRunner {
         let body = SearchRequest {
             vector: query_vector,
             limit: k,
-            with_payload: true,
+            with_payload: false,
+            with_vector: false,
         };
 
         let timer = Timer::start();
@@ -245,7 +258,7 @@ impl QdrantRunner {
 
     /// Benchmark point retrieval by ID
     pub fn bench_retrieve(&self, ids: &[u64]) -> Result<Duration, Box<dyn std::error::Error>> {
-        let body = RetrieveRequest {
+        let body = GetPointsRequest {
             ids: ids.to_vec(),
             with_payload: true,
             with_vector: true,
@@ -297,7 +310,7 @@ impl QdrantRunner {
         Ok(elapsed)
     }
 
-    /// Benchmark batch search
+    /// Benchmark batch search (multiple sequential searches)
     pub fn bench_batch_search(
         &self,
         queries: usize,
@@ -313,6 +326,7 @@ impl QdrantRunner {
                 vector: query_vector,
                 limit: k,
                 with_payload: false,
+                with_vector: false,
             };
 
             let timer = Timer::start();
@@ -336,21 +350,22 @@ impl QdrantRunner {
     }
 }
 
-/// Check if Qdrant is available
-pub fn qdrant_available() -> bool {
+/// Check if LatticeDB server is available
+pub fn lattice_http_available() -> bool {
     let client = match Client::builder().timeout(Duration::from_secs(2)).build() {
         Ok(c) => c,
         Err(_) => return false,
     };
 
-    // Try port 6334 first (common Docker mapping), then 6333
+    // Try port 6335 first (default for LatticeDB when Qdrant is on 6334)
+    // then fall back to 6334 for standalone use
     client
-        .get("http://localhost:6334/collections")
+        .get("http://localhost:6335/collections")
         .send()
-        .map(|r: reqwest::blocking::Response| r.status().is_success())
+        .map(|r| r.status().is_success())
         .unwrap_or_else(|_| {
             client
-                .get("http://localhost:6333/collections")
+                .get("http://localhost:6334/collections")
                 .send()
                 .map(|r| r.status().is_success())
                 .unwrap_or(false)
@@ -362,22 +377,23 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // Requires running Qdrant
-    fn test_qdrant_runner() {
-        if !qdrant_available() {
-            eprintln!("Qdrant not available, skipping test");
+    #[ignore] // Requires running LatticeDB server
+    fn test_http_vector_runner() {
+        if !lattice_http_available() {
+            eprintln!("LatticeDB server not available, skipping test");
             return;
         }
 
-        let runner = QdrantRunner::new("http://localhost:6333", "test_bench", 128).unwrap();
+        let runner =
+            HttpVectorRunner::new("http://localhost:6334", "test_http_vector", 128).unwrap();
 
         runner.create_collection().unwrap();
         runner.load_data(100, 42).unwrap();
 
         let search_time = runner.bench_search(10, 42).unwrap();
-        println!("Search time: {:?}", search_time);
+        println!("HTTP Search time: {:?}", search_time);
 
         let retrieve_time = runner.bench_retrieve(&[0, 1, 2]).unwrap();
-        println!("Retrieve time: {:?}", retrieve_time);
+        println!("HTTP Retrieve time: {:?}", retrieve_time);
     }
 }

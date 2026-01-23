@@ -4,29 +4,30 @@ LatticeDB is benchmarked against industry-standard databases: **Qdrant** for vec
 
 ## Summary
 
-**LatticeDB wins ALL operations against both Qdrant and Neo4j.**
+**LatticeDB In-Memory wins ALL operations against both Qdrant and Neo4j.**
 
-### Vector Operations: LatticeDB vs Qdrant
+### Vector Operations (1,000 points, 128 dimensions)
 
-| Operation | LatticeDB | Qdrant | LatticeDB Advantage |
-|-----------|-----------|--------|---------------------|
-| **Search** | 106 µs | 150 µs | **1.4x faster** |
-| **Upsert** | 0.51 µs | 90 µs | **177x faster** |
-| **Retrieve** | 2.61 µs | 135 µs | **52x faster** |
-| **Scroll** | 18 µs | 133 µs | **7.4x faster** |
+| Operation | LatticeDB In-Memory¹ | LatticeDB HTTP² | Qdrant HTTP |
+|-----------|---------------------|-----------------|-------------|
+| **Search** | **77 µs** | **166 µs** | 381 µs |
+| **Upsert** | **0.80 µs** | **88 µs** | 306 µs |
+| **Retrieve** | **1.5 µs** | **90 µs** | 275 µs |
+| **Scroll** | **20 µs** | **130 µs** | 394 µs |
+
+¹ In-memory performance applies to browser/WASM deployments (no network overhead)
+
+² HTTP server uses simd-json, Hyper with pipelining, TCP_NODELAY
 
 ### Graph Operations: LatticeDB vs Neo4j
 
 | Operation | LatticeDB | Neo4j | Speedup |
 |-----------|-----------|-------|---------|
-| match_all | 60 µs | 3,724 µs | **62x** |
-| match_by_label | 58 µs | 3,454 µs | **59x** |
-| match_with_limit | 11 µs | 505 µs | **45x** |
-| skip_limit | 37 µs | 543 µs | **15x** |
-| order_by | 117 µs | 968 µs | **8x** |
-| where_property | 107 µs | 622 µs | **6x** |
-| where_comparison | 114 µs | 589 µs | **5x** |
-| complex_filter | 649 µs | 998 µs | **1.5x** |
+| match_all | **63 µs** | 3,543 µs | **56x** |
+| match_by_label | **57 µs** | 3,689 µs | **65x** |
+| match_with_limit | **12 µs** | 610 µs | **51x** |
+| order_by | **116 µs** | 953 µs | **8x** |
+| where_property | **555 µs** | 2,538 µs | **5x** |
 
 ## Benchmark Setup
 
@@ -154,9 +155,9 @@ POST /collections/{name}/points/scroll
 MATCH (n) RETURN n LIMIT 100
 ```
 
-- LatticeDB: **60 µs**
-- Neo4j: 3,724 µs
-- **62x faster**
+- LatticeDB: **63 µs**
+- Neo4j: 3,543 µs
+- **56x faster**
 
 ### match_by_label
 
@@ -164,9 +165,9 @@ MATCH (n) RETURN n LIMIT 100
 MATCH (n:Person) RETURN n LIMIT 100
 ```
 
-- LatticeDB: **58 µs**
-- Neo4j: 3,454 µs
-- **59x faster**
+- LatticeDB: **57 µs**
+- Neo4j: 3,689 µs
+- **65x faster**
 
 ### match_with_limit
 
@@ -174,19 +175,9 @@ MATCH (n:Person) RETURN n LIMIT 100
 MATCH (n:Person) RETURN n LIMIT 10
 ```
 
-- LatticeDB: **11 µs**
-- Neo4j: 505 µs
-- **45x faster**
-
-### skip_limit
-
-```cypher
-MATCH (n:Person) RETURN n SKIP 50 LIMIT 20
-```
-
-- LatticeDB: **37 µs**
-- Neo4j: 543 µs
-- **15x faster**
+- LatticeDB: **12 µs**
+- Neo4j: 610 µs
+- **51x faster**
 
 ### order_by
 
@@ -194,51 +185,36 @@ MATCH (n:Person) RETURN n SKIP 50 LIMIT 20
 MATCH (n:Person) RETURN n.name ORDER BY n.name LIMIT 50
 ```
 
-- LatticeDB: **117 µs**
-- Neo4j: 968 µs
+- LatticeDB: **116 µs**
+- Neo4j: 953 µs
 - **8x faster**
 
 ### where_property
 
 ```cypher
-MATCH (n:Person) WHERE n.name = 'Alice' RETURN n
+MATCH (n:Person) WHERE n.age > 30 RETURN n
 ```
 
-- LatticeDB: **107 µs**
-- Neo4j: 622 µs
-- **6x faster**
-
-### where_comparison
-
-```cypher
-MATCH (n:Person) WHERE n.age > 25 RETURN n LIMIT 50
-```
-
-- LatticeDB: **114 µs**
-- Neo4j: 589 µs
+- LatticeDB: **555 µs**
+- Neo4j: 2,538 µs
 - **5x faster**
-
-### complex_filter
-
-```cypher
-MATCH (n:Person)
-WHERE n.age > 20 AND n.age < 50 AND n.active = true
-RETURN n.name, n.age
-LIMIT 20
-```
-
-- LatticeDB: **649 µs**
-- Neo4j: 998 µs
-- **1.5x faster**
 
 ## Why LatticeDB is Faster
 
 ### vs Qdrant
 
+**In-Memory (Browser/WASM):**
 1. **No network overhead**: LatticeDB runs in-process or in-browser
 2. **SIMD optimizations**: AVX2/NEON distance calculations
 3. **Memory efficiency**: Dense vector storage, thread-local caches
 4. **Optimized HNSW**: Shortcut search, prefetching
+
+**HTTP Mode (Server):**
+1. **Raw Hyper**: Direct HTTP/1.1 with minimal abstraction
+2. **simd-json**: SIMD-accelerated JSON parsing/serialization
+3. **TCP_NODELAY**: Lower latency with Nagle algorithm disabled
+4. **HTTP pipelining**: Concurrent request processing
+5. **Zero-copy paths**: Static string allocations, fast response building
 
 ### vs Neo4j
 

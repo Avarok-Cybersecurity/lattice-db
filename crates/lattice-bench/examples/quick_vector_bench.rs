@@ -27,11 +27,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let lattice_setup = setup_start.elapsed();
     println!("LatticeDB setup: {:?}\n", lattice_setup);
 
-    // Setup Qdrant if available
+    // Setup Qdrant if available (try port 6334 first, then 6333)
     let qdrant = if qdrant_available() {
         println!("Setting up Qdrant...");
         let setup_start = Instant::now();
-        let runner = QdrantRunner::new("http://localhost:6333", "bench_quick", VECTOR_DIM)?;
+        // Try port 6334 first (common Docker mapping), then 6333
+        let url = if reqwest::blocking::Client::new()
+            .get("http://localhost:6334/collections")
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            "http://localhost:6334"
+        } else {
+            "http://localhost:6333"
+        };
+        let runner = QdrantRunner::new(url, "bench_quick", VECTOR_DIM)?;
         runner.create_collection()?;
         runner.load_data(DATASET_SIZE, SEED)?;
         let qdrant_setup = setup_start.elapsed();

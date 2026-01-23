@@ -41,6 +41,9 @@ pub mod handlers;
 pub mod router;
 
 #[cfg(feature = "native")]
+pub mod hyper_transport;
+
+#[cfg(feature = "axum-transport")]
 pub mod axum_transport;
 
 #[cfg(feature = "wasm")]

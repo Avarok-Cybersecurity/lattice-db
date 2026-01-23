@@ -8,25 +8,56 @@ use crate::dto::{
     TraverseRequest, UpsertPointsRequest,
 };
 use crate::handlers::{collections, points, search};
-use lattice_core::{LatticeRequest, LatticeResponse};
-use std::sync::Arc;
+use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
+use std::sync::{Arc, RwLock};
 
 /// Application state shared across all requests
 pub type AppState = Arc<AppStateInner>;
 
+/// Per-collection engine wrapped in its own lock for fine-grained concurrency
+pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
+
 /// Inner application state
+///
+/// Uses per-collection locking to minimize contention. The outer RwLock is only
+/// held briefly to look up or insert collections. Operations on individual
+/// collections use the inner per-collection RwLock.
 pub struct AppStateInner {
-    /// Collection engines keyed by name
-    pub collections:
-        std::sync::RwLock<std::collections::HashMap<String, lattice_core::CollectionEngine>>,
+    /// Collection engines keyed by name, each with its own RwLock
+    pub collections: RwLock<std::collections::HashMap<String, CollectionHandle>>,
 }
 
 impl AppStateInner {
     /// Create new application state
     pub fn new() -> Self {
         Self {
-            collections: std::sync::RwLock::new(std::collections::HashMap::new()),
+            collections: RwLock::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Get a collection handle (fast - only holds outer lock briefly)
+    pub fn get_collection(&self, name: &str) -> Option<CollectionHandle> {
+        self.collections.read().unwrap().get(name).cloned()
+    }
+
+    /// List collection names
+    pub fn list_collection_names(&self) -> Vec<String> {
+        self.collections.read().unwrap().keys().cloned().collect()
+    }
+
+    /// Insert a new collection (requires write lock on outer HashMap)
+    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> bool {
+        let mut collections = self.collections.write().unwrap();
+        if collections.contains_key(&name) {
+            return false;
+        }
+        collections.insert(name, Arc::new(RwLock::new(engine)));
+        true
+    }
+
+    /// Remove a collection (requires write lock on outer HashMap)
+    pub fn remove_collection(&self, name: &str) -> bool {
+        self.collections.write().unwrap().remove(name).is_some()
     }
 }
 
@@ -64,11 +95,17 @@ pub fn new_app_state() -> AppState {
 /// - `POST /collections/{name}/graph/traverse` - Traverse graph
 /// - `POST /collections/{name}/graph/query` - Execute Cypher query
 pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
-    let method = request.method.to_uppercase();
+    // Method is already uppercase from transport layer
+    let method = &request.method;
     let path = request.path.trim_end_matches('/');
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     match (method.as_str(), segments.as_slice()) {
+        // === Health/Diagnostics ===
+
+        // GET /ping - Minimal endpoint for baseline HTTP overhead measurement
+        ("GET", ["ping"]) => LatticeResponse::ok(b"{\"status\":\"ok\"}".to_vec()),
+
         // === Collections ===
 
         // GET /collections - List all collections
@@ -177,13 +214,31 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
     }
 }
 
-/// Parse JSON body into a DTO
+/// Parse JSON body into a DTO using simd-json when available
+#[cfg(feature = "simd-json")]
+fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, LatticeResponse> {
+    // simd-json requires mutable input for in-place parsing
+    let mut buf = body.to_vec();
+    simd_json::from_slice(&mut buf)
+        .map_err(|e| LatticeResponse::bad_request(&format!("Invalid JSON: {}", e)))
+}
+
+#[cfg(not(feature = "simd-json"))]
 fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, LatticeResponse> {
     serde_json::from_slice(body)
         .map_err(|e| LatticeResponse::bad_request(&format!("Invalid JSON: {}", e)))
 }
 
-/// Serialize response as JSON
+/// Serialize response as JSON using simd-json when available
+#[cfg(feature = "simd-json")]
+pub fn json_response<T: serde::Serialize>(value: &T) -> LatticeResponse {
+    match simd_json::to_vec(value) {
+        Ok(body) => LatticeResponse::ok(body),
+        Err(e) => LatticeResponse::internal_error(&format!("Serialization error: {}", e)),
+    }
+}
+
+#[cfg(not(feature = "simd-json"))]
 pub fn json_response<T: serde::Serialize>(value: &T) -> LatticeResponse {
     match serde_json::to_vec(value) {
         Ok(body) => LatticeResponse::ok(body),

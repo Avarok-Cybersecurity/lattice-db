@@ -35,10 +35,8 @@ pub fn upsert_points(
     collection_name: &str,
     request: UpsertPointsRequest,
 ) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    let engine = match collections.get_mut(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -46,6 +44,7 @@ pub fn upsert_points(
             ))
         }
     };
+    let mut engine = handle.write().unwrap();
 
     // Convert DTO points to core Points
     let points: Vec<Point> = request
@@ -94,10 +93,8 @@ pub fn get_points(
     collection_name: &str,
     request: GetPointsRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -105,6 +102,7 @@ pub fn get_points(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     let results = engine.get_points(&request.ids);
 
@@ -175,10 +173,8 @@ pub fn delete_points(
     collection_name: &str,
     request: DeletePointsRequest,
 ) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    let engine = match collections.get_mut(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -186,6 +182,7 @@ pub fn delete_points(
             ))
         }
     };
+    let mut engine = handle.write().unwrap();
 
     let _deleted = engine.delete_points(&request.points);
 
@@ -215,10 +212,8 @@ pub fn add_edge(
     collection_name: &str,
     request: AddEdgeRequest,
 ) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    let engine = match collections.get_mut(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -226,6 +221,7 @@ pub fn add_edge(
             ))
         }
     };
+    let mut engine = handle.write().unwrap();
 
     match engine.add_edge(
         request.from_id,

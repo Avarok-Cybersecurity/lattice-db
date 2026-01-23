@@ -1,9 +1,10 @@
 //! LatticeDB Server binary
 //!
 //! Starts the HTTP server with Qdrant-compatible REST API.
+//! Uses raw Hyper for maximum performance.
 
 use lattice_server::{
-    axum_transport::AxumTransport,
+    hyper_transport::HyperTransport,
     router::{new_app_state, route},
     LatticeTransport,
 };
@@ -11,10 +12,10 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
-    // Parse command-line arguments
+    // Parse command-line arguments (default port 6334 for benchmarks)
     let addr = env::args()
         .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:6333".to_string());
+        .unwrap_or_else(|| "0.0.0.0:6334".to_string());
 
     println!("╔═══════════════════════════════════════════╗");
     println!("║           LatticeDB Server v0.1           ║");
@@ -26,8 +27,8 @@ async fn main() {
     // Create shared application state
     let state = new_app_state();
 
-    // Create transport
-    let transport = AxumTransport::new(&addr);
+    // Create transport (Hyper for maximum performance)
+    let transport = HyperTransport::new(&addr);
 
     // Start serving
     if let Err(e) = transport

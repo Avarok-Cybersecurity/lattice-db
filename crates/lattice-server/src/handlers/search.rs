@@ -45,10 +45,8 @@ pub fn search_points(
     collection_name: &str,
     request: SearchRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -56,6 +54,7 @@ pub fn search_points(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -103,10 +102,8 @@ pub fn search_batch(
     collection_name: &str,
     request: BatchSearchRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -114,6 +111,7 @@ pub fn search_batch(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     // Convert SearchRequest DTOs to SearchQuery
     let queries: Vec<SearchQuery> = request
@@ -173,10 +171,8 @@ pub fn query_points(
     collection_name: &str,
     request: SearchRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -184,6 +180,7 @@ pub fn query_points(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -245,10 +242,8 @@ pub fn scroll_points(
     collection_name: &str,
     request: ScrollRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -256,6 +251,7 @@ pub fn scroll_points(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     // Build scroll query
     let mut query = ScrollQuery::new(request.limit);
@@ -309,10 +305,8 @@ pub fn traverse_graph(
     collection_name: &str,
     request: TraverseRequest,
 ) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -320,6 +314,7 @@ pub fn traverse_graph(
             ))
         }
     };
+    let engine = handle.read().unwrap();
 
     // Convert relation strings to references for the API
     let relations: Option<Vec<&str>> = request
@@ -376,10 +371,8 @@ pub fn cypher_query(
     collection_name: &str,
     request: CypherQueryRequest,
 ) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    let engine = match collections.get_mut(collection_name) {
-        Some(e) => e,
+    let handle = match state.get_collection(collection_name) {
+        Some(h) => h,
         None => {
             return LatticeResponse::not_found(&format!(
                 "Collection '{}' not found",
@@ -387,6 +380,7 @@ pub fn cypher_query(
             ))
         }
     };
+    let mut engine = handle.write().unwrap();
 
     // Create the Cypher handler
     let handler = DefaultCypherHandler::new();
@@ -402,7 +396,7 @@ pub fn cypher_query(
     let start = Instant::now();
 
     // Execute the query
-    match handler.query(&request.query, engine, parameters) {
+    match handler.query(&request.query, &mut *engine, parameters) {
         Ok(result) => {
             let execution_time_ms = start.elapsed().as_millis() as u64;
 

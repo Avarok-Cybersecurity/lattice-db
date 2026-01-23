@@ -79,16 +79,19 @@ At these scales, LatticeDB dramatically outperforms server-based solutions by el
 
 ### Vector Operations: LatticeDB vs Qdrant
 
-**Benchmark**: 10,000 vectors, 128 dimensions, cosine distance
+**Benchmark**: 1,000 vectors, 128 dimensions, cosine distance
 
-| Operation | LatticeDB | Qdrant | LatticeDB Advantage |
-|-----------|-----------|--------|---------------------|
-| **Search** | 106 µs | 150 µs | **1.4x faster** |
-| **Upsert** | 0.51 µs | 90 µs | **177x faster** |
-| **Retrieve** | 2.61 µs | 135 µs | **52x faster** |
-| **Scroll** | 18 µs | 133 µs | **7.4x faster** |
+| Operation | LatticeDB In-Memory¹ | LatticeDB HTTP² | Qdrant HTTP |
+|-----------|---------------------|-----------------|-------------|
+| **Search** | **77 µs** | **166 µs** | 381 µs |
+| **Upsert** | **0.80 µs** | **88 µs** | 306 µs |
+| **Retrieve** | **1.5 µs** | **90 µs** | 275 µs |
+| **Scroll** | **20 µs** | **130 µs** | 394 µs |
 
-> **LatticeDB wins ALL 4 vector operations** at this scale. SIMD-accelerated distance calculations, dense vector storage, and zero network overhead eliminate latency.
+¹ In-memory applies to browser/WASM deployments (no network overhead)
+² HTTP server uses simd-json, Hyper with pipelining, TCP_NODELAY
+
+> **LatticeDB wins in ALL deployment modes**: In-memory LatticeDB is **50-100x faster** than HTTP. Even LatticeDB HTTP is **2-3x faster** than Qdrant HTTP.
 
 ### Graph Operations: LatticeDB vs Neo4j
 
@@ -96,13 +99,11 @@ At these scales, LatticeDB dramatically outperforms server-based solutions by el
 
 | Operation | LatticeDB | Neo4j | Speedup |
 |-----------|-----------|-------|---------|
-| `MATCH (n) RETURN n LIMIT 100` | 60 µs | 3,724 µs | **62x** |
-| `MATCH (n:Person) RETURN n LIMIT 10` | 11 µs | 505 µs | **45x** |
-| `SKIP 50 LIMIT 20` | 37 µs | 543 µs | **15x** |
-| `ORDER BY n.name LIMIT 50` | 117 µs | 968 µs | **8x** |
-| `WHERE n.name = 'Alice'` | 107 µs | 622 µs | **6x** |
-| `WHERE n.age > 25 LIMIT 50` | 114 µs | 589 µs | **5x** |
-| Complex filter with AND | 649 µs | 998 µs | **1.5x** |
+| `MATCH (n) RETURN n LIMIT 100` | **63 µs** | 3,543 µs | **56x** |
+| `MATCH (n:Person) RETURN n LIMIT 100` | **57 µs** | 3,689 µs | **65x** |
+| `MATCH (n:Person) RETURN n LIMIT 10` | **12 µs** | 610 µs | **51x** |
+| `ORDER BY n.name LIMIT 50` | **116 µs** | 953 µs | **8x** |
+| `WHERE n.age > 30 RETURN n` | **555 µs** | 2,538 µs | **5x** |
 
 > **LatticeDB wins all graph operations** at 1K nodes. No JVM overhead, native Rust data structures, and direct query execution.
 
@@ -115,6 +116,18 @@ At these scales, LatticeDB dramatically outperforms server-based solutions by el
 | > 50K | **Diminishing** | Consider dedicated vector DB for large datasets |
 
 For datasets exceeding 50K elements, server-based solutions like Qdrant or Neo4j may offer better performance due to their optimized indexing for large-scale workloads.
+
+### Performance Roadmap
+
+LatticeDB HTTP server optimization is ongoing:
+
+- [x] SIMD-accelerated JSON parsing (simd-json)
+- [x] Zero-copy request/response handling
+- [x] Connection pipelining (HTTP/1.1)
+- [ ] Response streaming for large results
+- [ ] Binary protocol support (gRPC/protobuf)
+
+Our primary focus remains **in-memory performance** for browser/WASM deployments where LatticeDB excels.
 
 📖 [Full benchmark details](https://Avarok-Cybersecurity.github.io/lattice-db/book/performance/benchmarks.html)
 

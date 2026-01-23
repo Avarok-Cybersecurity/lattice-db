@@ -27,11 +27,10 @@ use std::collections::HashMap;
     )
 ))]
 pub fn list_collections(state: &AppState) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let descriptions: Vec<CollectionDescription> = collections
-        .keys()
-        .map(|name| CollectionDescription { name: name.clone() })
+    let descriptions: Vec<CollectionDescription> = state
+        .list_collection_names()
+        .into_iter()
+        .map(|name| CollectionDescription { name })
         .collect();
 
     json_response(&ApiResponse::ok(CollectionsResponse {
@@ -58,13 +57,6 @@ pub fn create_collection(
     name: &str,
     request: CreateCollectionRequest,
 ) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    // Check if collection already exists
-    if collections.contains_key(name) {
-        return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
-    }
-
     // Parse distance metric
     let distance = match request.vectors.distance.to_lowercase().as_str() {
         "cosine" => Distance::Cosine,
@@ -113,7 +105,10 @@ pub fn create_collection(
         Err(e) => return LatticeResponse::bad_request(&format!("Invalid config: {}", e)),
     };
 
-    collections.insert(name.to_string(), engine);
+    // Insert with per-collection locking (insert_collection checks for duplicates)
+    if !state.insert_collection(name.to_string(), engine) {
+        return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
+    }
 
     // Qdrant returns plain bool for create/delete operations
     json_response(&ApiResponse::ok(true))
@@ -133,12 +128,11 @@ pub fn create_collection(
     )
 ))]
 pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
-    let collections = state.collections.read().unwrap();
-
-    let engine = match collections.get(name) {
-        Some(e) => e,
+    let handle = match state.get_collection(name) {
+        Some(h) => h,
         None => return LatticeResponse::not_found(&format!("Collection '{}' not found", name)),
     };
+    let engine = handle.read().unwrap();
 
     let config = engine.config();
     let point_count = engine.point_count() as u64;
@@ -196,9 +190,7 @@ pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
     )
 ))]
 pub fn delete_collection(state: &AppState, name: &str) -> LatticeResponse {
-    let mut collections = state.collections.write().unwrap();
-
-    if collections.remove(name).is_some() {
+    if state.remove_collection(name) {
         // Qdrant returns plain bool for create/delete operations
         json_response(&ApiResponse::ok(true))
     } else {

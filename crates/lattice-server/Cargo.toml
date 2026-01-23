@@ -15,10 +15,14 @@ lattice-core.workspace = true
 lattice-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+simd-json = { workspace = true, optional = true }
 async-trait.workspace = true
 thiserror.workspace = true
 
-# Native HTTP server (Axum)
+# Native HTTP server (Hyper - fast, or Axum - convenient)
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "signal", "rt-multi-thread", "macros"], optional = true }
 
@@ -59,7 +63,8 @@ getrandom.workspace = true
 
 [features]
 default = ["native"]
-native = ["axum", "tokio", "lattice-storage/native", "lattice-core/simd"]
+native = ["hyper", "hyper-util", "http-body-util", "tokio", "simd-json", "lattice-storage/native", "lattice-core/simd"]
+axum-transport = ["native", "axum"]
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "console_error_panic_hook", "wasmtimer", "lattice-storage/wasm"]
 openapi = ["native", "utoipa", "utoipa-swagger-ui"]
 simd = ["lattice-core/simd"]
