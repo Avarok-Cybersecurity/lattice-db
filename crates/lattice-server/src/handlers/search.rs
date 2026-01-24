@@ -143,7 +143,9 @@ pub fn search_batch(
         if req.vector.len() != expected_dim {
             return LatticeResponse::bad_request(&format!(
                 "Query {} vector dimension mismatch: expected {}, got {}",
-                i, expected_dim, req.vector.len()
+                i,
+                expected_dim,
+                req.vector.len()
             ));
         }
     }

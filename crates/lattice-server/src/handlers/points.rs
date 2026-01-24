@@ -63,7 +63,9 @@ pub fn upsert_points(
         if p.vector.len() != expected_dim {
             return LatticeResponse::bad_request(&format!(
                 "Point {} vector dimension mismatch: expected {}, got {}",
-                i, expected_dim, p.vector.len()
+                i,
+                expected_dim,
+                p.vector.len()
             ));
         }
     }

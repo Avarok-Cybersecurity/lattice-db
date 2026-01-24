@@ -165,7 +165,11 @@ impl ProductQuantizer {
             }
 
             // Safety: k is validated to be <= 256 in constructor, so best_idx fits in u8
-            debug_assert!(best_idx < 256, "centroid index {} exceeds u8 range", best_idx);
+            debug_assert!(
+                best_idx < 256,
+                "centroid index {} exceeds u8 range",
+                best_idx
+            );
             codes[sub_idx] = best_idx as u8;
         }
 
