@@ -49,16 +49,11 @@ pub enum StorageError {
 
     /// Invalid file format (wrong magic, version, etc.)
     #[error("Invalid file format: expected {expected}, found {found}")]
-    InvalidFormat {
-        expected: String,
-        found: String,
-    },
+    InvalidFormat { expected: String, found: String },
 
     /// Feature not yet implemented
     #[error("Feature not implemented: {feature}")]
-    NotImplemented {
-        feature: &'static str,
-    },
+    NotImplemented { feature: &'static str },
 }
 
 /// Convenience type alias for storage results

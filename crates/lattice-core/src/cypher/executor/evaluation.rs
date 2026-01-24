@@ -1,11 +1,11 @@
 //! Expression evaluation for Cypher queries
 
+use super::{ExecutionContext, QueryExecutor};
 use crate::cypher::ast::{BinaryOp, Expr, UnaryOp};
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::types::point::Point;
 use crate::types::value::CypherValue;
 use crate::types::SharedStr;
-use super::{ExecutionContext, QueryExecutor};
 
 impl QueryExecutor {
     /// Evaluate a predicate expression
@@ -183,7 +183,11 @@ impl QueryExecutor {
     }
 
     /// Evaluate a unary operation
-    pub(crate) fn evaluate_unary_op(&self, op: UnaryOp, value: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn evaluate_unary_op(
+        &self,
+        op: UnaryOp,
+        value: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match op {
             UnaryOp::Not => Ok(CypherValue::Bool(!value.is_truthy())),
             UnaryOp::Neg => match value {
@@ -199,7 +203,11 @@ impl QueryExecutor {
     }
 
     /// Add two values
-    pub(crate) fn add_values(&self, left: &CypherValue, right: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn add_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match (left, right) {
             (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a + b)),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a + b)),
@@ -217,7 +225,11 @@ impl QueryExecutor {
     }
 
     /// Subtract two values
-    pub(crate) fn sub_values(&self, left: &CypherValue, right: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn sub_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match (left, right) {
             (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a - b)),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a - b)),
@@ -231,7 +243,11 @@ impl QueryExecutor {
     }
 
     /// Multiply two values
-    pub(crate) fn mul_values(&self, left: &CypherValue, right: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn mul_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match (left, right) {
             (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a * b)),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a * b)),
@@ -245,7 +261,11 @@ impl QueryExecutor {
     }
 
     /// Divide two values
-    pub(crate) fn div_values(&self, left: &CypherValue, right: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn div_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match (left, right) {
             (CypherValue::Int(a), CypherValue::Int(b)) => {
                 if *b == 0 {
@@ -283,7 +303,11 @@ impl QueryExecutor {
     }
 
     /// Modulo two values
-    pub(crate) fn mod_values(&self, left: &CypherValue, right: &CypherValue) -> CypherResult<CypherValue> {
+    pub(crate) fn mod_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> CypherResult<CypherValue> {
         match (left, right) {
             (CypherValue::Int(a), CypherValue::Int(b)) => {
                 if *b == 0 {
@@ -307,7 +331,11 @@ impl QueryExecutor {
     }
 
     /// Compare two values
-    pub(crate) fn compare_values(&self, left: &CypherValue, right: &CypherValue) -> std::cmp::Ordering {
+    pub(crate) fn compare_values(
+        &self,
+        left: &CypherValue,
+        right: &CypherValue,
+    ) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
         match (left, right) {
@@ -344,7 +372,11 @@ impl QueryExecutor {
     }
 
     /// Get a property from a point
-    pub(crate) fn get_point_property(&self, point: &Point, property: &str) -> CypherResult<CypherValue> {
+    pub(crate) fn get_point_property(
+        &self,
+        point: &Point,
+        property: &str,
+    ) -> CypherResult<CypherValue> {
         // Check for special properties
         match property {
             "id" => return Ok(CypherValue::Int(point.id as i64)),

@@ -1,5 +1,6 @@
 //! Query operation execution
 
+use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats, SortKey};
 use crate::cypher::ast::{Direction, Expr, MapLiteral, OrderByItem, ProjectionItem};
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::cypher::planner::LogicalOp;
@@ -9,7 +10,6 @@ use crate::types::point::{Point, PointId};
 use crate::types::value::CypherValue;
 use smallvec::SmallVec;
 use std::collections::HashMap;
-use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats, SortKey};
 
 impl QueryExecutor {
     /// Execute a single logical operation
@@ -575,8 +575,9 @@ impl QueryExecutor {
             .ok()?;
 
         // Parallel deserialize JSON bytes to CypherValues
-        let prefetched: Vec<Vec<CypherValue>> =
-            parallel::enumerate_map_collect(&raw_properties, |_idx, row_properties: &Vec<Option<Vec<u8>>>| {
+        let prefetched: Vec<Vec<CypherValue>> = parallel::enumerate_map_collect(
+            &raw_properties,
+            |_idx, row_properties: &Vec<Option<Vec<u8>>>| {
                 row_properties
                     .iter()
                     .map(|opt_bytes: &Option<Vec<u8>>| {
@@ -586,7 +587,8 @@ impl QueryExecutor {
                             .unwrap_or(CypherValue::Null)
                     })
                     .collect()
-            });
+            },
+        );
 
         Some(prefetched)
     }

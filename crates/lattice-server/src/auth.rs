@@ -83,10 +83,7 @@ impl AuthConfig {
     }
 
     /// Add additional public paths (no auth required)
-    pub fn with_public_paths(
-        mut self,
-        paths: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn with_public_paths(mut self, paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
         for path in paths {
             self.public_paths.insert(path.into());
         }
@@ -229,10 +226,14 @@ mod tests {
         let auth = Authenticator::new(config);
 
         // Valid key
-        assert!(auth.validate("/api/test", Some("ApiKey secret-key-123")).is_ok());
+        assert!(auth
+            .validate("/api/test", Some("ApiKey secret-key-123"))
+            .is_ok());
 
         // Invalid key
-        assert!(auth.validate("/api/test", Some("ApiKey wrong-key")).is_err());
+        assert!(auth
+            .validate("/api/test", Some("ApiKey wrong-key"))
+            .is_err());
 
         // Missing header
         assert!(auth.validate("/api/test", None).is_err());

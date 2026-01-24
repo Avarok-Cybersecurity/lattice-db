@@ -550,9 +550,9 @@ impl HnswIndex {
 
                             // Compact results when exceeding threshold (amortized O(1))
                             if scratch.results.len() >= compact_threshold {
-                                scratch.results.sort_unstable_by(|a, b| {
-                                    cmp_f32(a.distance, b.distance)
-                                });
+                                scratch
+                                    .results
+                                    .sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
                                 scratch.results.truncate(ef);
                                 scratch.worst_distance =
                                     scratch.results.last().map_or(f32::MAX, |c| c.distance);
@@ -646,9 +646,7 @@ impl HnswIndex {
 
                         // Compact results when exceeding threshold (amortized O(1))
                         if results.len() >= compact_threshold {
-                            results.sort_unstable_by(|a, b| {
-                                cmp_f32(a.distance, b.distance)
-                            });
+                            results.sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
                             results.truncate(ef);
                             worst_distance = results.last().map_or(f32::MAX, |c| c.distance);
                         }

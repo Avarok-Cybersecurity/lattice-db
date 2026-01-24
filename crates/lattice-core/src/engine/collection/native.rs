@@ -520,10 +520,7 @@ impl CollectionEngine {
     ///
     /// More efficient than calling `search` multiple times for many queries.
     /// Uses rayon for parallel query processing on native platforms.
-    pub fn search_batch(
-        &self,
-        queries: Vec<SearchQuery>,
-    ) -> LatticeResult<Vec<Vec<SearchResult>>> {
+    pub fn search_batch(&self, queries: Vec<SearchQuery>) -> LatticeResult<Vec<Vec<SearchResult>>> {
         if queries.is_empty() {
             return Ok(vec![]);
         }

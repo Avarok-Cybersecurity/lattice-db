@@ -1,7 +1,7 @@
 //! Hashing utilities for row deduplication
 
-use crate::types::value::CypherValue;
 use super::QueryExecutor;
+use crate::types::value::CypherValue;
 
 impl QueryExecutor {
     /// Compare two rows for equality

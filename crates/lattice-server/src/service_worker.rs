@@ -69,10 +69,7 @@ pub struct ServiceWorkerTransport;
 #[allow(deprecated)]
 impl ServiceWorkerTransport {
     /// This type is only usable in WASM builds. Calling this on native will not compile.
-    #[deprecated(
-        since = "0.1.0",
-        note = "ServiceWorkerTransport requires WASM target"
-    )]
+    #[deprecated(since = "0.1.0", note = "ServiceWorkerTransport requires WASM target")]
     pub fn new() -> Self {
         unimplemented!("ServiceWorkerTransport requires target_arch = wasm32")
     }

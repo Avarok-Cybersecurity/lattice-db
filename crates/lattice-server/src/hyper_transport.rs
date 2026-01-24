@@ -135,7 +135,14 @@ impl LatticeTransport for HyperTransport {
                     let rate_limiter = rate_limiter.clone();
                     let authenticator = authenticator.clone();
                     async move {
-                        handle_request(req, handler, rate_limiter.as_ref(), authenticator.as_ref(), client_ip).await
+                        handle_request(
+                            req,
+                            handler,
+                            rate_limiter.as_ref(),
+                            authenticator.as_ref(),
+                            client_ip,
+                        )
+                        .await
                     }
                 });
 
@@ -266,7 +273,14 @@ impl LatticeTransport for HyperTlsTransport {
                     let rate_limiter = rate_limiter.clone();
                     let authenticator = authenticator.clone();
                     async move {
-                        handle_request(req, handler, rate_limiter.as_ref(), authenticator.as_ref(), client_ip).await
+                        handle_request(
+                            req,
+                            handler,
+                            rate_limiter.as_ref(),
+                            authenticator.as_ref(),
+                            client_ip,
+                        )
+                        .await
                     }
                 });
 
@@ -352,9 +366,7 @@ where
         if let Err(e) = auth.validate(path, auth_header) {
             debug!(ip = %client_ip, path = %path, error = %e, "Authentication failed");
             let (status, body) = match e {
-                crate::auth::AuthError::MissingHeader => {
-                    (StatusCode::UNAUTHORIZED, AUTH_MISSING)
-                }
+                crate::auth::AuthError::MissingHeader => (StatusCode::UNAUTHORIZED, AUTH_MISSING),
                 _ => (StatusCode::UNAUTHORIZED, AUTH_INVALID),
             };
 

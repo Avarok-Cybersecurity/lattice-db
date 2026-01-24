@@ -188,7 +188,10 @@ impl AsyncIndexer {
     fn batch_index_points(&self, ids: &[PointId]) {
         // Get all points in one read lock
         let points_to_index: Vec<Point> = match self.points.read_safe() {
-            Ok(points) => ids.iter().filter_map(|id| points.get(id).cloned()).collect(),
+            Ok(points) => ids
+                .iter()
+                .filter_map(|id| points.get(id).cloned())
+                .collect(),
             Err(_) => return, // Lock poisoned, skip this batch
         };
 

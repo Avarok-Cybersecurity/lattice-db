@@ -11,7 +11,7 @@ use crate::handlers::{collections, points, search};
 use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tracing::{debug, warn, instrument};
+use tracing::{debug, instrument, warn};
 
 /// Application state shared across all requests
 pub type AppState = Arc<AppStateInner>;

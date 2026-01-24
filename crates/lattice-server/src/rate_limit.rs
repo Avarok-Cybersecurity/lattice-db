@@ -134,9 +134,7 @@ impl RateLimiter {
             // Remove entries that haven't been used recently
             // A bucket is stale if it's been full for cleanup_interval
             let stale_threshold = self.config.cleanup_interval;
-            buckets.retain(|_, bucket| {
-                now.duration_since(bucket.last_update) < stale_threshold
-            });
+            buckets.retain(|_, bucket| now.duration_since(bucket.last_update) < stale_threshold);
         }
     }
 
@@ -144,7 +142,10 @@ impl RateLimiter {
     pub fn headers(&self, ip: IpAddr) -> Vec<(&'static str, String)> {
         let remaining = self.remaining(ip);
         vec![
-            ("X-RateLimit-Limit", self.config.requests_per_second.to_string()),
+            (
+                "X-RateLimit-Limit",
+                self.config.requests_per_second.to_string(),
+            ),
             ("X-RateLimit-Remaining", remaining.to_string()),
             ("X-RateLimit-Reset", "1".to_string()), // Simplified: 1 second window
         ]

@@ -160,8 +160,8 @@ impl CollectionEngine {
     }
 
     /// Get points by IDs
-    pub fn get_points(&self, ids: &[PointId]) -> Vec<Option<&Point>> {
-        ids.iter().map(|id| self.points.get(id)).collect()
+    pub fn get_points(&self, ids: &[PointId]) -> LatticeResult<Vec<Option<Point>>> {
+        Ok(ids.iter().map(|id| self.points.get(id).cloned()).collect())
     }
 
     /// Get a single point by ID
@@ -180,8 +180,9 @@ impl CollectionEngine {
         &self,
         ids: &[PointId],
         properties: &[&str],
-    ) -> Vec<Vec<Option<Vec<u8>>>> {
-        ids.iter()
+    ) -> LatticeResult<Vec<Vec<Option<Vec<u8>>>>> {
+        Ok(ids
+            .iter()
             .map(|id| {
                 if let Some(point) = self.points.get(id) {
                     properties
@@ -193,7 +194,7 @@ impl CollectionEngine {
                     vec![None; properties.len()]
                 }
             })
-            .collect()
+            .collect())
     }
 
     /// Batch extract a single numeric property as i64, optimized for ORDER BY on integer fields.
@@ -204,8 +205,13 @@ impl CollectionEngine {
     /// - Fast integer parsing without serde overhead
     ///
     /// Returns i64::MIN for missing points/properties (sorts to bottom for DESC).
-    pub fn batch_extract_i64_property(&self, ids: &[PointId], property: &str) -> Vec<i64> {
-        ids.iter()
+    pub fn batch_extract_i64_property(
+        &self,
+        ids: &[PointId],
+        property: &str,
+    ) -> LatticeResult<Vec<i64>> {
+        Ok(ids
+            .iter()
             .map(|id| {
                 self.points
                     .get(id)
@@ -213,7 +219,7 @@ impl CollectionEngine {
                     .and_then(|bytes| Self::fast_parse_i64(bytes))
                     .unwrap_or(i64::MIN)
             })
-            .collect()
+            .collect())
     }
 
     /// Fast parse i64 from JSON bytes without allocation.
@@ -254,7 +260,7 @@ impl CollectionEngine {
     /// Delete points by IDs
     ///
     /// Returns the number of points actually deleted.
-    pub fn delete_points(&mut self, ids: &[PointId]) -> usize {
+    pub fn delete_points(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
         let mut deleted = 0;
 
         for &id in ids {
@@ -266,7 +272,7 @@ impl CollectionEngine {
             }
         }
 
-        deleted
+        Ok(deleted)
     }
 
     /// Check if a point exists
@@ -275,16 +281,17 @@ impl CollectionEngine {
     }
 
     /// Get all point IDs
-    pub fn point_ids(&self) -> Vec<PointId> {
-        self.points.keys().copied().collect()
+    pub fn point_ids(&self) -> LatticeResult<Vec<PointId>> {
+        Ok(self.points.keys().copied().collect())
     }
 
     /// Get point IDs that have a specific label (O(1) lookup via label index)
-    pub fn point_ids_by_label(&self, label: &str) -> Vec<PointId> {
-        self.label_index
+    pub fn point_ids_by_label(&self, label: &str) -> LatticeResult<Vec<PointId>> {
+        Ok(self
+            .label_index
             .get(label)
             .map(|ids| ids.iter().copied().collect())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     // --- Search Operations ---
@@ -328,17 +335,14 @@ impl CollectionEngine {
     /// Batch search for multiple queries (sequential processing on WASM)
     ///
     /// WASM version processes queries sequentially since rayon is not available.
-    pub fn search_batch(
-        &self,
-        queries: Vec<SearchQuery>,
-    ) -> LatticeResult<Vec<Vec<SearchResult>>> {
+    pub fn search_batch(&self, queries: Vec<SearchQuery>) -> LatticeResult<Vec<Vec<SearchResult>>> {
         queries.into_iter().map(|q| self.search(q)).collect()
     }
 
     /// Scroll through points (paginated retrieval)
     ///
     /// Uses BTreeMap range iteration for O(log n + limit) instead of O(n log n).
-    pub fn scroll(&self, query: ScrollQuery) -> ScrollResult {
+    pub fn scroll(&self, query: ScrollQuery) -> LatticeResult<ScrollResult> {
         // Use BTreeMap's range for efficient iteration from offset
         // This is O(log n) to find start position, then O(limit) to iterate
         let iter: Box<dyn Iterator<Item = (&PointId, &Point)>> = match query.offset {
@@ -384,10 +388,10 @@ impl CollectionEngine {
             None
         };
 
-        ScrollResult {
+        Ok(ScrollResult {
             points,
             next_offset,
-        }
+        })
     }
 
     // --- Graph Operations ---

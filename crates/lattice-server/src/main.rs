@@ -29,8 +29,7 @@ use lattice_server::{hyper_transport::HyperTlsTransport, tls::TlsConfig};
 #[tokio::main]
 async fn main() {
     // Initialize structured logging
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     fmt()
         .with_env_filter(filter)
@@ -72,10 +71,9 @@ async fn main() {
     // Check for TLS configuration
     #[cfg(feature = "tls")]
     {
-        if let (Ok(cert_path), Ok(key_path)) = (
-            env::var("LATTICE_TLS_CERT"),
-            env::var("LATTICE_TLS_KEY"),
-        ) {
+        if let (Ok(cert_path), Ok(key_path)) =
+            (env::var("LATTICE_TLS_CERT"), env::var("LATTICE_TLS_KEY"))
+        {
             info!(cert = %cert_path, key = %key_path, "TLS enabled");
 
             let tls_config = match TlsConfig::from_pem_files(&cert_path, &key_path) {

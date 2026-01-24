@@ -1,9 +1,9 @@
 //! JSON conversion utilities for CypherValue
 
+use super::QueryExecutor;
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::types::value::CypherValue;
 use crate::types::SharedStr;
-use super::QueryExecutor;
 
 impl QueryExecutor {
     /// Convert JSON bytes to CypherValue
@@ -97,7 +97,10 @@ impl QueryExecutor {
     }
 
     /// Convert JSON value to CypherValue
-    pub(crate) fn json_to_cypher_value(&self, json: &serde_json::Value) -> CypherResult<CypherValue> {
+    pub(crate) fn json_to_cypher_value(
+        &self,
+        json: &serde_json::Value,
+    ) -> CypherResult<CypherValue> {
         match json {
             serde_json::Value::Null => Ok(CypherValue::Null),
             serde_json::Value::Bool(b) => Ok(CypherValue::Bool(*b)),
@@ -135,7 +138,10 @@ impl QueryExecutor {
     }
 
     /// Convert CypherValue to JSON
-    pub(crate) fn cypher_value_to_json(&self, value: &CypherValue) -> CypherResult<serde_json::Value> {
+    pub(crate) fn cypher_value_to_json(
+        &self,
+        value: &CypherValue,
+    ) -> CypherResult<serde_json::Value> {
         match value {
             CypherValue::Null => Ok(serde_json::Value::Null),
             CypherValue::Bool(b) => Ok(serde_json::Value::Bool(*b)),

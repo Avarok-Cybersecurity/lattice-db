@@ -156,7 +156,10 @@ fn bench_ci_cypher_execute(c: &mut Criterion) {
         ("all_nodes", "MATCH (n) RETURN n LIMIT 100"),
         ("label_scan", "MATCH (n:Person) RETURN n LIMIT 100"),
         ("with_filter", "MATCH (n:Person) WHERE n.age > 40 RETURN n"),
-        ("projection", "MATCH (n:Person) RETURN n.name, n.age LIMIT 50"),
+        (
+            "projection",
+            "MATCH (n:Person) RETURN n.name, n.age LIMIT 50",
+        ),
         (
             "distinct",
             "MATCH (n:Person) RETURN DISTINCT n.age ORDER BY n.age",

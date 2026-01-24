@@ -463,12 +463,16 @@ fn test_scroll_pagination() {
     assert!(result.next_offset.is_some());
 
     // Second page
-    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap())).unwrap();
+    let result = engine
+        .scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap()))
+        .unwrap();
     assert_eq!(result.points.len(), 10);
     assert!(result.next_offset.is_some());
 
     // Third page (partial)
-    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap())).unwrap();
+    let result = engine
+        .scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap()))
+        .unwrap();
     assert_eq!(result.points.len(), 5);
     assert!(result.next_offset.is_none());
 }
