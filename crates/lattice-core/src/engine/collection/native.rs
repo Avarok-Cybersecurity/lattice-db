@@ -498,31 +498,37 @@ impl CollectionEngine {
         };
 
         // Search pending points with parallel brute-force
-        let pending_ids: Vec<PointId> = {
+        // Acquire both locks atomically to prevent TOCTOU race where points could be
+        // deleted or replaced between reading pending_index and accessing points
+        let pending_results: Vec<SearchResult> = {
             let pending = self.pending_index.read_safe()?;
-            pending.iter().copied().collect()
+            let pending_ids: Vec<PointId> = pending.iter().copied().collect();
+
+            if pending_ids.is_empty() {
+                Vec::new()
+            } else {
+                let pts = self.points.read_safe()?;
+                let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
+
+                // Parallel brute-force on pending points
+                pending_ids
+                    .par_iter()
+                    .filter_map(|&id| {
+                        pts.get(&id).map(|point| {
+                            let score = distance_calc.calculate(&query.vector, &point.vector);
+                            SearchResult {
+                                id,
+                                score,
+                                vector: None,
+                                payload: None,
+                            }
+                        })
+                    })
+                    .collect()
+            }
         };
 
-        if !pending_ids.is_empty() {
-            let pts = self.points.read_safe()?;
-            let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
-
-            // Parallel brute-force on pending points
-            let pending_results: Vec<SearchResult> = pending_ids
-                .par_iter()
-                .filter_map(|&id| {
-                    pts.get(&id).map(|point| {
-                        let score = distance_calc.calculate(&query.vector, &point.vector);
-                        SearchResult {
-                            id,
-                            score,
-                            vector: None,
-                            payload: None,
-                        }
-                    })
-                })
-                .collect();
-
+        if !pending_results.is_empty() {
             // Merge results
             results.extend(pending_results);
             results.sort_by(|a, b| crate::sync::cmp_f32(a.score, b.score));
@@ -584,43 +590,45 @@ impl CollectionEngine {
         };
 
         // Handle pending points for each query (parallel)
-        let pending_ids: Vec<PointId> = {
+        // Acquire both locks atomically to prevent TOCTOU race
+        let all_results: Vec<Vec<SearchResult>> = {
             let pending = self.pending_index.read_safe()?;
-            pending.iter().copied().collect()
+            let pending_ids: Vec<PointId> = pending.iter().copied().collect();
+
+            if pending_ids.is_empty() {
+                batch_results
+            } else {
+                use crate::index::distance::DistanceCalculator;
+                let pts = self.points.read_safe()?;
+                let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
+
+                // Process each query with pending points
+                let mut results: Vec<Vec<SearchResult>> = batch_results;
+                for (i, query) in queries.iter().enumerate() {
+                    let pending_results: Vec<SearchResult> = pending_ids
+                        .par_iter()
+                        .filter_map(|&id| {
+                            pts.get(&id).map(|point| {
+                                let score = distance_calc.calculate(&query.vector, &point.vector);
+                                SearchResult {
+                                    id,
+                                    score,
+                                    vector: None,
+                                    payload: None,
+                                }
+                            })
+                        })
+                        .collect();
+
+                    results[i].extend(pending_results);
+                    results[i].sort_by(|a, b| crate::sync::cmp_f32(a.score, b.score));
+                    results[i].truncate(query.limit);
+                }
+                results
+            }
         };
 
-        if !pending_ids.is_empty() {
-            use crate::index::distance::DistanceCalculator;
-            let pts = self.points.read_safe()?;
-            let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
-
-            // Process each query with pending points
-            let mut all_results: Vec<Vec<SearchResult>> = batch_results;
-            for (i, query) in queries.iter().enumerate() {
-                let pending_results: Vec<SearchResult> = pending_ids
-                    .par_iter()
-                    .filter_map(|&id| {
-                        pts.get(&id).map(|point| {
-                            let score = distance_calc.calculate(&query.vector, &point.vector);
-                            SearchResult {
-                                id,
-                                score,
-                                vector: None,
-                                payload: None,
-                            }
-                        })
-                    })
-                    .collect();
-
-                all_results[i].extend(pending_results);
-                all_results[i].sort_by(|a, b| crate::sync::cmp_f32(a.score, b.score));
-                all_results[i].truncate(query.limit);
-            }
-
-            return Ok(all_results);
-        }
-
-        Ok(batch_results)
+        Ok(all_results)
     }
 
     /// Scroll through points (paginated retrieval)

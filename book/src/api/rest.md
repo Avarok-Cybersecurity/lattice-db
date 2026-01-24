@@ -469,8 +469,8 @@ POST /collections/{collection_name}/graph/edges
 **Request Body:**
 ```json
 {
-  "source_id": 1,
-  "target_id": 2,
+  "from_id": 1,
+  "to_id": 2,
   "weight": 0.9,
   "relation": "REFERENCES"
 }
@@ -564,7 +564,7 @@ POST /collections/{collection_name}/graph/query
 ```json
 {
   "query": "MATCH (n:Person) WHERE n.age > $min_age RETURN n.name",
-  "params": {
+  "parameters": {
     "min_age": 25
   }
 }
@@ -750,7 +750,7 @@ curl -X POST http://localhost:6333/collections/docs/points/query \
 # Add edge
 curl -X POST http://localhost:6333/collections/docs/graph/edges \
   -H "Content-Type: application/json" \
-  -d '{"source_id": 1, "target_id": 2, "weight": 0.9, "relation": "REFS"}'
+  -d '{"from_id": 1, "to_id": 2, "weight": 0.9, "relation": "REFS"}'
 
 # Cypher query
 curl -X POST http://localhost:6333/collections/docs/graph/query \
