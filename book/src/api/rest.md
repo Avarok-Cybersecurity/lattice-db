@@ -32,7 +32,17 @@ PUT /collections/{collection_name}
 }
 ```
 
-**Distance Options:** `Cosine`, `Euclid`, `Dot`
+**Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `vectors.size` | Yes | Vector dimension |
+| `vectors.distance` | Yes | `Cosine`, `Euclid`, or `Dot` |
+| `hnsw_config` | No | HNSW index configuration (uses defaults if omitted) |
+| `hnsw_config.m` | Yes* | Max connections per node (*required if hnsw_config provided) |
+| `hnsw_config.ef_construct` | Yes* | Build-time search queue size (*required if hnsw_config provided) |
+| `hnsw_config.m0` | No | Layer 0 connections (default: 2*m) |
+| `hnsw_config.ml` | No | Level multiplier (default: 1/ln(m)) |
 
 **Response:**
 ```json
