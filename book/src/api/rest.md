@@ -229,24 +229,43 @@ PUT /collections/{collection_name}/points
 }
 ```
 
-### Get Point
+### Get Points
+
+Retrieve points by their IDs (batch operation).
 
 ```http
-GET /collections/{collection_name}/points/{point_id}
+POST /collections/{collection_name}/points
+```
+
+**Request Body:**
+```json
+{
+  "ids": [1, 2, 3],
+  "with_payload": true,
+  "with_vector": false
+}
 ```
 
 **Response:**
 ```json
 {
   "status": "ok",
-  "result": {
-    "id": 1,
-    "vector": [0.1, 0.2, 0.3, ...],
-    "payload": {
-      "title": "Document 1",
-      "category": "tech"
+  "result": [
+    {
+      "id": 1,
+      "payload": {
+        "title": "Document 1",
+        "category": "tech"
+      }
+    },
+    {
+      "id": 2,
+      "payload": {
+        "title": "Document 2",
+        "category": "science"
+      }
     }
-  }
+  ]
 }
 ```
 

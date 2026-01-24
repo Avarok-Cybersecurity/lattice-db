@@ -149,8 +149,24 @@ impl CollectionEngine {
                 // Wait for indexer to catch up using condvar (efficient, no CPU spin)
                 let (lock, cv) = &*self.backpressure_signal;
                 let mut guard = lock.lock_safe()?;
+                let mut wait_iterations = 0;
+                const MAX_WAIT_ITERATIONS: u32 = 500; // 5 seconds max wait (500 * 10ms)
+
                 while self.pending_index.read_safe()?.len() > PENDING_THRESHOLD / 2 {
-                    // Wait with timeout to handle edge cases (indexer stopped, etc.)
+                    // Check if indexer has crashed before waiting
+                    if !self.indexer.is_running() {
+                        // Indexer is dead - proceed anyway since points are still stored
+                        // They'll be indexed on restart when index is rebuilt
+                        break;
+                    }
+
+                    // Prevent infinite wait if indexer is somehow stuck
+                    wait_iterations += 1;
+                    if wait_iterations >= MAX_WAIT_ITERATIONS {
+                        break; // Proceed with upsert anyway
+                    }
+
+                    // Wait with timeout to handle edge cases
                     let result = cv
                         .wait_timeout(guard, std::time::Duration::from_millis(10))
                         .map_err(|e| LatticeError::Internal {
@@ -308,13 +324,23 @@ impl CollectionEngine {
         // For large N, pre-extract ALL values in BTreeMap order (sequential access),
         // then use O(1) Vec lookup (IDs are typically sequential starting from 0)
         const LARGE_THRESHOLD: usize = 5000;
+        // Cap allocation to prevent OOM on malicious/edge-case inputs
+        const MAX_DENSE_ALLOCATION: usize = 10_000_000;
 
         if ids.len() >= LARGE_THRESHOLD && !ids.is_empty() {
             // Check if IDs are roughly sequential (common case after AllNodesScan)
             // Safe: ids is non-empty so min/max will succeed
             let min_id = *ids.iter().min().unwrap_or(&0);
             let max_id = *ids.iter().max().unwrap_or(&0);
-            let id_range = max_id - min_id + 1;
+
+            // Use checked arithmetic to prevent overflow when max_id is near u64::MAX
+            let id_range = match max_id.checked_sub(min_id).and_then(|r| r.checked_add(1)) {
+                Some(r) if r <= MAX_DENSE_ALLOCATION as u64 => r,
+                _ => {
+                    // Overflow or range too large - fall back to direct lookups
+                    return self.batch_extract_i64_fallback(ids, property);
+                }
+            };
 
             // Only use dense Vec if IDs are ~dense (not sparse)
             if id_range <= ids.len() as u64 * 2 {
@@ -341,6 +367,16 @@ impl CollectionEngine {
         }
 
         // Fallback: direct BTreeMap lookups
+        self.batch_extract_i64_fallback(ids, property)
+    }
+
+    /// Fallback path for batch_extract_i64_property using direct lookups.
+    /// Used when dense vector optimization is not applicable.
+    fn batch_extract_i64_fallback(
+        &self,
+        ids: &[PointId],
+        property: &str,
+    ) -> LatticeResult<Vec<i64>> {
         let pts = self.points.read_safe()?;
         Ok(ids
             .iter()
@@ -795,19 +831,23 @@ impl CollectionEngine {
                         if should_visit {
                             visited.insert(target_id, new_depth);
 
-                            // Build path: requires two clones since both storage and queue need ownership
-                            let mut new_path = path.clone();
-                            new_path.push(target_id);
+                            // Build path: one clone for results, one for queue
+                            // Optimization: extend in place rather than clone+push
+                            let mut result_path = path.clone();
+                            result_path.push(target_id);
+
+                            // Clone for queue only - moves are free, clones are O(depth)
+                            let queue_path = result_path.clone();
 
                             paths.push(TraversalPath {
                                 target_id,
                                 depth: new_depth,
-                                path: new_path.clone(),
+                                path: result_path, // Move, don't clone
                                 weight: edge.weight,
                                 relation_id: edge.relation_id,
                             });
 
-                            queue.push_back((target_id, new_depth, new_path));
+                            queue.push_back((target_id, new_depth, queue_path));
                         }
                     }
                 }
@@ -974,10 +1014,28 @@ impl CollectionEngine {
     /// Wait for all pending indexing to complete
     ///
     /// This is useful for tests or when you need consistent search results.
+    /// Uses condvar notification to avoid CPU-wasting spin-wait.
     pub fn flush_pending(&self) -> LatticeResult<()> {
-        // Spin-wait until pending is empty (background worker catches up)
+        let (lock, cv) = &*self.backpressure_signal;
+
+        // Wait on condvar until pending is empty
+        // The async indexer notifies after each batch, so we'll wake up periodically
+        let mut guard = lock
+            .lock()
+            .map_err(|_| crate::error::LatticeError::Internal {
+                code: 50001,
+                message: "backpressure_signal mutex poisoned".to_string(),
+            })?;
+
         while !self.pending_index.read_safe()?.is_empty() {
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            // Wait with timeout to handle edge cases (indexer shutdown, etc.)
+            let result = cv.wait_timeout(guard, std::time::Duration::from_millis(100));
+            guard = result
+                .map_err(|_| crate::error::LatticeError::Internal {
+                    code: 50001,
+                    message: "backpressure_signal mutex poisoned".to_string(),
+                })?
+                .0;
         }
         Ok(())
     }

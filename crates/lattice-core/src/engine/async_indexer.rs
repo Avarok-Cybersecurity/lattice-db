@@ -57,20 +57,27 @@ impl AsyncIndexerHandle {
     }
 
     /// Queue a point for indexing
-    pub fn queue_insert(&self, id: PointId) {
-        // Ignore send errors (worker may have shut down)
-        let _ = self.tx.send(IndexTask::Insert(id));
+    ///
+    /// Returns `true` if the task was queued, `false` if the worker has shut down.
+    /// Point is still stored even if indexing fails - it will be searchable
+    /// after the next restart when the index is rebuilt.
+    pub fn queue_insert(&self, id: PointId) -> bool {
+        self.tx.send(IndexTask::Insert(id)).is_ok()
     }
 
     /// Queue a point for deletion from index
-    pub fn queue_delete(&self, id: PointId) {
-        let _ = self.tx.send(IndexTask::Delete(id));
+    ///
+    /// Returns `true` if the task was queued, `false` if the worker has shut down.
+    pub fn queue_delete(&self, id: PointId) -> bool {
+        self.tx.send(IndexTask::Delete(id)).is_ok()
     }
 
     /// Shutdown the background worker and wait for completion
     pub fn shutdown(&mut self) {
+        // Send shutdown signal (ignore error if already disconnected)
         let _ = self.tx.send(IndexTask::Shutdown);
         if let Some(handle) = self.thread_handle.take() {
+            // Join the thread, ignoring panics (already logged by thread itself)
             let _ = handle.join();
         }
     }
