@@ -165,8 +165,8 @@ impl CollectionEngine {
     }
 
     /// Get a single point by ID
-    pub fn get_point(&self, id: PointId) -> Option<&Point> {
-        self.points.get(&id)
+    pub fn get_point(&self, id: PointId) -> LatticeResult<Option<Point>> {
+        Ok(self.points.get(&id).cloned())
     }
 
     /// Batch extract specific properties from points without cloning entire Points.

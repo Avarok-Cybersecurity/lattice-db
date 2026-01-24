@@ -139,11 +139,8 @@ impl<'a> ExecutionContext<'a> {
         }
 
         // Not in cache, fetch from collection
-        // Native returns LatticeResult<Option<Point>>, WASM returns Option<&Point>
-        #[cfg(not(target_arch = "wasm32"))]
+        // Both native and WASM return LatticeResult<Option<Point>>
         let point = self.collection.get_point(id).ok().flatten();
-        #[cfg(target_arch = "wasm32")]
-        let point = self.collection.get_point(id).cloned();
 
         // Wrap in Arc and store in cache
         let arc_point = point.map(Arc::new);
