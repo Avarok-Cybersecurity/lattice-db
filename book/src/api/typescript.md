@@ -269,14 +269,14 @@ const results = await client.search('docs', {
 // First page
 let result = await client.scroll('docs', {
   limit: 100,
-  withPayload: true
+  with_payload: true  // Note: REST API uses snake_case
 });
 
 // Subsequent pages
-while (result.nextPageOffset !== null) {
+while (result.next_page_offset !== null) {
   result = await client.scroll('docs', {
     limit: 100,
-    offset: result.nextPageOffset
+    offset: result.next_page_offset
   });
   // Process result.points
 }
@@ -299,7 +299,7 @@ const neighbors = await client.getNeighbors('docs', 1);
 // Cypher query
 const result = await client.cypherQuery('docs', {
   query: 'MATCH (n:Person) RETURN n.name',
-  params: {}
+  parameters: {}
 });
 ```
 

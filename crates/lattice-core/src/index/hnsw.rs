@@ -1232,7 +1232,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, v)| (i as u64, distance.calculate(&query, v)))
                 .collect();
-            ground_truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            ground_truth.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             let gt_ids: HashSet<u64> = ground_truth.iter().take(k).map(|(id, _)| *id).collect();
 
             // HNSW search

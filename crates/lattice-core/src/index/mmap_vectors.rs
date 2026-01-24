@@ -120,14 +120,23 @@ impl MmapVectorStore {
     ///
     /// Returns a slice directly into the mmap'd memory.
     /// The OS will page in the data if needed.
+    /// Returns None if the ID is not found or if the offset is out of bounds
+    /// (protects against corrupted files).
     #[inline]
     pub fn get(&self, id: PointId) -> Option<&[f32]> {
-        self.offsets.get(&id).map(|&offset| {
-            let byte_slice = &self.mmap[offset..offset + self.dim * 4];
+        self.offsets.get(&id).and_then(|&offset| {
+            // Bounds check to prevent panic on corrupted/truncated files
+            let byte_len = self.dim.checked_mul(4)?;
+            let end = offset.checked_add(byte_len)?;
+            if end > self.mmap.len() {
+                return None;
+            }
+
+            let byte_slice = &self.mmap[offset..end];
             // SAFETY: The file format guarantees proper alignment and the
             // data was written as f32 values. We verify the magic number
-            // and version on load.
-            unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) }
+            // and version on load. Bounds are validated above.
+            Some(unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) })
         })
     }
 
