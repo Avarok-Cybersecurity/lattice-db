@@ -77,7 +77,7 @@ fn test_full_workflow_vector_operations() {
     assert_eq!(engine.point_count(), 7);
 
     // Step 3: Verify points can be retrieved
-    let retrieved = engine.get_points(&[1, 4, 7]);
+    let retrieved = engine.get_points(&[1, 4, 7]).unwrap();
     assert_eq!(retrieved.len(), 3);
     assert!(retrieved[0].is_some());
     assert!(retrieved[1].is_some());
@@ -123,7 +123,7 @@ fn test_full_workflow_graph_operations() {
     engine.add_edge(3, 6, "similar", 0.5).unwrap();
 
     // Step 2: Verify edges were added
-    let point1 = engine.get_point(1);
+    let point1 = engine.get_point(1).unwrap();
     assert!(point1.is_some());
     let point1 = point1.unwrap();
     assert!(point1.has_edges());
@@ -203,7 +203,7 @@ fn test_full_workflow_serialization_roundtrip() {
     assert_eq!(restored.point_count(), 7);
 
     // Verify specific points
-    let point1 = restored.get_point(1);
+    let point1 = restored.get_point(1).unwrap();
     assert!(point1.is_some());
     let point1 = point1.unwrap();
     assert_eq!(point1.vector, vec![1.0, 0.0, 0.0, 0.0]);
@@ -275,7 +275,7 @@ fn test_point_with_payload() {
     engine.upsert_points(vec![point]).unwrap();
 
     // Retrieve and verify payload
-    let retrieved = engine.get_point(1);
+    let retrieved = engine.get_point(1).unwrap();
     assert!(retrieved.is_some());
     let retrieved = retrieved.unwrap();
     assert_eq!(
@@ -288,7 +288,7 @@ fn test_point_with_payload() {
     let bytes = engine.to_bytes().unwrap();
     let restored = CollectionEngine::from_bytes(&bytes).unwrap();
 
-    let retrieved = restored.get_point(1).unwrap();
+    let retrieved = restored.get_point(1).unwrap().unwrap();
     assert_eq!(
         retrieved.payload.get("category"),
         Some(&br#""test""#.to_vec())
@@ -305,16 +305,16 @@ fn test_delete_points() {
     assert_eq!(engine.point_count(), 7);
 
     // Delete some points
-    let deleted = engine.delete_points(&[1, 3, 5]);
+    let deleted = engine.delete_points(&[1, 3, 5]).unwrap();
     assert_eq!(deleted, 3);
     assert_eq!(engine.point_count(), 4);
 
     // Verify deleted points are gone
-    assert!(engine.get_point(1).is_none());
-    assert!(engine.get_point(2).is_some());
-    assert!(engine.get_point(3).is_none());
-    assert!(engine.get_point(4).is_some());
-    assert!(engine.get_point(5).is_none());
+    assert!(engine.get_point(1).unwrap().is_none());
+    assert!(engine.get_point(2).unwrap().is_some());
+    assert!(engine.get_point(3).unwrap().is_none());
+    assert!(engine.get_point(4).unwrap().is_some());
+    assert!(engine.get_point(5).unwrap().is_none());
 
     // Search should not return deleted points
     let query = SearchQuery::new(vec![1.0, 0.0, 0.0, 0.0], 5).with_ef(50);
@@ -335,7 +335,7 @@ fn test_upsert_updates_existing() {
     engine.upsert_points(vec![point1]).unwrap();
 
     // Verify initial state
-    let retrieved = engine.get_point(1).unwrap();
+    let retrieved = engine.get_point(1).unwrap().unwrap();
     assert_eq!(retrieved.vector, vec![1.0, 0.0, 0.0, 0.0]);
 
     // Upsert with new vector (same ID)
@@ -345,7 +345,7 @@ fn test_upsert_updates_existing() {
     assert_eq!(result.updated, 1);
 
     // Verify update
-    let retrieved = engine.get_point(1).unwrap();
+    let retrieved = engine.get_point(1).unwrap().unwrap();
     assert_eq!(retrieved.vector, vec![0.0, 1.0, 0.0, 0.0]);
 
     // Point count should still be 1
@@ -458,17 +458,17 @@ fn test_scroll_pagination() {
     }
 
     // First page
-    let result = engine.scroll(ScrollQuery::new(10));
+    let result = engine.scroll(ScrollQuery::new(10)).unwrap();
     assert_eq!(result.points.len(), 10);
     assert!(result.next_offset.is_some());
 
     // Second page
-    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap()));
+    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap())).unwrap();
     assert_eq!(result.points.len(), 10);
     assert!(result.next_offset.is_some());
 
     // Third page (partial)
-    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap()));
+    let result = engine.scroll(ScrollQuery::new(10).with_offset(result.next_offset.unwrap())).unwrap();
     assert_eq!(result.points.len(), 5);
     assert!(result.next_offset.is_none());
 }

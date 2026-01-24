@@ -11,12 +11,54 @@ use crate::handlers::{collections, points, search};
 use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tracing::{debug, warn, instrument};
 
 /// Application state shared across all requests
 pub type AppState = Arc<AppStateInner>;
 
 /// Per-collection engine wrapped in its own lock for fine-grained concurrency
 pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
+
+/// Server configuration (PCND: all fields explicit)
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    /// Maximum points per upsert request (prevents memory exhaustion)
+    pub max_upsert_batch_size: usize,
+    /// Maximum points per delete request
+    pub max_delete_batch_size: usize,
+    /// Maximum IDs per get request
+    pub max_get_batch_size: usize,
+    /// Maximum queries per batch search request
+    pub max_search_batch_size: usize,
+}
+
+impl ServerConfig {
+    /// Create config with enterprise defaults
+    ///
+    /// These defaults are chosen for production safety:
+    /// - 10,000 points per upsert (reasonable for high-dim vectors)
+    /// - 10,000 IDs per delete/get
+    /// - 100 queries per batch search
+    pub fn production() -> Self {
+        Self {
+            max_upsert_batch_size: 10_000,
+            max_delete_batch_size: 10_000,
+            max_get_batch_size: 10_000,
+            max_search_batch_size: 100,
+        }
+    }
+
+    /// Create config with no limits (for testing only)
+    #[cfg(test)]
+    pub fn unlimited() -> Self {
+        Self {
+            max_upsert_batch_size: usize::MAX,
+            max_delete_batch_size: usize::MAX,
+            max_get_batch_size: usize::MAX,
+            max_search_batch_size: usize::MAX,
+        }
+    }
+}
 
 /// Inner application state
 ///
@@ -26,13 +68,24 @@ pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
 pub struct AppStateInner {
     /// Collection engines keyed by name, each with its own RwLock
     pub collections: RwLock<std::collections::HashMap<String, CollectionHandle>>,
+    /// Server configuration
+    pub config: ServerConfig,
 }
 
 impl AppStateInner {
-    /// Create new application state
+    /// Create new application state with production config
     pub fn new() -> Self {
         Self {
             collections: RwLock::new(std::collections::HashMap::new()),
+            config: ServerConfig::production(),
+        }
+    }
+
+    /// Create new application state with custom config
+    pub fn with_config(config: ServerConfig) -> Self {
+        Self {
+            collections: RwLock::new(std::collections::HashMap::new()),
+            config,
         }
     }
 
@@ -95,13 +148,16 @@ pub fn new_app_state() -> AppState {
 /// - `POST /collections/{name}/graph/edges` - Add edge
 /// - `POST /collections/{name}/graph/traverse` - Traverse graph
 /// - `POST /collections/{name}/graph/query` - Execute Cypher query
+#[instrument(skip(state, request), fields(method = %request.method, path = %request.path))]
 pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
     // Method is already uppercase from transport layer
     let method = &request.method;
     let path = request.path.trim_end_matches('/');
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    match (method.as_str(), segments.as_slice()) {
+    debug!(method = %method, path = %path, "Processing request");
+
+    let response = match (method.as_str(), segments.as_slice()) {
         // === Health/Diagnostics ===
 
         // GET /ping - Minimal endpoint for baseline HTTP overhead measurement
@@ -211,8 +267,20 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
         }
 
         // === Fallback ===
-        _ => LatticeResponse::not_found(&format!("Unknown endpoint: {} {}", method, path)),
+        _ => {
+            warn!(method = %method, path = %path, "Unknown endpoint");
+            LatticeResponse::not_found(&format!("Unknown endpoint: {} {}", method, path))
+        }
+    };
+
+    // Log response status
+    if response.status >= 400 {
+        warn!(status = response.status, method = %method, path = %path, "Request failed");
+    } else {
+        debug!(status = response.status, "Request completed");
     }
+
+    response
 }
 
 /// Parse JSON body into a DTO using simd-json when available

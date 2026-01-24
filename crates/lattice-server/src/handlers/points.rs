@@ -14,6 +14,7 @@ use crate::dto::{
 use crate::router::{json_response, AppState};
 use lattice_core::{LatticeResponse, Point};
 use std::collections::HashMap;
+use tracing::{info, warn};
 
 /// Upsert points into a collection
 #[cfg_attr(feature = "openapi", utoipa::path(
@@ -35,6 +36,16 @@ pub fn upsert_points(
     collection_name: &str,
     request: UpsertPointsRequest,
 ) -> LatticeResponse {
+    // Validate batch size to prevent memory exhaustion
+    let max_batch = state.config.max_upsert_batch_size;
+    if request.points.len() > max_batch {
+        return LatticeResponse::bad_request(&format!(
+            "Batch size {} exceeds maximum allowed {} points per request",
+            request.points.len(),
+            max_batch
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -65,12 +76,28 @@ pub fn upsert_points(
         .collect();
 
     // Upsert into engine
+    let point_count = points.len();
     match engine.upsert_points(points) {
-        Ok(_) => json_response(&ApiResponse::ok(UpsertResult {
-            operation_id: 0,
-            status: "completed".to_string(),
-        })),
-        Err(e) => LatticeResponse::bad_request(&format!("Upsert failed: {}", e)),
+        Ok(_) => {
+            info!(
+                collection = collection_name,
+                points = point_count,
+                "Points upserted successfully"
+            );
+            json_response(&ApiResponse::ok(UpsertResult {
+                operation_id: 0,
+                status: "completed".to_string(),
+            }))
+        }
+        Err(e) => {
+            warn!(
+                collection = collection_name,
+                points = point_count,
+                error = %e,
+                "Upsert failed"
+            );
+            LatticeResponse::bad_request(&format!("Upsert failed: {}", e))
+        }
     }
 }
 
@@ -93,6 +120,16 @@ pub fn get_points(
     collection_name: &str,
     request: GetPointsRequest,
 ) -> LatticeResponse {
+    // Validate batch size to prevent memory exhaustion
+    let max_batch = state.config.max_get_batch_size;
+    if request.ids.len() > max_batch {
+        return LatticeResponse::bad_request(&format!(
+            "Batch size {} exceeds maximum allowed {} IDs per request",
+            request.ids.len(),
+            max_batch
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -104,7 +141,10 @@ pub fn get_points(
     };
     let engine = handle.read();
 
-    let results = engine.get_points(&request.ids);
+    let results = match engine.get_points(&request.ids) {
+        Ok(r) => r,
+        Err(e) => return LatticeResponse::bad_request(&format!("Failed to get points: {}", e)),
+    };
 
     // Native get_points returns owned Points, WASM returns references
     #[cfg(not(target_arch = "wasm32"))]
@@ -173,6 +213,16 @@ pub fn delete_points(
     collection_name: &str,
     request: DeletePointsRequest,
 ) -> LatticeResponse {
+    // Validate batch size to prevent memory exhaustion
+    let max_batch = state.config.max_delete_batch_size;
+    if request.points.len() > max_batch {
+        return LatticeResponse::bad_request(&format!(
+            "Batch size {} exceeds maximum allowed {} IDs per request",
+            request.points.len(),
+            max_batch
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -184,7 +234,14 @@ pub fn delete_points(
     };
     let mut engine = handle.write();
 
+    let point_count = request.points.len();
     let _deleted = engine.delete_points(&request.points);
+
+    info!(
+        collection = collection_name,
+        points = point_count,
+        "Points deleted"
+    );
 
     json_response(&ApiResponse::ok(UpdateResult {
         operation_id: 0,

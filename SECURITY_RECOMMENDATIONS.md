@@ -4,54 +4,81 @@ Findings from repository audit. Items marked with checkboxes are pending.
 
 ## Critical (P0) - Security
 
-- [ ] **Authentication** - All endpoints are currently accessible without authentication
-  - Location: Transport layer (`hyper_transport.rs`, `axum_transport.rs`)
-  - Recommendation: Add JWT or API key authentication middleware
+- [x] **Authentication** - Added API key and Bearer token authentication
+  - Location: `auth.rs`, `hyper_transport.rs`
+  - Schemes: `ApiKey <key>` and `Bearer <token>` headers
+  - Environment: `LATTICE_API_KEYS` and `LATTICE_BEARER_TOKENS` (comma-separated)
+  - Public paths: `/`, `/health`, `/healthz`, `/ready`, `/readyz` (configurable)
+  - Returns 401 Unauthorized with `WWW-Authenticate` header on failure
 
-- [ ] **TLS/HTTPS** - Data transmitted in plaintext
-  - Location: Transport layer
-  - Recommendation: Add TLS support via `rustls` or `native-tls`
+- [x] **TLS/HTTPS** - Added rustls-based TLS support
+  - Location: `tls.rs`, `hyper_transport.rs` (HyperTlsTransport)
+  - Feature: Enable with `--features tls`
+  - Implementation: Certificate/key loading from PEM files
+  - Usage: `HyperTlsTransport::new(addr, TlsConfig::from_pem_files(cert, key)?)`
+  - Environment: `LATTICE_TLS_CERT` and `LATTICE_TLS_KEY` paths
 
-- [ ] **Rate Limiting** - No protection against DoS
-  - Location: Transport layer
-  - Recommendation: Add `tower` rate limiting middleware or implement token bucket
+- [x] **Rate Limiting** - Added token bucket rate limiter
+  - Location: `rate_limit.rs`, `hyper_transport.rs`
+  - Implementation: Per-IP token bucket with configurable rate/burst
+  - Default: 100 req/s, burst 200 (production config)
+  - Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+  - Optional: `HyperTransport::with_rate_limit()` or `with_default_rate_limit()`
 
 ## Medium (P1)
 
-- [ ] **Unbounded batch sizes** - Large upsert requests can exhaust memory
-  - Location: `UpsertPointsRequest` in `dto/request.rs`
-  - Recommendation: Add `max_batch_size` config, reject requests exceeding limit
+- [x] **Unbounded batch sizes** - Added configurable limits
+  - Added `ServerConfig` with explicit batch size limits (PCND compliant)
+  - `max_upsert_batch_size`: 10,000 points per request
+  - `max_delete_batch_size`: 10,000 IDs per request
+  - `max_get_batch_size`: 10,000 IDs per request
+  - `max_search_batch_size`: 100 queries per batch request
+  - Validation in handlers returns 400 Bad Request if exceeded
 
-- [ ] **Minimal logging** - No audit trail for operations
-  - Location: Entire codebase
-  - Recommendation: Add `tracing` with structured logging
+- [x] **Minimal logging** - Added structured logging
+  - Added `tracing` and `tracing-subscriber` dependencies
+  - Router instrumented with `#[instrument]` for request tracing
+  - Collection create/delete operations logged with context
+  - Point upsert/delete operations logged with counts
+  - Request failures logged at warn level
+  - Configure via `RUST_LOG` env var (default: info)
 
 ## Code Quality
 
-- [ ] **167 `unwrap()` calls in lattice-core** - Potential panics
-  - Priority files:
-    - `cypher/executor.rs` (highest concentration)
-    - `engine/collection.rs`
-  - Recommendation: Replace with `?` operator or explicit error handling
+- [x] **`unwrap()` calls in lattice-core** - Replaced with proper error handling
+  - Added `LockExt` trait for safe RwLock acquisition (error codes 50001-50003)
+  - Added `MutexExt` trait for safe Mutex acquisition
+  - Added `cmp_f32()` for NaN-safe float comparison
+  - Replaced `unwrap()` in `collection.rs`, `async_indexer.rs`, `executor.rs`, `planner.rs`
+  - Methods now return `LatticeResult<T>` for proper error propagation
 
-- [ ] **5 `panic!()` calls in `cypher/planner.rs`**
-  - Lines with panic: Check `unreachable!()` and `panic!()` usage
-  - Recommendation: Return `LatticeError` instead
+- [x] **`panic!()` and `unreachable!()` calls in cypher/**
+  - Replaced `unreachable!()` in `parser.rs` with `CypherError::internal()`
+  - Remaining `panic!()` calls are in test code only (acceptable)
 
-- [ ] **89 `clone()` calls in hot paths**
-  - Location: Cypher processing, search paths
-  - Recommendation: Profile and optimize critical paths with `Cow` or `Arc`
+- [x] **89 `clone()` calls in hot paths** - Optimized critical paths
+  - `executor.rs`: DISTINCT now uses index collection + swap_remove (avoids row cloning)
+  - `executor.rs`: Expand multi-path already optimized (clone all but last)
+  - `collection.rs`: Graph traversal paths documented (requires Arc for further optimization)
+  - Remaining clones are in expression evaluation (would require API changes to fix)
 
-- [ ] **29 clippy allows in `lib.rs`**
-  - Recommendation: Review and remove unnecessary suppressions
+- [x] **clippy allows in `lib.rs`** - Reviewed
+  - 16 allows present (style preferences and compatibility)
+  - Verified `dead_code`, `never_loop`, `if_same_then_else` don't hide issues
+  - Remaining allows are intentional for code clarity and Rust version compatibility
 
 ## CI/CD Improvements
 
-- [ ] **Performance regression tests**
-  - Recommendation: Add criterion benchmarks to CI with threshold alerts
+- [x] **Performance regression tests**
+  - Added `ci_regression.rs` benchmark suite
+  - Tests: vector search, vector upsert, Cypher parsing, Cypher execution
+  - CI job: Runs on all PRs, caches baseline on main branch
+  - Self-contained (no external services required)
 
-- [ ] **cargo-deny** for license and duplicate dependency checks
-  - Recommendation: Add `deny.toml` and CI job
+- [x] **cargo-deny** for license and security checks
+  - Added `deny.toml` with license allowlist
+  - Added to CI security job
+  - Checks: advisories, licenses, bans, sources
 
 ## Completed
 

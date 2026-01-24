@@ -455,11 +455,13 @@ impl QueryPlanner {
                     ],
                 ));
             }
-            let combined = predicates.into_iter().reduce(|a, b| a.and(b)).unwrap();
-            plan = LogicalOp::Filter {
-                input: Box::new(plan),
-                predicate: combined,
-            };
+            // SAFETY: predicates is non-empty because labels.len() > 1 and skip(1) yields at least 1
+            if let Some(combined) = predicates.into_iter().reduce(|a, b| a.and(b)) {
+                plan = LogicalOp::Filter {
+                    input: Box::new(plan),
+                    predicate: combined,
+                };
+            }
         }
 
         // Add property filter

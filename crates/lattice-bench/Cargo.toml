@@ -36,5 +36,9 @@ harness = false
 name = "vector_comparison"
 harness = false
 
+[[bench]]
+name = "ci_regression"
+harness = false
+
 [features]
 default = []

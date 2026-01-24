@@ -13,6 +13,7 @@ use crate::index::dense_vectors::DenseVectorStore;
 use crate::index::distance::DistanceCalculator;
 use crate::index::layer::{HnswNode, LayerManager};
 use crate::index::scann::{DistanceTable, PQCode, ProductQuantizer};
+use crate::sync::cmp_f32;
 use crate::types::collection::{Distance, HnswConfig};
 use crate::types::point::{Point, PointId, Vector};
 use crate::types::query::SearchResult;
@@ -170,7 +171,11 @@ impl HnswIndex {
             return;
         }
 
-        let entry_point = self.layers.entry_point().unwrap();
+        // Defensive: entry_point should exist since we're not the first point
+        let entry_point = match self.layers.entry_point() {
+            Some(ep) => ep,
+            None => return, // Inconsistent state - skip insertion
+        };
         let mut current = entry_point;
 
         // Phase 1: Traverse from top layer down to node's level + 1
@@ -248,7 +253,11 @@ impl HnswIndex {
 
         let ef = ef.max(k); // ef must be >= k
 
-        let entry_point = self.layers.entry_point().unwrap();
+        // Defensive: entry_point should exist since we checked is_empty above
+        let entry_point = match self.layers.entry_point() {
+            Some(ep) => ep,
+            None => return vec![], // Inconsistent state - treat as empty
+        };
         let mut current = entry_point;
         let mut current_dist = self.calc_distance(query, current);
 
@@ -542,7 +551,7 @@ impl HnswIndex {
                             // Compact results when exceeding threshold (amortized O(1))
                             if scratch.results.len() >= compact_threshold {
                                 scratch.results.sort_unstable_by(|a, b| {
-                                    a.distance.partial_cmp(&b.distance).unwrap()
+                                    cmp_f32(a.distance, b.distance)
                                 });
                                 scratch.results.truncate(ef);
                                 scratch.worst_distance =
@@ -556,7 +565,7 @@ impl HnswIndex {
             // Final sort and return (closest first)
             scratch
                 .results
-                .sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+                .sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
             scratch.results.truncate(ef);
             scratch.results.drain(..).collect()
         })
@@ -638,7 +647,7 @@ impl HnswIndex {
                         // Compact results when exceeding threshold (amortized O(1))
                         if results.len() >= compact_threshold {
                             results.sort_unstable_by(|a, b| {
-                                a.distance.partial_cmp(&b.distance).unwrap()
+                                cmp_f32(a.distance, b.distance)
                             });
                             results.truncate(ef);
                             worst_distance = results.last().map_or(f32::MAX, |c| c.distance);
@@ -649,7 +658,7 @@ impl HnswIndex {
         }
 
         // Final sort and return (closest first)
-        results.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        results.sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
         results.truncate(ef);
         results
     }
@@ -763,7 +772,7 @@ impl HnswIndex {
 
         // Sort by distance to find best M neighbors
         let mut sorted = neighbors_with_dist;
-        sorted.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        sorted.sort_unstable_by(|a, b| cmp_f32(a.1, b.1));
         sorted.truncate(max_neighbors);
 
         // Extract IDs and sort by PointId (required for binary_search in add_neighbor)
@@ -863,7 +872,10 @@ impl HnswIndex {
         let ef = ef.max(k);
 
         // Phase 1: HNSW traversal with PQ-accelerated distances (coarse filtering)
-        let entry_point = self.layers.entry_point().unwrap();
+        let entry_point = match self.layers.entry_point() {
+            Some(ep) => ep,
+            None => return vec![], // Inconsistent state - treat as empty
+        };
         let mut current = entry_point;
         let mut current_dist = accelerator.approximate_distance(query, current);
 
@@ -983,7 +995,7 @@ impl HnswIndex {
         }
 
         let mut result_vec: Vec<Candidate> = results.into_vec();
-        result_vec.sort_unstable_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        result_vec.sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
         result_vec
     }
 }

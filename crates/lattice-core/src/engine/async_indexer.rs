@@ -6,6 +6,7 @@
 //! Native-only: Uses std::thread (not tokio) to maintain lattice-core's I/O-free design.
 
 use crate::index::hnsw::HnswIndex;
+use crate::sync::LockExt;
 use crate::types::point::{Point, PointId};
 use rustc_hash::FxHashSet;
 use std::collections::BTreeMap;
@@ -167,10 +168,12 @@ impl AsyncIndexer {
 
         // Process deletes first (for update safety)
         if !deletes.is_empty() {
-            let mut index = self.index.write().unwrap();
-            for id in &deletes {
-                index.delete(*id);
+            if let Ok(mut index) = self.index.write_safe() {
+                for id in &deletes {
+                    index.delete(*id);
+                }
             }
+            // On lock error, deletes will be retried on next cycle
         }
 
         // Batch process inserts
@@ -184,11 +187,9 @@ impl AsyncIndexer {
     /// Batch index multiple points with minimized lock acquisitions
     fn batch_index_points(&self, ids: &[PointId]) {
         // Get all points in one read lock
-        let points_to_index: Vec<Point> = {
-            let points = self.points.read().unwrap();
-            ids.iter()
-                .filter_map(|id| points.get(id).cloned())
-                .collect()
+        let points_to_index: Vec<Point> = match self.points.read_safe() {
+            Ok(points) => ids.iter().filter_map(|id| points.get(id).cloned()).collect(),
+            Err(_) => return, // Lock poisoned, skip this batch
         };
 
         if points_to_index.is_empty() {
@@ -196,16 +197,16 @@ impl AsyncIndexer {
         }
 
         // Insert all into index with one write lock
-        {
-            let mut index = self.index.write().unwrap();
+        if let Ok(mut index) = self.index.write_safe() {
             for point in &points_to_index {
                 index.insert(point);
             }
+        } else {
+            return; // Lock poisoned, skip this batch
         }
 
         // Remove all from pending with one write lock
-        {
-            let mut pending = self.pending.write().unwrap();
+        if let Ok(mut pending) = self.pending.write_safe() {
             for point in &points_to_index {
                 pending.remove(&point.id);
             }

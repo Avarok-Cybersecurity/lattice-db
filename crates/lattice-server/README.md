@@ -58,7 +58,7 @@ Content-Type: application/json
 - `vectors.size` - Vector dimensionality (required)
 - `vectors.distance` - Distance metric: `Cosine`, `Euclid`, or `Dot` (required)
 - `hnsw_config.m` - Max connections per node (optional, default: 16)
-- `hnsw_config.ef_construct` - Construction-time search queue size (optional, default: 200)
+- `hnsw_config.ef_construct` - Construction-time search queue size (optional, default: 100)
 
 **Response:**
 ```json
@@ -179,7 +179,7 @@ Content-Type: application/json
   "status": "ok",
   "result": {
     "operation_id": 0,
-    "status": "deleted 3 points"
+    "status": "completed"
   }
 }
 ```

@@ -38,6 +38,24 @@ const VERSION: u64 = 1;
 /// Header size in bytes
 const HEADER_SIZE: usize = 24;
 
+/// Read a u64 from a byte slice at the given offset (little-endian)
+///
+/// Returns an error if the slice is too short.
+#[inline]
+fn read_u64_le(data: &[u8], offset: usize) -> io::Result<u64> {
+    let end = offset + 8;
+    if data.len() < end {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("File truncated at offset {}", offset),
+        ));
+    }
+    // Safe: we just verified the slice has 8 bytes from offset
+    Ok(u64::from_le_bytes(
+        data[offset..end].try_into().expect("slice is 8 bytes"),
+    ))
+}
+
 /// Memory-mapped vector storage
 ///
 /// Provides efficient access to vectors stored in a memory-mapped file.
@@ -65,7 +83,7 @@ impl MmapVectorStore {
             ));
         }
 
-        let magic = u64::from_le_bytes(mmap[0..8].try_into().unwrap());
+        let magic = read_u64_le(&mmap, 0)?;
         if magic != MAGIC {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -73,7 +91,7 @@ impl MmapVectorStore {
             ));
         }
 
-        let version = u64::from_le_bytes(mmap[8..16].try_into().unwrap());
+        let version = read_u64_le(&mmap, 8)?;
         if version != VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -81,22 +99,17 @@ impl MmapVectorStore {
             ));
         }
 
-        let dim = u64::from_le_bytes(mmap[16..24].try_into().unwrap()) as usize;
+        let dim = read_u64_le(&mmap, 16)? as usize;
 
         // Read index
-        let count = u64::from_le_bytes(mmap[24..32].try_into().unwrap()) as usize;
+        let count = read_u64_le(&mmap, 24)? as usize;
         let mut offsets = HashMap::with_capacity(count);
 
         let index_start = 32;
         for i in 0..count {
             let entry_offset = index_start + i * 16;
-            let point_id =
-                u64::from_le_bytes(mmap[entry_offset..entry_offset + 8].try_into().unwrap());
-            let vector_offset = u64::from_le_bytes(
-                mmap[entry_offset + 8..entry_offset + 16]
-                    .try_into()
-                    .unwrap(),
-            ) as usize;
+            let point_id = read_u64_le(&mmap, entry_offset)?;
+            let vector_offset = read_u64_le(&mmap, entry_offset + 8)? as usize;
             offsets.insert(point_id, vector_offset);
         }
 

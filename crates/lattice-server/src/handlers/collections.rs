@@ -16,6 +16,7 @@ use lattice_core::{
     CollectionConfig, CollectionEngine, Distance, HnswConfig, LatticeResponse, VectorConfig,
 };
 use std::collections::HashMap;
+use tracing::{info, warn};
 
 /// Maximum allowed collection name length
 const MAX_COLLECTION_NAME_LENGTH: usize = 255;
@@ -153,8 +154,16 @@ pub fn create_collection(
 
     // Insert with per-collection locking (insert_collection checks for duplicates)
     if !state.insert_collection(name.to_string(), engine) {
+        warn!(collection = name, "Collection already exists");
         return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
     }
+
+    info!(
+        collection = name,
+        vector_dim = request.vectors.size,
+        distance = %request.vectors.distance,
+        "Collection created"
+    );
 
     // Qdrant returns plain bool for create/delete operations
     json_response(&ApiResponse::ok(true))
@@ -237,9 +246,11 @@ pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
 ))]
 pub fn delete_collection(state: &AppState, name: &str) -> LatticeResponse {
     if state.remove_collection(name) {
+        info!(collection = name, "Collection deleted");
         // Qdrant returns plain bool for create/delete operations
         json_response(&ApiResponse::ok(true))
     } else {
+        warn!(collection = name, "Collection not found for deletion");
         LatticeResponse::not_found(&format!("Collection '{}' not found", name))
     }
 }

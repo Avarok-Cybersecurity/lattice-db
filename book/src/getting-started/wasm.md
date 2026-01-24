@@ -51,6 +51,10 @@ LatticeDB compiles to WebAssembly (WASM) and runs entirely in the browser. This 
 
 ### Service Worker
 
+> **Note**: Service Worker transport (fetch interception) is not yet implemented.
+> The examples below show the planned API. Currently, use the direct
+> LatticeDB API from the main thread or a Web Worker.
+
 For persistent storage and background processing:
 
 ```javascript

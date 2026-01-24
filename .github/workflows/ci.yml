@@ -44,11 +44,20 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
       - name: Run security audit
         run: cargo audit
+
+      - name: Run license and dependency checks
+        run: cargo deny check
 
   test-native:
     name: Test (${{ matrix.os }})
@@ -193,3 +202,33 @@ jobs:
         with:
           files: cobertura.xml
           fail_ci_if_error: false
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download baseline (if exists)
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: benchmark-baseline-${{ runner.os }}
+          restore-keys: |
+            benchmark-baseline-${{ runner.os }}
+
+      - name: Run CI benchmarks
+        run: cargo bench -p lattice-bench -- ci_
+
+      - name: Save baseline (main branch only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: benchmark-baseline-${{ runner.os }}-${{ github.sha }}

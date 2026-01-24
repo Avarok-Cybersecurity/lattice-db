@@ -37,6 +37,28 @@ pub enum StorageError {
 
     #[error("Storage capacity exceeded")]
     CapacityExceeded,
+
+    /// File format corruption detected
+    #[error("Corrupted file at offset {offset}: {reason}")]
+    CorruptedFile {
+        /// Byte offset where corruption was detected
+        offset: usize,
+        /// Description of the corruption
+        reason: String,
+    },
+
+    /// Invalid file format (wrong magic, version, etc.)
+    #[error("Invalid file format: expected {expected}, found {found}")]
+    InvalidFormat {
+        expected: String,
+        found: String,
+    },
+
+    /// Feature not yet implemented
+    #[error("Feature not implemented: {feature}")]
+    NotImplemented {
+        feature: &'static str,
+    },
 }
 
 /// Convenience type alias for storage results

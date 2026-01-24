@@ -133,6 +133,15 @@ impl CypherError {
 /// Convenience type alias for Cypher results
 pub type CypherResult<T> = Result<T, CypherError>;
 
+/// Convert LatticeError to CypherError for seamless error propagation
+impl From<crate::LatticeError> for CypherError {
+    fn from(err: crate::LatticeError) -> Self {
+        CypherError::Internal {
+            message: err.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

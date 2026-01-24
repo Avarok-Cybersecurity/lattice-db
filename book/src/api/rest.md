@@ -303,6 +303,48 @@ POST /collections/{collection_name}/points/scroll
 }
 ```
 
+### Batch Search
+
+Execute multiple search queries in a single request for better efficiency.
+
+```http
+POST /collections/{collection_name}/points/search/batch
+```
+
+**Request Body:**
+```json
+{
+  "searches": [
+    {
+      "vector": [0.1, 0.2, 0.3, ...],
+      "limit": 10,
+      "with_payload": true
+    },
+    {
+      "vector": [0.4, 0.5, 0.6, ...],
+      "limit": 5,
+      "params": { "ef": 200 }
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "result": [
+    [
+      { "id": 42, "score": 0.95, "payload": {...} },
+      { "id": 17, "score": 0.89, "payload": {...} }
+    ],
+    [
+      { "id": 8, "score": 0.91, "payload": {...} }
+    ]
+  ]
+}
+```
+
 ## Graph Operations
 
 ### Add Edge
@@ -433,16 +475,75 @@ All errors return a consistent format:
 | Header | Value |
 |--------|-------|
 | `Content-Type` | `application/json` |
-| `X-Response-Time` | Request duration in ms |
+| `Server-Timing` | RFC 6797 timing: `body;dur=X, handler;dur=Y, total;dur=Z` (microseconds) |
+
+## Authentication
+
+LatticeDB supports API key and Bearer token authentication. By default, authentication is disabled.
+
+### Enabling Authentication
+
+Set one or both environment variables:
+
+```bash
+# API Key authentication
+LATTICE_API_KEYS=key1,key2,key3
+
+# Bearer token authentication
+LATTICE_BEARER_TOKENS=token1,token2
+```
+
+### Making Authenticated Requests
+
+```bash
+# Using API Key
+curl -H "Authorization: ApiKey your-api-key" \
+  http://localhost:6333/collections
+
+# Using Bearer Token
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:6333/collections
+```
+
+### Public Endpoints
+
+These endpoints do not require authentication:
+- `GET /` - Root endpoint
+- `GET /health`, `/healthz` - Health check
+- `GET /ready`, `/readyz` - Readiness check
 
 ## Rate Limiting
 
-By default, LatticeDB has no rate limiting. For production deployments, configure limits via environment variables:
+By default, LatticeDB has no rate limiting. Enable it for production:
 
 ```bash
-LATTICE_MAX_REQUESTS_PER_SECOND=1000
-LATTICE_MAX_CONCURRENT_REQUESTS=100
+LATTICE_RATE_LIMIT=1  # Any value enables rate limiting
 ```
+
+**Default limits:** 100 requests/second, burst capacity 200
+
+### Rate Limit Headers
+
+When rate limiting is enabled, responses include:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Requests allowed per second |
+| `X-RateLimit-Remaining` | Requests remaining in current window |
+| `X-RateLimit-Reset` | Seconds until limit resets |
+
+**429 Too Many Requests** is returned when limits are exceeded.
+
+## TLS/HTTPS
+
+Enable TLS for encrypted connections:
+
+```bash
+LATTICE_TLS_CERT=/path/to/cert.pem
+LATTICE_TLS_KEY=/path/to/key.pem
+```
+
+Requires building with `--features tls`.
 
 ## CORS
 
@@ -453,6 +554,20 @@ Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
 Access-Control-Allow-Headers: Content-Type
 ```
+
+## Environment Variables Reference
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LATTICE_HOST` | Server bind address | `0.0.0.0` |
+| `LATTICE_PORT` | Server port | `6333` |
+| `LATTICE_API_KEYS` | Comma-separated API keys for authentication | (disabled) |
+| `LATTICE_BEARER_TOKENS` | Comma-separated Bearer tokens for authentication | (disabled) |
+| `LATTICE_RATE_LIMIT` | Enable rate limiting (any value) | (disabled) |
+| `LATTICE_TLS_CERT` | Path to TLS certificate file | (disabled) |
+| `LATTICE_TLS_KEY` | Path to TLS private key file | (disabled) |
+| `LATTICE_DATA_DIR` | Data persistence directory | `./data` |
+| `LATTICE_LOG_LEVEL` | Logging verbosity (`error`, `warn`, `info`, `debug`, `trace`) | `info` |
 
 ## cURL Examples
 

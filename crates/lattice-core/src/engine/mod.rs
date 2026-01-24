@@ -10,4 +10,4 @@ pub mod collection;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod async_indexer;
 
-pub use collection::CollectionEngine;
+pub use collection::{CollectionEngine, EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
