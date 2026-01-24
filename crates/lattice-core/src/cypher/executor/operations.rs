@@ -151,7 +151,11 @@ impl QueryExecutor {
                 match self.evaluate_predicate(pred, &row, ctx) {
                     Ok(true) => filtered.push(row),
                     Ok(false) => continue,
-                    Err(_) => continue, // Skip on error
+                    Err(e) => {
+                        return Err(CypherError::Internal {
+                            message: format!("Predicate evaluation failed for node {}: {}", id, e),
+                        })
+                    }
                 }
             }
             filtered
