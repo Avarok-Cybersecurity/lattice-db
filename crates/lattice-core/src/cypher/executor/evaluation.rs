@@ -35,8 +35,14 @@ impl QueryExecutor {
                     return Ok(value.clone());
                 }
 
-                // For now, assume first column is the variable
-                // TODO: Proper variable binding
+                // Current limitation: assumes single-variable queries where the
+                // matched node is in the first column. This works correctly for:
+                //   - MATCH (n:Label) WHERE n.prop = x RETURN n
+                //   - MATCH (n) WHERE n.id = x RETURN n.property
+                //
+                // For multi-variable queries (e.g., MATCH (a)-[r]->(b)), proper
+                // variable-to-column index mapping would be needed. This would
+                // require tracking column positions during scan/expand operations.
                 row.first()
                     .cloned()
                     .ok_or_else(|| CypherError::unknown_variable(name.as_str()))

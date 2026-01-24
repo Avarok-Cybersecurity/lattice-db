@@ -169,9 +169,19 @@ impl DenseVectorStore {
     }
 
     /// Get raw pointer to vector data (for prefetching)
+    ///
+    /// # Safety
+    /// Caller must ensure idx is valid (obtained from insert or get_idx).
+    /// Debug builds will panic on invalid indices.
     #[inline]
     pub fn get_ptr(&self, idx: DenseIdx) -> *const f32 {
         let start = idx as usize * self.dim;
+        debug_assert!(
+            start + self.dim <= self.data.len(),
+            "DenseIdx {} out of bounds (max: {})",
+            idx,
+            self.data.len() / self.dim.max(1)
+        );
         unsafe { self.data.as_ptr().add(start) }
     }
 
