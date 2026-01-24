@@ -54,7 +54,7 @@ pub fn search_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -102,6 +102,16 @@ pub fn search_batch(
     collection_name: &str,
     request: BatchSearchRequest,
 ) -> LatticeResponse {
+    // Validate batch size to prevent memory exhaustion
+    let max_batch = state.config.max_search_batch_size;
+    if request.searches.len() > max_batch {
+        return LatticeResponse::bad_request(&format!(
+            "Batch size {} exceeds maximum allowed {} queries per request",
+            request.searches.len(),
+            max_batch
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -111,7 +121,7 @@ pub fn search_batch(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Convert SearchRequest DTOs to SearchQuery
     let queries: Vec<SearchQuery> = request
@@ -180,7 +190,7 @@ pub fn query_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -251,7 +261,7 @@ pub fn scroll_points(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Build scroll query
     let mut query = ScrollQuery::new(request.limit);
@@ -267,7 +277,10 @@ pub fn scroll_points(
     }
 
     // Execute scroll
-    let result = engine.scroll(query);
+    let result = match engine.scroll(query) {
+        Ok(r) => r,
+        Err(e) => return LatticeResponse::bad_request(&format!("Scroll failed: {}", e)),
+    };
 
     let scroll_result = ScrollResult {
         points: result
@@ -314,7 +327,7 @@ pub fn traverse_graph(
             ))
         }
     };
-    let engine = handle.read().unwrap();
+    let engine = handle.read();
 
     // Convert relation strings to references for the API
     let relations: Option<Vec<&str>> = request
@@ -325,15 +338,20 @@ pub fn traverse_graph(
     // Execute traversal
     match engine.traverse(request.start_id, request.max_depth, relations.as_deref()) {
         Ok(result) => {
-            // Build edge records from paths
+            // Build edge records from paths, resolving relation_id to name
+            let config = engine.config();
             let mut edges = Vec::new();
             for path in &result.paths {
                 if path.path.len() >= 2 {
                     let from_id = path.path[path.path.len() - 2];
+                    let relation = config
+                        .relation_name(path.relation_id)
+                        .unwrap_or("unknown")
+                        .to_string();
                     edges.push(EdgeRecord {
                         from_id,
                         to_id: path.target_id,
-                        relation: "traversed".to_string(), // Simplified - would need edge info
+                        relation,
                         weight: path.weight,
                     });
                 }
@@ -380,7 +398,7 @@ pub fn cypher_query(
             ))
         }
     };
-    let mut engine = handle.write().unwrap();
+    let mut engine = handle.write();
 
     // Create the Cypher handler
     let handler = DefaultCypherHandler::new();

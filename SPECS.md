@@ -85,4 +85,38 @@ pub trait LatticeTransport {
     where
         F: Fn(LatticeRequest) -> impl Future<Output = LatticeResponse> + Send + Sync + 'static;
 }
-Required Implementations:AxumTransport: Standard HTTP server for Linux/macOS/Windows.ServiceWorkerTransport: Intercepts browser fetch events targeting a virtual domain.5. API Specification5.1 Qdrant Compatibility (V1)LatticeDB acts as a drop-in replacement. It must serialize/deserialize the standard Qdrant JSON schemas.Priority Endpoints:PUT /collections/{name} - Create CollectionGET /collections/{name} - Get InfoPUT /collections/{name}/points - Upsert PointsPOST /collections/{name}/points/search - Vector SearchPOST /collections/{name}/points/scroll - Pagination/Listing5.2 Graph Extensions (Custom)These endpoints extend Qdrant functionality while remaining JSON-compatible.POST /collections/{name}/graph/traverseBody: { "start_point": 123, "max_depth": 2, "relations": ["acted_in"] }POST /collections/{name}/points/{id}/connectBody: { "target": 456, "relation": "is_similar_to", "weight": 0.9 }6. Implementation Roadmap (TDD)Phase 1: The Core Engine (In-Memory)Goal: A fully functional Vector+Graph engine running in RAM.Scaffolding: Initialize cargo workspace (core, storage, server).Storage TDD: Implement MemStorage. Test reading/writing pages.Data TDD: Define Point with rkyv. Test serialization round-trips.Index Logic: Implement HNSW (Hierarchical Navigable Small World) logic using MemStorage.Search Test: Insert 10k random vectors, perform search, verify Recall > 0.95.Phase 2: The Browser Persistence (OPFS)Goal: Persistent storage in the browser.WASM Setup: Configure wasm-bindgen and web-sys.OPFS Implementation: Implement OpfsStorage using FileSystemSyncAccessHandle.Note: Must run in a Dedicated Worker to use Sync Handles.Persistence Test:Write data in Session A.Reload Page (Clear RAM).Read data in Session B. Verify integrity.Phase 3: The API & TransportGoal: Speak HTTP and Qdrant JSON.Router Logic: Map Qdrant JSON -> Lattice Core Commands.Axum Impl: Build the native HTTP server wrapper.Service Worker Impl: Build the browser fetch interceptor.Integration Test: Run the official Qdrant Python Client against LatticeDB (Native and WASM).Phase 4: OptimizationGoal: Ultra-high performance.SIMD: Replace standard math with std::simd intrinsics.Quantization: Implement Int8 scalar quantization for 4x memory reduction.Benchmarking: Measure req/sec and latency vs Qdrant.
+Required Implementations:AxumTransport: Standard HTTP server for Linux/macOS/Windows.ServiceWorkerTransport: Intercepts browser fetch events targeting a virtual domain.5. API Specification5.1 Qdrant Compatibility (V1)LatticeDB acts as a drop-in replacement. It must serialize/deserialize the standard Qdrant JSON schemas.Priority Endpoints:PUT /collections/{name} - Create CollectionGET /collections/{name} - Get InfoPUT /collections/{name}/points - Upsert PointsPOST /collections/{name}/points/search - Vector SearchPOST /collections/{name}/points/scroll - Pagination/Listing5.2 Graph Extensions (Custom)These endpoints extend Qdrant functionality while remaining JSON-compatible.POST /collections/{name}/graph/traverseBody: { "start_point": 123, "max_depth": 2, "relations": ["acted_in"] }POST /collections/{name}/points/{id}/connectBody: { "target": 456, "relation": "is_similar_to", "weight": 0.9 }6. Implementation Roadmap (TDD)
+
+Phase 1: The Core Engine (In-Memory) ✅ COMPLETE
+Goal: A fully functional Vector+Graph engine running in RAM.
+- ✅ Scaffolding: Cargo workspace (core, server, bench, wasm)
+- ✅ Storage TDD: MemStorage implemented and tested
+- ✅ Data TDD: Point with rkyv serialization, zero-copy deserialization
+- ✅ Index Logic: HNSW index with async background indexing (native)
+- ✅ Graph Support: Edges, traversal, and Cypher query language
+- ✅ Search Test: Recall benchmarks > 0.95 verified
+
+Phase 2: The Browser Persistence (OPFS) 🟡 PARTIAL
+Goal: Persistent storage in the browser.
+- ✅ WASM Setup: wasm-bindgen, wasm-pack builds working
+- ✅ WASM Core: In-memory CollectionEngine compiles to WASM
+- 🔲 OPFS Implementation: OpfsStorage (planned)
+- 🔲 Persistence Test: Cross-session data verification (planned)
+
+Phase 3: The API & Transport 🟡 PARTIAL
+Goal: Speak HTTP and Qdrant JSON.
+- ✅ Router Logic: Full Qdrant-compatible REST API
+- ✅ Axum Server: Native HTTP server with rate limiting, TLS, auth
+- ✅ Graph Extensions: /graph/edges, /graph/neighbors, /graph/query
+- ✅ Cypher Support: Subset of openCypher via /graph/query
+- 🔲 Service Worker: Transport layer (planned)
+- ✅ Integration: Qdrant-compatible client tested
+
+Phase 4: Optimization ✅ MOSTLY COMPLETE
+Goal: Ultra-high performance.
+- ✅ SIMD: Optional `simd` feature for accelerated distance calculations
+- ✅ Parallel Sort: Rayon-based parallel sorting with adaptive thresholds
+- ✅ Async Indexing: Background HNSW updates for fast inserts
+- ✅ Zero-Copy: rkyv throughout, Arc<Point> caching in executor
+- ✅ Batch Operations: search_batch, batch_extract_properties
+- 🔲 Quantization: Int8 scalar quantization (planned)

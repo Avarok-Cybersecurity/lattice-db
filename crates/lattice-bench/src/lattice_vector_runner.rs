@@ -85,8 +85,9 @@ impl LatticeVectorRunner {
 
     /// Flush pending points to HNSW index
     /// Call this after load_data to ensure fair benchmark comparison
-    pub fn flush_pending(&self) {
-        self.engine.flush_pending();
+    pub fn flush_pending(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.engine.flush_pending()?;
+        Ok(())
     }
 
     // === Benchmark methods ===

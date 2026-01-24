@@ -714,7 +714,13 @@ impl CypherParser {
                         "*" => BinaryOp::Mul,
                         "/" => BinaryOp::Div,
                         "%" => BinaryOp::Mod,
-                        _ => unreachable!(),
+                        // Guard against impossible parse state - should never occur
+                        other => {
+                            return Err(CypherError::internal(format!(
+                                "Unexpected operator in multiplication: {}",
+                                other
+                            )))
+                        }
                     };
                     result = Expr::binary(result, op, right);
                     i += 2;

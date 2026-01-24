@@ -240,7 +240,7 @@ The only embedded database that combines:
 
 - 🔌 **Qdrant REST API** - Drop-in replacement, use existing SDKs
 - 📊 **Cypher Query Language** - Neo4j-compatible graph queries
-- 📴 **Service Worker** - Offline-first browser operation
+- 📴 **Service Worker** - Offline-first browser operation *(coming soon)*
 
 ---
 
@@ -361,7 +361,6 @@ results = client.query_points(
 ### WASM (Browser)
 
 ```javascript
-// Coming soon: npm package
 import { LatticeDB } from 'lattice-db';
 
 const db = await LatticeDB.init();

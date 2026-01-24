@@ -5,7 +5,7 @@ LatticeDB provides a TypeScript/JavaScript client for browser and Node.js enviro
 ## Installation
 
 ```bash
-npm install @lattice-db/client
+npm install lattice-db
 ```
 
 ## Quick Start
@@ -13,31 +13,32 @@ npm install @lattice-db/client
 ### Browser (WASM)
 
 ```typescript
-import init, { LatticeDB } from '@lattice-db/client';
+import { LatticeDB } from 'lattice-db';
 
 async function main() {
-  // Initialize WASM module
-  await init();
+  // Initialize WASM module and get database instance
+  const db = await LatticeDB.init();
 
-  // Create database instance
-  const db = await LatticeDB.create({
-    name: 'my_collection',
-    vectorSize: 128,
-    distance: 'cosine'
+  // Create a collection
+  db.createCollection('my_collection', {
+    vectors: { size: 128, distance: 'Cosine' }
   });
 
-  // Add a point
-  await db.upsert({
-    id: 1,
-    vector: new Float32Array(128).fill(0.1),
-    payload: { title: 'Hello World' }
-  });
+  // Add points
+  db.upsert('my_collection', [
+    {
+      id: 1,
+      vector: new Float32Array(128).fill(0.1),
+      payload: { title: 'Hello World' }
+    }
+  ]);
 
   // Search
-  const results = await db.search({
-    vector: new Float32Array(128).fill(0.1),
-    limit: 10
-  });
+  const results = db.search(
+    'my_collection',
+    new Float32Array(128).fill(0.1),
+    10
+  );
 
   console.log('Results:', results);
 }
@@ -48,7 +49,7 @@ main();
 ### Node.js (REST Client)
 
 ```typescript
-import { LatticeClient } from '@lattice-db/client';
+import { LatticeClient } from 'lattice-db';
 
 const client = new LatticeClient('http://localhost:6333');
 
@@ -76,59 +77,61 @@ const results = await client.search('my_collection', {
 ### Initialization
 
 ```typescript
-import init, { LatticeDB } from '@lattice-db/client';
+import { LatticeDB } from 'lattice-db';
 
-// Initialize WASM (required once)
-await init();
+// Initialize WASM and get database instance
+const db = await LatticeDB.init();
 
 // Or with custom WASM path
-await init('/path/to/lattice_db.wasm');
+const db = await LatticeDB.init('/path/to/lattice.wasm');
 ```
 
-### Creating a Database
+### Creating a Collection
 
 ```typescript
-const db = await LatticeDB.create({
-  name: 'collection_name',      // Required
-  vectorSize: 128,              // Required
-  distance: 'cosine',           // 'cosine' | 'euclidean' | 'dot'
-  storage: 'memory',            // 'memory' | 'opfs' | 'indexeddb'
-  hnsw: {                       // Optional HNSW config
-    m: 16,
-    m0: 32,
-    efConstruction: 200
-  }
+// Create a collection with default HNSW config
+db.createCollection('my_collection', {
+  vectors: { size: 128, distance: 'Cosine' }
+});
+
+// Create with custom HNSW config
+db.createCollection('my_collection', {
+  vectors: { size: 128, distance: 'Cosine' },
+  hnsw_config: { m: 16, ef_construct: 200 }
 });
 ```
 
 ### Upsert Points
 
 ```typescript
-// Single point
-await db.upsert({
-  id: 1,
-  vector: new Float32Array([0.1, 0.2, ...]),
-  payload: {
-    title: 'My Document',
-    tags: ['rust', 'database']
+// Batch upsert (always array)
+db.upsert('my_collection', [
+  {
+    id: 1,
+    vector: new Float32Array([0.1, 0.2, ...]),
+    payload: { title: 'My Document', tags: ['rust', 'database'] }
+  },
+  {
+    id: 2,
+    vector: new Float32Array([0.3, 0.4, ...]),
+    payload: { title: 'Another Doc' }
   }
-});
-
-// Batch upsert
-await db.upsertBatch([
-  { id: 1, vector: vec1, payload: { title: 'Doc 1' } },
-  { id: 2, vector: vec2, payload: { title: 'Doc 2' } },
-  { id: 3, vector: vec3, payload: { title: 'Doc 3' } }
 ]);
 ```
 
 ### Search
 
 ```typescript
-const results = await db.search({
-  vector: queryVector,
-  limit: 10,
-  ef: 100,  // Optional: search quality
+// Basic search
+const results = db.search(
+  'my_collection',
+  queryVector,  // Float32Array
+  10            // limit
+);
+
+// Search with options
+const results = db.search('my_collection', queryVector, 10, {
+  ef: 100,           // Search quality parameter
   withPayload: true,
   withVector: false
 });
@@ -143,42 +146,33 @@ for (const result of results) {
 ### Retrieve Points
 
 ```typescript
-// Single point
-const point = await db.get(42);
-
-// Multiple points
-const points = await db.getMany([1, 2, 3]);
-
-// Check existence
-const exists = await db.has(42);
+// Get multiple points by ID
+const points = db.getPoints('my_collection',
+  BigUint64Array.from([1n, 2n, 3n]),
+  true,  // withPayload
+  false  // withVector
+);
 ```
 
 ### Delete Points
 
 ```typescript
-// Single point
-await db.delete(42);
-
-// Multiple points
-await db.deleteMany([1, 2, 3]);
+// Delete by IDs
+db.deletePoints('my_collection', BigUint64Array.from([1n, 2n, 3n]));
 ```
 
 ### Graph Operations
 
 ```typescript
 // Add edge
-await db.addEdge({
-  sourceId: 1,
-  targetId: 2,
-  weight: 0.9,
-  relation: 'REFERENCES'
-});
+db.addEdge('my_collection', 1n, 2n, 'REFERENCES', 0.9);
 
-// Get neighbors
-const neighbors = await db.getNeighbors(1);
+// Traverse graph
+const result = db.traverse('my_collection', 1n, 2, ['REFERENCES']);
 
 // Cypher query
-const result = await db.query(
+const result = db.query(
+  'my_collection',
   'MATCH (n:Person) WHERE n.age > $minAge RETURN n.name',
   { minAge: 25 }
 );
@@ -188,13 +182,18 @@ for (const row of result.rows) {
 }
 ```
 
-### Memory Statistics
+### Collection Management
 
 ```typescript
-const stats = db.memoryStats();
-console.log(`Vectors: ${stats.vectorBytes} bytes`);
-console.log(`Index: ${stats.indexBytes} bytes`);
-console.log(`Total: ${stats.totalBytes} bytes`);
+// List all collections
+const collections = db.listCollections();
+
+// Get collection info
+const info = db.getCollection('my_collection');
+console.log(`Points: ${info.vectors_count}`);
+
+// Delete collection
+db.deleteCollection('my_collection');
 ```
 
 ## REST Client
@@ -202,7 +201,7 @@ console.log(`Total: ${stats.totalBytes} bytes`);
 ### Creating a Client
 
 ```typescript
-import { LatticeClient } from '@lattice-db/client';
+import { LatticeClient } from 'lattice-db';
 
 const client = new LatticeClient('http://localhost:6333', {
   timeout: 30000,  // Request timeout in ms
@@ -310,9 +309,9 @@ const result = await client.cypherQuery('docs', {
 
 ```typescript
 import { useEffect, useState } from 'react';
-import init, { LatticeDB } from '@lattice-db/client';
+import { LatticeDB } from 'lattice-db';
 
-function useLatticeDB(config: LatticeConfig) {
+function useLatticeDB() {
   const [db, setDb] = useState<LatticeDB | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -320,8 +319,7 @@ function useLatticeDB(config: LatticeConfig) {
   useEffect(() => {
     async function initialize() {
       try {
-        await init();
-        const instance = await LatticeDB.create(config);
+        const instance = await LatticeDB.init();
         setDb(instance);
       } catch (e) {
         setError(e as Error);
@@ -340,19 +338,24 @@ function useLatticeDB(config: LatticeConfig) {
 
 ```tsx
 function SearchComponent() {
-  const { db, loading } = useLatticeDB({
-    name: 'docs',
-    vectorSize: 128,
-    distance: 'cosine'
-  });
-  const [results, setResults] = useState([]);
+  const { db, loading } = useLatticeDB();
+  const [results, setResults] = useState<SearchResult[]>([]);
 
-  const handleSearch = async (queryVector: Float32Array) => {
+  // Create collection on first load
+  useEffect(() => {
     if (!db) return;
-    const searchResults = await db.search({
-      vector: queryVector,
-      limit: 10
-    });
+    try {
+      db.createCollection('docs', {
+        vectors: { size: 128, distance: 'Cosine' }
+      });
+    } catch {
+      // Collection may already exist
+    }
+  }, [db]);
+
+  const handleSearch = (queryVector: Float32Array) => {
+    if (!db) return;
+    const searchResults = db.search('docs', Array.from(queryVector), 10);
     setResults(searchResults);
   };
 
@@ -372,26 +375,27 @@ function SearchComponent() {
 ```vue
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import init, { LatticeDB } from '@lattice-db/client';
+import { LatticeDB } from 'lattice-db';
 
 const db = ref<LatticeDB | null>(null);
-const results = ref([]);
+const results = ref<SearchResult[]>([]);
 
 onMounted(async () => {
-  await init();
-  db.value = await LatticeDB.create({
-    name: 'docs',
-    vectorSize: 128,
-    distance: 'cosine'
-  });
+  db.value = await LatticeDB.init();
+
+  // Create collection (will throw if already exists)
+  try {
+    db.value.createCollection('docs', {
+      vectors: { size: 128, distance: 'Cosine' }
+    });
+  } catch {
+    // Collection may already exist
+  }
 });
 
-async function search(vector: Float32Array) {
+function search(vector: Float32Array) {
   if (!db.value) return;
-  results.value = await db.value.search({
-    vector,
-    limit: 10
-  });
+  results.value = db.value.search('docs', Array.from(vector), 10);
 }
 </script>
 
@@ -404,42 +408,47 @@ async function search(vector: Float32Array) {
 ## TypeScript Types
 
 ```typescript
+// Distance metrics
+type DistanceMetric = 'Cosine' | 'Euclid' | 'Dot';
+
+// Collection configuration
+interface CollectionConfig {
+  vectors: { size: number; distance: DistanceMetric };
+  hnsw_config?: { m: number; m0?: number; ef_construct: number };
+}
+
+// Point to upsert
 interface Point {
   id: number;
-  vector: Float32Array | number[];
-  payload?: Record<string, any>;
+  vector: number[];
+  payload?: Record<string, unknown>;
 }
 
-interface SearchParams {
-  vector: Float32Array | number[];
-  limit: number;
-  ef?: number;
-  filter?: Filter;
-  withPayload?: boolean;
-  withVector?: boolean;
+// Search options
+interface SearchOptions {
+  with_payload?: boolean;
+  with_vector?: boolean;
+  score_threshold?: number;
 }
 
+// Search result
 interface SearchResult {
   id: number;
   score: number;
-  payload?: Record<string, any>;
-  vector?: Float32Array;
+  payload?: Record<string, unknown>;
+  vector?: number[];
 }
 
-interface Edge {
-  target: number;
-  weight: number;
-  relation: string;
+// Graph traversal result
+interface TraversalResult {
+  nodes: { id: number; depth: number; payload?: Record<string, unknown> }[];
+  edges: { from: number; to: number; relation: string; weight: number }[];
 }
 
+// Cypher query result
 interface CypherResult {
   columns: string[];
-  rows: Record<string, any>[];
-  stats: {
-    nodesScanned: number;
-    rowsReturned: number;
-    executionTimeMs: number;
-  };
+  rows: unknown[][];
 }
 ```
 
@@ -447,18 +456,15 @@ interface CypherResult {
 
 ```typescript
 try {
-  await db.search({ vector, limit: 10 });
+  db.search('my_collection', queryVector, 10);
 } catch (error) {
-  if (error instanceof LatticeError) {
-    switch (error.code) {
-      case 'NOT_FOUND':
-        console.log('Collection not found');
-        break;
-      case 'INVALID_VECTOR':
-        console.log('Vector dimension mismatch');
-        break;
-      default:
-        console.log('Error:', error.message);
+  if (error instanceof Error) {
+    if (error.message.includes('not found')) {
+      console.log('Collection not found');
+    } else if (error.message.includes('dimension')) {
+      console.log('Vector dimension mismatch');
+    } else {
+      console.log('Error:', error.message);
     }
   }
 }
@@ -466,45 +472,43 @@ try {
 
 ## Performance Tips
 
-### Use TypedArrays
+### Batch Upserts
 
 ```typescript
-// Good: Zero-copy transfer to WASM
-const vector = new Float32Array([0.1, 0.2, 0.3]);
+// Good: Single call for multiple points
+db.upsert('my_collection', [
+  { id: 1, vector: [...], payload: { title: 'Doc 1' } },
+  { id: 2, vector: [...], payload: { title: 'Doc 2' } },
+  { id: 3, vector: [...], payload: { title: 'Doc 3' } }
+]);
 
-// Bad: Requires conversion
-const vector = [0.1, 0.2, 0.3];
-```
-
-### Batch Operations
-
-```typescript
-// Good: Single WASM call
-await db.upsertBatch(points);
-
-// Bad: Multiple WASM calls
+// Bad: Multiple calls
 for (const point of points) {
-  await db.upsert(point);
+  db.upsert('my_collection', [point]);
 }
 ```
 
 ### Web Worker
 
+Move LatticeDB to a Web Worker to keep the main thread responsive:
+
 ```typescript
 // worker.ts
-import init, { LatticeDB } from '@lattice-db/client';
+import { LatticeDB } from 'lattice-db';
 
 let db: LatticeDB;
 
 self.onmessage = async ({ data }) => {
   if (data.type === 'init') {
-    await init();
-    db = await LatticeDB.create(data.config);
+    db = await LatticeDB.init();
+    db.createCollection('docs', {
+      vectors: { size: data.vectorSize, distance: 'Cosine' }
+    });
     self.postMessage({ type: 'ready' });
   }
 
   if (data.type === 'search') {
-    const results = await db.search(data.params);
+    const results = db.search('docs', data.vector, data.limit);
     self.postMessage({ type: 'results', results });
   }
 };

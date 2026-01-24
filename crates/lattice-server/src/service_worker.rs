@@ -59,18 +59,26 @@ impl LatticeTransport for ServiceWorkerTransport {
 
 // Placeholder for non-wasm builds
 #[cfg(not(target_arch = "wasm32"))]
+#[deprecated(
+    since = "0.1.0",
+    note = "ServiceWorkerTransport requires WASM target (--target wasm32-unknown-unknown)"
+)]
 pub struct ServiceWorkerTransport;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(deprecated)]
 impl ServiceWorkerTransport {
+    /// This type is only usable in WASM builds. Calling this on native will not compile.
+    #[deprecated(since = "0.1.0", note = "ServiceWorkerTransport requires WASM target")]
     pub fn new() -> Self {
-        panic!("ServiceWorkerTransport is only available in WASM builds")
+        unimplemented!("ServiceWorkerTransport requires target_arch = wasm32")
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(deprecated)]
 impl Default for ServiceWorkerTransport {
     fn default() -> Self {
-        Self::new()
+        unimplemented!("ServiceWorkerTransport requires target_arch = wasm32")
     }
 }

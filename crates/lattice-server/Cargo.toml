@@ -18,6 +18,9 @@ serde_json.workspace = true
 simd-json = { workspace = true, optional = true }
 async-trait.workspace = true
 thiserror.workspace = true
+parking_lot = "0.12"
+tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
 # Native HTTP server (Hyper - fast, or Axum - convenient)
 hyper = { workspace = true, optional = true }
@@ -25,6 +28,11 @@ hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "signal", "rt-multi-thread", "macros"], optional = true }
+
+# TLS support (optional)
+tokio-rustls = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
 
 # OpenAPI documentation (optional)
 utoipa = { workspace = true, optional = true }
@@ -63,12 +71,13 @@ getrandom.workspace = true
 
 [features]
 default = ["native"]
-native = ["hyper", "hyper-util", "http-body-util", "tokio", "simd-json", "lattice-storage/native", "lattice-core/simd"]
+native = ["hyper", "hyper-util", "http-body-util", "tokio", "simd-json", "lattice-storage/native", "lattice-core/simd", "tracing-subscriber"]
 axum-transport = ["native", "axum"]
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "console_error_panic_hook", "wasmtimer", "lattice-storage/wasm"]
 openapi = ["native", "utoipa", "utoipa-swagger-ui"]
 simd = ["lattice-core/simd"]
 mmap = ["lattice-core/mmap"]
+tls = ["native", "tokio-rustls", "rustls", "rustls-pemfile"]
 
 [[bin]]
 name = "lattice-server"

@@ -36,12 +36,17 @@
 #[cfg(all(target_arch = "wasm32", test))]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+pub mod auth;
 pub mod dto;
 pub mod handlers;
+pub mod rate_limit;
 pub mod router;
 
 #[cfg(feature = "native")]
 pub mod hyper_transport;
+
+#[cfg(feature = "tls")]
+pub mod tls;
 
 #[cfg(feature = "axum-transport")]
 pub mod axum_transport;

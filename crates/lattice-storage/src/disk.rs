@@ -31,15 +31,21 @@ impl DiskStorage {
 #[async_trait]
 impl LatticeStorage for DiskStorage {
     async fn get_meta(&self, _key: &str) -> StorageResult<Option<Vec<u8>>> {
-        todo!("DiskStorage::get_meta - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::get_meta",
+        })
     }
 
     async fn set_meta(&self, _key: &str, _value: &[u8]) -> StorageResult<()> {
-        todo!("DiskStorage::set_meta - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::set_meta",
+        })
     }
 
     async fn delete_meta(&self, _key: &str) -> StorageResult<()> {
-        todo!("DiskStorage::delete_meta - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::delete_meta",
+        })
     }
 
     async fn read_page(&self, page_id: u64) -> StorageResult<Page> {
@@ -47,18 +53,26 @@ impl LatticeStorage for DiskStorage {
     }
 
     async fn write_page(&self, _page_id: u64, _data: &[u8]) -> StorageResult<()> {
-        todo!("DiskStorage::write_page - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::write_page",
+        })
     }
 
     async fn page_exists(&self, _page_id: u64) -> StorageResult<bool> {
-        todo!("DiskStorage::page_exists - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::page_exists",
+        })
     }
 
     async fn delete_page(&self, _page_id: u64) -> StorageResult<()> {
-        todo!("DiskStorage::delete_page - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::delete_page",
+        })
     }
 
     async fn sync(&self) -> StorageResult<()> {
-        todo!("DiskStorage::sync - implement in Phase 2")
+        Err(StorageError::NotImplemented {
+            feature: "DiskStorage::sync",
+        })
     }
 }

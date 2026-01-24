@@ -48,7 +48,7 @@ pub mod types;
 
 // Re-export commonly used types
 pub use engine::collection::{CollectionEngine, EdgeInfo, TraversalResult, UpsertResult};
-pub use error::{LatticeError, LatticeResult};
+pub use error::{ConfigError, IndexError, LatticeError, LatticeResult};
 pub use index::hnsw::HnswIndex;
 pub use index::quantization::QuantizedVector;
 pub use storage::{LatticeStorage, Page, StorageError, StorageResult};
@@ -57,3 +57,8 @@ pub use types::collection::{CollectionConfig, Distance, HnswConfig, VectorConfig
 pub use types::point::{Edge, Point, PointId, Vector};
 pub use types::query::{ScrollQuery, ScrollResult, SearchQuery, SearchResult};
 pub use types::value::CypherValue;
+
+// Sync utilities
+pub use sync::{cmp_f32, cmp_f32_reverse, SyncCell};
+#[cfg(not(target_arch = "wasm32"))]
+pub use sync::{LockExt, MutexExt};
