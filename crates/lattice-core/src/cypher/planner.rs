@@ -319,9 +319,13 @@ impl QueryPlanner {
                 .clone()
                 .unwrap_or_else(|| String::from(format!("_anon_{}", i)));
 
-            // Determine hop range
+            // Determine hop range (cap at 10 for DoS protection)
+            const MAX_HOP_LIMIT: u32 = 10;
             let (min_hops, max_hops) = if let Some(len) = &rel.length {
-                (len.min.unwrap_or(1), len.max.unwrap_or(u32::MAX))
+                (
+                    len.min.unwrap_or(1).min(MAX_HOP_LIMIT),
+                    len.max.unwrap_or(1).min(MAX_HOP_LIMIT),
+                )
             } else {
                 (1, 1)
             };

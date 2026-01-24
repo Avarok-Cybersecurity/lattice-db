@@ -256,7 +256,10 @@ impl CypherParser {
         })
     }
 
-    /// Parse path length
+    /// Maximum allowed hop count for variable-length paths (DoS protection)
+    const MAX_HOP_LIMIT: u32 = 10;
+
+    /// Parse path length with bounds validation
     fn parse_path_length(&self, pair: Pair<Rule>) -> CypherResult<PathLength> {
         let mut min = None;
         let mut max = None;
@@ -267,13 +270,29 @@ impl CypherParser {
                 if range_str.contains("..") {
                     let parts: Vec<&str> = range_str.split("..").collect();
                     if !parts[0].is_empty() {
-                        min = Some(parts[0].parse().unwrap_or(1));
+                        min = Some(
+                            parts[0]
+                                .parse::<u32>()
+                                .map_err(|_| CypherError::syntax(0, 0, "Invalid min hop count"))?
+                                .min(Self::MAX_HOP_LIMIT),
+                        );
                     }
                     if parts.len() > 1 && !parts[1].is_empty() {
-                        max = Some(parts[1].parse().unwrap_or(u32::MAX));
+                        max = Some(
+                            parts[1]
+                                .parse::<u32>()
+                                .map_err(|_| CypherError::syntax(0, 0, "Invalid max hop count"))?
+                                .min(Self::MAX_HOP_LIMIT),
+                        );
+                    } else {
+                        // Unbounded upper range (e.g., *2..) defaults to MAX_HOP_LIMIT
+                        max = Some(Self::MAX_HOP_LIMIT);
                     }
                 } else {
-                    let n: u32 = range_str.parse().unwrap_or(1);
+                    let n: u32 = range_str
+                        .parse::<u32>()
+                        .map_err(|_| CypherError::syntax(0, 0, "Invalid hop count"))?
+                        .min(Self::MAX_HOP_LIMIT);
                     min = Some(n);
                     max = Some(n);
                 }

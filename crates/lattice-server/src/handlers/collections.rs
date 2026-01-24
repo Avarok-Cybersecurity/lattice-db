@@ -139,6 +139,18 @@ pub fn create_collection(
         }
     };
 
+    // Validate vector dimension bounds (DoS protection: prevent memory exhaustion)
+    const MAX_VECTOR_DIM: usize = 65536;
+    if request.vectors.size == 0 {
+        return LatticeResponse::bad_request("Vector dimension must be at least 1");
+    }
+    if request.vectors.size > MAX_VECTOR_DIM {
+        return LatticeResponse::bad_request(&format!(
+            "Vector dimension {} exceeds maximum of {}",
+            request.vectors.size, MAX_VECTOR_DIM
+        ));
+    }
+
     // Create collection config
     let config = CollectionConfig::new(
         name,

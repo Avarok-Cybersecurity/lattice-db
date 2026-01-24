@@ -57,23 +57,38 @@ pub fn upsert_points(
     };
     let mut engine = handle.write();
 
-    // Convert DTO points to core Points
-    let points: Vec<Point> = request
-        .points
-        .into_iter()
-        .map(|p| {
-            let mut point = Point::new_vector(p.id, p.vector);
-            if let Some(payload) = p.payload {
-                for (key, value) in payload {
-                    // Serialize JSON value to bytes
-                    if let Ok(bytes) = serde_json::to_vec(&value) {
-                        point = point.with_field(&key, bytes);
+    // Validate vector dimensions match collection (crash/DoS protection)
+    let expected_dim = engine.config().vectors.size;
+    for (i, p) in request.points.iter().enumerate() {
+        if p.vector.len() != expected_dim {
+            return LatticeResponse::bad_request(&format!(
+                "Point {} vector dimension mismatch: expected {}, got {}",
+                i, expected_dim, p.vector.len()
+            ));
+        }
+    }
+
+    // Convert DTO points to core Points with payload size validation
+    const MAX_PAYLOAD_SIZE: usize = 1_000_000; // 1MB per field
+    let mut points: Vec<Point> = Vec::with_capacity(request.points.len());
+    for p in request.points {
+        let mut point = Point::new_vector(p.id, p.vector);
+        if let Some(payload) = p.payload {
+            for (key, value) in payload {
+                // Serialize JSON value to bytes
+                if let Ok(bytes) = serde_json::to_vec(&value) {
+                    if bytes.len() > MAX_PAYLOAD_SIZE {
+                        return LatticeResponse::bad_request(&format!(
+                            "Payload field '{}' exceeds maximum size of {} bytes",
+                            key, MAX_PAYLOAD_SIZE
+                        ));
                     }
+                    point = point.with_field(&key, bytes);
                 }
             }
-            point
-        })
-        .collect();
+        }
+        points.push(point);
+    }
 
     // Upsert into engine
     let point_count = points.len();

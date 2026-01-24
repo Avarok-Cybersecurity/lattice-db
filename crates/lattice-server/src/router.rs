@@ -149,7 +149,7 @@ pub fn new_app_state() -> AppState {
 /// - `POST /collections/{name}/graph/traverse` - Traverse graph
 /// - `POST /collections/{name}/graph/query` - Execute Cypher query
 #[instrument(skip(state, request), fields(method = %request.method, path = %request.path))]
-pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
+pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeResponse {
     // Method is already uppercase from transport layer
     let method = &request.method;
     let path = request.path.trim_end_matches('/');
@@ -170,7 +170,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // PUT /collections/{name} - Create collection
         ("PUT", ["collections", name]) => {
-            match parse_body::<CreateCollectionRequest>(&request.body) {
+            match parse_body::<CreateCollectionRequest>(&mut request.body) {
                 Ok(req) => collections::create_collection(&state, name, req),
                 Err(e) => e,
             }
@@ -186,7 +186,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // PUT /collections/{name}/points - Upsert points
         ("PUT", ["collections", name, "points"]) => {
-            match parse_body::<UpsertPointsRequest>(&request.body) {
+            match parse_body::<UpsertPointsRequest>(&mut request.body) {
                 Ok(req) => points::upsert_points(&state, name, req),
                 Err(e) => e,
             }
@@ -194,7 +194,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points/search - Search (legacy)
         ("POST", ["collections", name, "points", "search"]) => {
-            match parse_body::<SearchRequest>(&request.body) {
+            match parse_body::<SearchRequest>(&mut request.body) {
                 Ok(req) => search::search_points(&state, name, req),
                 Err(e) => e,
             }
@@ -202,7 +202,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points/search/batch - Batch search
         ("POST", ["collections", name, "points", "search", "batch"]) => {
-            match parse_body::<BatchSearchRequest>(&request.body) {
+            match parse_body::<BatchSearchRequest>(&mut request.body) {
                 Ok(req) => search::search_batch(&state, name, req),
                 Err(e) => e,
             }
@@ -210,7 +210,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points/query - Query (Qdrant v1.16+)
         ("POST", ["collections", name, "points", "query"]) => {
-            match parse_body::<QueryRequest>(&request.body) {
+            match parse_body::<QueryRequest>(&mut request.body) {
                 Ok(req) => search::query_points(&state, name, req.into()),
                 Err(e) => e,
             }
@@ -218,7 +218,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points/scroll - Scroll
         ("POST", ["collections", name, "points", "scroll"]) => {
-            match parse_body::<ScrollRequest>(&request.body) {
+            match parse_body::<ScrollRequest>(&mut request.body) {
                 Ok(req) => search::scroll_points(&state, name, req),
                 Err(e) => e,
             }
@@ -226,7 +226,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points - Get points by IDs
         ("POST", ["collections", name, "points"]) => {
-            match parse_body::<GetPointsRequest>(&request.body) {
+            match parse_body::<GetPointsRequest>(&mut request.body) {
                 Ok(req) => points::get_points(&state, name, req),
                 Err(e) => e,
             }
@@ -234,7 +234,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/points/delete - Delete points
         ("POST", ["collections", name, "points", "delete"]) => {
-            match parse_body::<DeletePointsRequest>(&request.body) {
+            match parse_body::<DeletePointsRequest>(&mut request.body) {
                 Ok(req) => points::delete_points(&state, name, req),
                 Err(e) => e,
             }
@@ -244,7 +244,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/graph/edges - Add edge
         ("POST", ["collections", name, "graph", "edges"]) => {
-            match parse_body::<AddEdgeRequest>(&request.body) {
+            match parse_body::<AddEdgeRequest>(&mut request.body) {
                 Ok(req) => points::add_edge(&state, name, req),
                 Err(e) => e,
             }
@@ -252,7 +252,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/graph/traverse - Traverse graph
         ("POST", ["collections", name, "graph", "traverse"]) => {
-            match parse_body::<TraverseRequest>(&request.body) {
+            match parse_body::<TraverseRequest>(&mut request.body) {
                 Ok(req) => search::traverse_graph(&state, name, req),
                 Err(e) => e,
             }
@@ -260,7 +260,7 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // POST /collections/{name}/graph/query - Execute Cypher query
         ("POST", ["collections", name, "graph", "query"]) => {
-            match parse_body::<CypherQueryRequest>(&request.body) {
+            match parse_body::<CypherQueryRequest>(&mut request.body) {
                 Ok(req) => search::cypher_query(&state, name, req),
                 Err(e) => e,
             }
@@ -284,16 +284,17 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 }
 
 /// Parse JSON body into a DTO using simd-json when available
+///
+/// Takes a mutable slice to allow simd-json's in-place parsing optimization.
 #[cfg(feature = "simd-json")]
-fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, LatticeResponse> {
-    // simd-json requires mutable input for in-place parsing
-    let mut buf = body.to_vec();
-    simd_json::from_slice(&mut buf)
+fn parse_body<T: serde::de::DeserializeOwned>(body: &mut [u8]) -> Result<T, LatticeResponse> {
+    // simd-json does in-place parsing (no copy needed)
+    simd_json::from_slice(body)
         .map_err(|e| LatticeResponse::bad_request(&format!("Invalid JSON: {}", e)))
 }
 
 #[cfg(not(feature = "simd-json"))]
-fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, LatticeResponse> {
+fn parse_body<T: serde::de::DeserializeOwned>(body: &mut [u8]) -> Result<T, LatticeResponse> {
     serde_json::from_slice(body)
         .map_err(|e| LatticeResponse::bad_request(&format!("Invalid JSON: {}", e)))
 }

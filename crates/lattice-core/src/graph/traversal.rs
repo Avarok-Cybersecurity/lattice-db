@@ -6,6 +6,11 @@ use crate::types::point::PointId;
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
+/// Maximum queue/stack size for traversal iterators (DoS protection)
+///
+/// Prevents memory exhaustion in densely connected graphs.
+const MAX_QUEUE_SIZE: usize = 100_000;
+
 /// A path through the graph
 #[derive(Debug, Clone)]
 pub struct GraphPath {
@@ -93,10 +98,13 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, depth)) = self.queue.pop_front() {
-            // Expand neighbors if within depth limit
-            if depth < self.max_depth {
+            // Expand neighbors if within depth limit and queue not full
+            if depth < self.max_depth && self.queue.len() < MAX_QUEUE_SIZE {
                 let neighbors = (self.get_neighbors)(node);
                 for neighbor in neighbors {
+                    if self.queue.len() >= MAX_QUEUE_SIZE {
+                        break; // Stop expanding to prevent memory exhaustion
+                    }
                     if self.visited.insert(neighbor) {
                         self.queue.push_back((neighbor, depth + 1));
                     }
@@ -148,10 +156,13 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, depth)) = self.stack.pop() {
-            // Expand neighbors if within depth limit
-            if depth < self.max_depth {
+            // Expand neighbors if within depth limit and stack not full
+            if depth < self.max_depth && self.stack.len() < MAX_QUEUE_SIZE {
                 let neighbors = (self.get_neighbors)(node);
                 for neighbor in neighbors.into_iter().rev() {
+                    if self.stack.len() >= MAX_QUEUE_SIZE {
+                        break; // Stop expanding to prevent memory exhaustion
+                    }
                     // Reverse to maintain natural order
                     if self.visited.insert(neighbor) {
                         self.stack.push((neighbor, depth + 1));

@@ -56,8 +56,22 @@ pub fn search_points(
     };
     let engine = handle.read();
 
+    // Validate query vector dimension (crash/DoS protection)
+    let expected_dim = engine.config().vectors.size;
+    if request.vector.len() != expected_dim {
+        return LatticeResponse::bad_request(&format!(
+            "Query vector dimension mismatch: expected {}, got {}",
+            expected_dim,
+            request.vector.len()
+        ));
+    }
+
+    // Cap search limit to prevent memory exhaustion (DoS protection)
+    const MAX_SEARCH_LIMIT: usize = 10_000;
+    let limit = request.limit.min(MAX_SEARCH_LIMIT);
+
     // Build search query
-    let mut query = SearchQuery::new(request.vector, request.limit);
+    let mut query = SearchQuery::new(request.vector, limit);
 
     if request.with_payload {
         query = query.include_payload();
@@ -123,12 +137,26 @@ pub fn search_batch(
     };
     let engine = handle.read();
 
+    // Validate query vector dimensions (crash/DoS protection)
+    let expected_dim = engine.config().vectors.size;
+    for (i, req) in request.searches.iter().enumerate() {
+        if req.vector.len() != expected_dim {
+            return LatticeResponse::bad_request(&format!(
+                "Query {} vector dimension mismatch: expected {}, got {}",
+                i, expected_dim, req.vector.len()
+            ));
+        }
+    }
+
+    // Cap search limit to prevent memory exhaustion (DoS protection)
+    const MAX_SEARCH_LIMIT: usize = 10_000;
+
     // Convert SearchRequest DTOs to SearchQuery
     let queries: Vec<SearchQuery> = request
         .searches
         .iter()
         .map(|req| {
-            let mut query = SearchQuery::new(req.vector.clone(), req.limit);
+            let mut query = SearchQuery::new(req.vector.clone(), req.limit.min(MAX_SEARCH_LIMIT));
             if req.with_payload {
                 query = query.include_payload();
             }
@@ -192,8 +220,22 @@ pub fn query_points(
     };
     let engine = handle.read();
 
+    // Validate query vector dimension (crash/DoS protection)
+    let expected_dim = engine.config().vectors.size;
+    if request.vector.len() != expected_dim {
+        return LatticeResponse::bad_request(&format!(
+            "Query vector dimension mismatch: expected {}, got {}",
+            expected_dim,
+            request.vector.len()
+        ));
+    }
+
+    // Cap search limit to prevent memory exhaustion (DoS protection)
+    const MAX_SEARCH_LIMIT: usize = 10_000;
+    let limit = request.limit.min(MAX_SEARCH_LIMIT);
+
     // Build search query
-    let mut query = SearchQuery::new(request.vector, request.limit);
+    let mut query = SearchQuery::new(request.vector, limit);
 
     if request.with_payload {
         query = query.include_payload();
@@ -389,6 +431,16 @@ pub fn cypher_query(
     collection_name: &str,
     request: CypherQueryRequest,
 ) -> LatticeResponse {
+    // Validate query length to prevent DoS via parser exhaustion
+    const MAX_QUERY_LENGTH: usize = 100_000; // 100KB
+    if request.query.len() > MAX_QUERY_LENGTH {
+        return LatticeResponse::bad_request(&format!(
+            "Query length {} exceeds maximum of {} bytes",
+            request.query.len(),
+            MAX_QUERY_LENGTH
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
