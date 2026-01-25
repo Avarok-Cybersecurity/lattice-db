@@ -339,15 +339,34 @@ impl<'de> Deserialize<'de> for QueryVector {
 }
 
 /// Extract vector from a JSON value (handles both array and object formats)
+///
+/// Validates that f64 values are within f32 range and are finite to prevent
+/// silent precision loss or NaN/Infinity corruption.
 fn extract_vector_from_value(value: &serde_json::Value) -> Result<Vec<f32>, String> {
     match value {
         // Direct array: [0.1, 0.2, ...]
         serde_json::Value::Array(arr) => arr
             .iter()
-            .map(|v| {
+            .enumerate()
+            .map(|(i, v)| {
                 v.as_f64()
-                    .map(|f| f as f32)
-                    .ok_or_else(|| "expected float in vector".to_string())
+                    .and_then(|f| {
+                        // Validate the value is finite and within f32 range
+                        if !f.is_finite() {
+                            return None;
+                        }
+                        // f32::MAX is ~3.4e38, check f64 value is in range
+                        if f > f32::MAX as f64 || f < f32::MIN as f64 {
+                            return None;
+                        }
+                        Some(f as f32)
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "vector element {} must be a finite number within f32 range",
+                            i
+                        )
+                    })
             })
             .collect(),
         // Object with vector field: {"vector": [0.1, 0.2, ...]}

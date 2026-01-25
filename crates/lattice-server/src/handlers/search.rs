@@ -252,6 +252,18 @@ pub fn scroll_points(
     collection_name: &str,
     request: ScrollRequest,
 ) -> LatticeResponse {
+    // Validate scroll limit (DoS protection)
+    const MAX_SCROLL_LIMIT: usize = 10_000;
+    if request.limit == 0 {
+        return LatticeResponse::bad_request("Scroll limit must be at least 1");
+    }
+    if request.limit > MAX_SCROLL_LIMIT {
+        return LatticeResponse::bad_request(&format!(
+            "Scroll limit {} exceeds maximum of {}",
+            request.limit, MAX_SCROLL_LIMIT
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -389,6 +401,26 @@ pub fn cypher_query(
     collection_name: &str,
     request: CypherQueryRequest,
 ) -> LatticeResponse {
+    // Validate query length to prevent DoS via parser exhaustion
+    const MAX_QUERY_LENGTH: usize = 100_000; // 100KB
+    if request.query.len() > MAX_QUERY_LENGTH {
+        return LatticeResponse::bad_request(&format!(
+            "Query length {} exceeds maximum of {} bytes",
+            request.query.len(),
+            MAX_QUERY_LENGTH
+        ));
+    }
+
+    // Validate parameter count (DoS protection)
+    const MAX_PARAMETERS: usize = 10_000;
+    if request.parameters.len() > MAX_PARAMETERS {
+        return LatticeResponse::bad_request(&format!(
+            "Parameter count {} exceeds maximum of {}",
+            request.parameters.len(),
+            MAX_PARAMETERS
+        ));
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -444,8 +476,21 @@ pub fn cypher_query(
     }
 }
 
-/// Convert JSON value to CypherValue
+/// Maximum JSON nesting depth to prevent stack overflow
+const MAX_JSON_DEPTH: usize = 64;
+
+/// Convert JSON value to CypherValue with depth limit
 fn json_to_cypher_value(value: serde_json::Value) -> CypherValue {
+    json_to_cypher_value_with_depth(value, 0)
+}
+
+/// Convert JSON value to CypherValue with depth tracking
+fn json_to_cypher_value_with_depth(value: serde_json::Value, depth: usize) -> CypherValue {
+    if depth > MAX_JSON_DEPTH {
+        // Return Null for excessively nested values (DoS protection)
+        return CypherValue::Null;
+    }
+
     match value {
         serde_json::Value::Null => CypherValue::Null,
         serde_json::Value::Bool(b) => CypherValue::Bool(b),
@@ -459,19 +504,31 @@ fn json_to_cypher_value(value: serde_json::Value) -> CypherValue {
             }
         }
         serde_json::Value::String(s) => CypherValue::String(s.into()),
-        serde_json::Value::Array(arr) => {
-            CypherValue::List(arr.into_iter().map(json_to_cypher_value).collect())
-        }
+        serde_json::Value::Array(arr) => CypherValue::List(
+            arr.into_iter()
+                .map(|v| json_to_cypher_value_with_depth(v, depth + 1))
+                .collect(),
+        ),
         serde_json::Value::Object(obj) => CypherValue::Map(
             obj.into_iter()
-                .map(|(k, v)| (k.into(), json_to_cypher_value(v)))
+                .map(|(k, v)| (k.into(), json_to_cypher_value_with_depth(v, depth + 1)))
                 .collect(),
         ),
     }
 }
 
-/// Convert CypherValue to JSON value
+/// Convert CypherValue to JSON value with depth limit
 fn cypher_value_to_json(value: CypherValue) -> serde_json::Value {
+    cypher_value_to_json_with_depth(value, 0)
+}
+
+/// Convert CypherValue to JSON value with depth tracking
+fn cypher_value_to_json_with_depth(value: CypherValue, depth: usize) -> serde_json::Value {
+    if depth > MAX_JSON_DEPTH {
+        // Return null for excessively nested values (DoS protection)
+        return serde_json::Value::Null;
+    }
+
     match value {
         CypherValue::Null => serde_json::Value::Null,
         CypherValue::Bool(b) => serde_json::Value::Bool(b),
@@ -494,7 +551,10 @@ fn cypher_value_to_json(value: CypherValue) -> serde_json::Value {
             serde_json::json!({ "hour": hour, "minute": minute, "second": second, "nanos": nanos })
         }
         CypherValue::DateTime { date, time } => {
-            serde_json::json!({ "date": cypher_value_to_json(*date), "time": cypher_value_to_json(*time) })
+            serde_json::json!({
+                "date": cypher_value_to_json_with_depth(*date, depth + 1),
+                "time": cypher_value_to_json_with_depth(*time, depth + 1)
+            })
         }
         CypherValue::Duration {
             months,
@@ -509,13 +569,18 @@ fn cypher_value_to_json(value: CypherValue) -> serde_json::Value {
         CypherValue::Point3D { x, y, z, srid } => {
             serde_json::json!({ "x": x, "y": y, "z": z, "srid": srid })
         }
-        CypherValue::List(items) => {
-            serde_json::Value::Array(items.into_iter().map(cypher_value_to_json).collect())
-        }
+        CypherValue::List(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .map(|v| cypher_value_to_json_with_depth(v, depth + 1))
+                .collect(),
+        ),
         CypherValue::Map(entries) => {
             let obj: serde_json::Map<String, serde_json::Value> = entries
                 .into_iter()
-                .map(|(k, v): (String, CypherValue)| (k, cypher_value_to_json(v)))
+                .map(|(k, v): (String, CypherValue)| {
+                    (k, cypher_value_to_json_with_depth(v, depth + 1))
+                })
                 .collect();
             serde_json::Value::Object(obj)
         }

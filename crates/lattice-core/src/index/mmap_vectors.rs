@@ -120,14 +120,32 @@ impl MmapVectorStore {
     ///
     /// Returns a slice directly into the mmap'd memory.
     /// The OS will page in the data if needed.
+    /// Returns None if the ID is not found or if the offset is out of bounds
+    /// or misaligned (protects against corrupted files).
     #[inline]
     pub fn get(&self, id: PointId) -> Option<&[f32]> {
-        self.offsets.get(&id).map(|&offset| {
-            let byte_slice = &self.mmap[offset..offset + self.dim * 4];
-            // SAFETY: The file format guarantees proper alignment and the
-            // data was written as f32 values. We verify the magic number
-            // and version on load.
-            unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) }
+        self.offsets.get(&id).and_then(|&offset| {
+            // Alignment check: f32 requires 4-byte alignment (defense in depth)
+            // This protects against corrupted/malicious mmap files on strict-alignment
+            // architectures (ARM, SPARC) where misaligned access causes SIGBUS/UB
+            if offset % std::mem::align_of::<f32>() != 0 {
+                return None;
+            }
+
+            // Bounds check to prevent panic on corrupted/truncated files
+            let byte_len = self.dim.checked_mul(4)?;
+            let end = offset.checked_add(byte_len)?;
+            if end > self.mmap.len() {
+                return None;
+            }
+
+            let byte_slice = &self.mmap[offset..end];
+            // SAFETY: We have verified:
+            // 1. offset is 4-byte aligned (checked above)
+            // 2. byte_slice is within mmap bounds (checked above)
+            // 3. byte_len is self.dim * 4 (f32 size)
+            // The data was written as f32 values with proper alignment.
+            Some(unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) })
         })
     }
 
