@@ -35,6 +35,10 @@
 | [🎯 Why LatticeDB?](#-why-latticedb) | The problem we solve |
 | [⚡ Performance](#-performance) | Benchmark results vs Qdrant & Neo4j |
 | [🪶 Ultra-Low Footprint](#-ultra-low-footprint) | 2.4 MB memory, ~500 KB WASM |
+| [🧬 What is a Hybrid Database?](#-what-is-a-hybrid-database) | Vector-attributed graph theory |
+| &nbsp;&nbsp;&nbsp;↳ [Data Representation](#data-representation) | The Point struct |
+| &nbsp;&nbsp;&nbsp;↳ [Mathematical Definition](#mathematical-definition) | Formal graph theory |
+| [🔗 Why Hybrid?](#-why-hybrid) | Benefits of unified architecture |
 | [✨ Features](#-features) | Hybrid graph/vector, platform support |
 | [💡 Use Cases](#-use-cases) | RAG, knowledge graphs, AI assistants |
 | [🚀 Quick Start](#-quick-start) | Installation & first steps |
@@ -159,6 +163,74 @@ Compare this to typical database footprints:
 - Qdrant: ~50-100 MB baseline
 
 LatticeDB delivers **full vector + graph database capabilities in under 3 MB**.
+
+---
+
+## 🧬 What is a Hybrid Database?
+
+LatticeDB implements a **vector-attributed graph** — a data structure where each node combines the properties of both vector databases and graph databases:
+
+| Component | Description | Use Case |
+|-----------|-------------|----------|
+| **Vector** | High-dimensional embedding ($\mathbb{R}^d$) | Semantic similarity search |
+| **Payload** | Key-value metadata | Filtering and storage |
+| **Edges** | Directed, weighted connections | Relationship traversal |
+
+This unified model eliminates the need for separate databases while enabling powerful hybrid queries.
+
+### Data Representation
+
+Each point in LatticeDB is represented by the following structure:
+
+```rust
+pub struct Point {
+    pub id: PointId,                           // u64 - unique identifier
+    pub vector: Vector,                        // Vec<f32> - embedding
+    pub payload: HashMap<String, Vec<u8>>,     // metadata
+    pub outgoing_edges: Option<SmallVec<[Edge; 4]>>,  // graph links
+    pub label_bitmap: u64,                     // O(1) label checks
+}
+
+pub struct Edge {
+    pub target_id: PointId,   // destination node
+    pub weight: f32,          // similarity/strength
+    pub relation_id: u16,     // relationship type
+}
+```
+
+### Mathematical Definition
+
+Formally, LatticeDB implements a **Vector-Attributed Graph** defined as:
+
+$$
+G = (V, E, \phi, \psi, \omega)
+$$
+
+Where:
+
+| Symbol | Definition |
+|--------|------------|
+| $V = \{v_1, \ldots, v_n\}$ | Set of vertices |
+| $E \subseteq V \times V$ | Set of directed edges |
+| $\phi: V \rightarrow \mathbb{R}^d$ | Vector embedding function |
+| $\psi: V \rightarrow 2^{K \times \mathcal{V}}$ | Attribute function (key-value pairs) |
+| $\omega: E \rightarrow \mathbb{R}$ | Edge weight function |
+
+Each vertex $v_i$ is a tuple:
+
+$$
+v_i = \bigl(\, \text{id}_i,\; \phi(v_i),\; \psi(v_i),\; \{(v_j, \omega_{ij}) : (v_i, v_j) \in E\} \,\bigr)
+$$
+
+**Key operations** derive from this structure:
+
+| Operation | Mathematical Form | Complexity |
+|-----------|-------------------|------------|
+| Vector Search | $\underset{v \in V}{\arg\min}\; d(\phi(v), \mathbf{q})$ | $O(\log n)$ via HNSW |
+| Graph Traversal | $\{v_j : (v_i, v_j) \in E\}$ | $O(k)$ where $k$ = out-degree |
+| Hybrid Query | Vector search $\cap$ subgraph filter | $O(\log n + k)$ |
+
+> **This is what makes LatticeDB unique**: a single data structure that supports both $O(\log n)$ approximate nearest neighbor search *and* $O(k)$ graph traversal, unified in one ~500 KB WASM bundle.
 
 ---
 
