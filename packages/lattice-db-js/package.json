@@ -1,16 +1,16 @@
 {
   "name": "lattice-db",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "World's First Production-Grade Hybrid Graph/Vector Database for the Browser",
   "type": "module",
   "main": "dist/lattice-db.js",
   "module": "dist/lattice-db.esm.js",
-  "types": "dist/lattice-db.d.ts",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/lattice-db.esm.js",
-      "require": "./dist/lattice-db.js",
-      "types": "./dist/lattice-db.d.ts"
+      "require": "./dist/lattice-db.js"
     }
   },
   "files": [
@@ -27,7 +27,7 @@
     "build:ts": "npm run build:types && npm run build:esm && npm run build:cjs && npm run build:minify",
     "build": "npm run build:wasm && npm run build:ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && rm -f wasm/.gitignore"
   },
   "repository": {
     "type": "git",

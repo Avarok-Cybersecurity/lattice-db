@@ -1,0 +1,22 @@
+{
+  "name": "rag-example",
+  "version": "1.0.0",
+  "description": "RAG example using LatticeDB + OpenRouter",
+  "type": "module",
+  "scripts": {
+    "generate-docs": "tsx scripts/generate-docs.ts",
+    "dev": "vite",
+    "prebuild": "npm run generate-docs",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lattice-db": "^0.1.4",
+    "marked": "^17.0.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.7.0",
+    "vite": "^5.4.0"
+  }
+}

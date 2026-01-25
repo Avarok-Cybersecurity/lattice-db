@@ -129,9 +129,22 @@ jobs:
           name: js-bundle
           path: js-bundle
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build RAG example
+        working-directory: examples/rag-example
+        run: |
+          npm install
+          npm run build
+        env:
+          GITHUB_ACTIONS: true
+
       - name: Prepare pages
         run: |
-          mkdir -p pages/js pages/wasm
+          mkdir -p pages/js pages/wasm pages/chat
           cp -r target/doc pages/api
           cp -r target/book pages/book
           # Copy JS bundle to pages for CDN-style access
@@ -139,6 +152,8 @@ jobs:
           cp js-bundle/dist/*.js pages/js/
           cp js-bundle/wasm/lattice_server.js pages/wasm/
           cp js-bundle/wasm/lattice_server_bg.wasm pages/wasm/
+          # Copy RAG example to /chat/
+          cp -r examples/rag-example/dist/* pages/chat/
           echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0; url=book/"></head></html>' > pages/index.html
 
       - name: Upload pages artifact
@@ -201,7 +216,7 @@ jobs:
 
   deploy-pages:
     name: Deploy Pages
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: build-docs
     runs-on: ubuntu-latest
     environment:

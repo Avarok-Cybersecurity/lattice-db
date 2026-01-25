@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LatticeDB Chat - Documentation Assistant</title>
+  <link rel="stylesheet" href="/public/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>LatticeDB Chat</h1>
+        <p class="subtitle">Documentation Assistant</p>
+      </div>
+
+      <section class="sidebar-section">
+        <h3>Setup</h3>
+        <div class="form-group">
+          <label for="api-key">OpenRouter API Key</label>
+          <input type="password" id="api-key" placeholder="sk-or-v1-...">
+          <button id="init-btn" class="primary full-width">Initialize</button>
+          <small>Get key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a></small>
+        </div>
+      </section>
+
+      <section class="sidebar-section">
+        <h3>Knowledge Base</h3>
+        <p class="doc-count">
+          Documents: <span id="doc-count">0</span>
+          <button id="manage-docs-btn" class="icon-btn" disabled title="Manage documents">Manage</button>
+        </p>
+
+        <button id="load-docs" class="primary full-width" disabled>Load LatticeDB Docs</button>
+
+        <div class="divider">add from URL</div>
+        <div class="form-group">
+          <div class="input-row">
+            <input type="url" id="url-input" placeholder="https://example.com/page" disabled>
+            <button id="add-url" class="secondary" disabled>Add</button>
+          </div>
+        </div>
+
+        <div class="divider">upload files</div>
+        <div class="form-group">
+          <input type="file" id="file-input" accept=".txt,.md,.json,.csv" multiple hidden>
+          <button id="upload-btn" class="secondary full-width" disabled>Upload Files</button>
+          <small>.txt, .md, .json, .csv (max 1MB)</small>
+        </div>
+
+        <div class="divider">or type manually</div>
+        <div class="form-group">
+          <textarea id="doc-text" rows="2" placeholder="Enter text..." disabled></textarea>
+          <button id="add-doc" class="secondary full-width" disabled>Add Document</button>
+        </div>
+      </section>
+
+      <div class="sidebar-footer">
+        <a href="https://github.com/Avarok-Cybersecurity/lattice-db" target="_blank">GitHub</a>
+        <span>&middot;</span>
+        <span>Powered by WASM</span>
+      </div>
+    </aside>
+
+    <main class="chat-container">
+      <section id="chat-section" class="chat-section" style="display: none;">
+        <div class="chat-header">
+          <span>Chat with LatticeDB Documentation</span>
+          <button id="clear-chat" class="icon-btn" title="Clear chat">Clear</button>
+        </div>
+
+        <div id="chat-messages" class="chat-messages"></div>
+
+        <div class="chat-input-area">
+          <input
+            type="text"
+            id="message-input"
+            placeholder="How do I create a collection?"
+            disabled
+            autocomplete="off"
+          >
+          <button id="send-btn" class="primary" disabled>Send</button>
+        </div>
+      </section>
+
+      <section id="welcome-section" class="welcome-section">
+        <div class="welcome-content">
+          <h2>LatticeDB Documentation Chat</h2>
+          <p>An AI assistant for learning the LatticeDB API. Powered by LatticeDB running in YOUR browser!</p>
+          <ol>
+            <li>Enter your OpenRouter API key and click <strong>Initialize</strong></li>
+            <li>Click <strong>Load LatticeDB Docs</strong> to load the documentation</li>
+            <li>Ask questions like "How do I search for vectors?"</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Document Manager Modal -->
+  <div id="doc-manager-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Document Manager</h2>
+        <button id="close-modal" class="icon-btn">Close</button>
+      </div>
+      <div class="modal-body">
+        <div id="doc-list" class="doc-list">
+          <p class="empty-state">No documents loaded yet.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="clear-all-docs" class="secondary">Clear All Documents</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="status" class="status" style="display: none;"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
