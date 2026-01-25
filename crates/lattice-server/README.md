@@ -307,6 +307,91 @@ Content-Type: application/json
 }
 ```
 
+#### Cypher Query
+```http
+POST /collections/{name}/graph/query
+Content-Type: application/json
+
+{
+  "query": "MATCH (n:Person) WHERE n.age > 25 RETURN n.name",
+  "params": { "min_age": 25 }
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "result": {
+    "columns": ["n.name"],
+    "rows": [["Alice"], ["Bob"]],
+    "stats": { "nodes_scanned": 100, "rows_returned": 2 }
+  }
+}
+```
+
+---
+
+### Import/Export
+
+Binary import/export for collection backup and migration.
+
+#### Export Collection
+```http
+GET /collections/{name}/export
+```
+
+**Response:**
+- Content-Type: `application/octet-stream`
+- Headers: `X-Lattice-Format-Version`, `X-Lattice-Point-Count`, `X-Lattice-Dimension`
+- Body: Binary data (rkyv serialized)
+
+#### Import Collection
+```http
+POST /collections/{name}/import?mode={mode}
+```
+
+**Query Parameters:**
+- `mode` (required): `create`, `replace`, or `merge`
+
+**Import Modes:**
+- `create` - Fail if collection exists (409)
+- `replace` - Drop existing, create new
+- `merge` - Add points to existing (skip duplicates)
+
+**Request:**
+- Content-Type: `application/octet-stream`
+- Body: Binary data from export
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "result": {
+    "points_imported": 1000,
+    "points_skipped": 0,
+    "dimension": 128,
+    "mode": "create"
+  }
+}
+```
+
+**cURL Examples:**
+```bash
+# Export
+curl http://localhost:6333/collections/test/export -o backup.lattice
+
+# Import (create)
+curl -X POST "http://localhost:6333/collections/new/import?mode=create" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @backup.lattice
+
+# Import (merge)
+curl -X POST "http://localhost:6333/collections/test/import?mode=merge" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @backup.lattice
+```
+
 ---
 
 ## Error Responses
@@ -356,3 +441,42 @@ This API is designed to be compatible with the [Qdrant](https://qdrant.tech/) ve
 **LatticeDB Extensions:**
 - Graph edges between points
 - Graph traversal queries
+- Cypher query language
+- Binary import/export
+
+---
+
+## Security
+
+### Authentication
+
+Enable via environment variables:
+
+```bash
+# API Key authentication
+LATTICE_API_KEYS=key1,key2,key3
+
+# Bearer token authentication
+LATTICE_BEARER_TOKENS=token1,token2
+```
+
+**Usage:**
+```bash
+curl -H "Authorization: ApiKey your-key" http://localhost:6333/collections
+curl -H "Authorization: Bearer your-token" http://localhost:6333/collections
+```
+
+### Rate Limiting
+
+Enable rate limiting for production:
+
+```bash
+LATTICE_RATE_LIMIT=1  # Any value enables it
+```
+
+**Defaults:** 100 requests/second, burst capacity 200
+
+**Response Headers:**
+- `X-RateLimit-Limit`: Requests per second
+- `X-RateLimit-Remaining`: Available tokens
+- `X-RateLimit-Reset`: Reset window (1s)

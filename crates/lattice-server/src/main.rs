@@ -74,7 +74,8 @@ async fn main() {
         if let (Ok(cert_path), Ok(key_path)) =
             (env::var("LATTICE_TLS_CERT"), env::var("LATTICE_TLS_KEY"))
         {
-            info!(cert = %cert_path, key = %key_path, "TLS enabled");
+            // Note: Only log cert path, not key path (sensitive)
+            info!(cert = %cert_path, "TLS enabled");
 
             let tls_config = match TlsConfig::from_pem_files(&cert_path, &key_path) {
                 Ok(cfg) => cfg,

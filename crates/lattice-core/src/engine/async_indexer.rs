@@ -202,7 +202,9 @@ impl AsyncIndexer {
         // Insert all into index with one write lock
         if let Ok(mut index) = self.index.write_safe() {
             for point in &points_to_index {
-                index.insert(point);
+                // Silently skip points that fail to insert (e.g., dimension mismatch)
+                // Dimension validation should happen upstream at the API layer
+                let _ = index.insert(point);
             }
         } else {
             return; // Lock poisoned, skip this batch

@@ -257,8 +257,14 @@ impl ProductQuantizer {
     }
 
     /// Get compression ratio (original bytes / compressed bytes)
+    ///
+    /// Returns f32::MAX if m is 0 (no compression).
     pub fn compression_ratio(&self) -> f32 {
-        (self.dim * 4) as f32 / self.m as f32
+        if self.m == 0 {
+            return f32::MAX; // Avoid division by zero
+        }
+        // Use saturating_mul to prevent overflow with large dimensions
+        (self.dim.saturating_mul(4)) as f32 / self.m as f32
     }
 
     /// Check if trained (has non-zero codebooks)

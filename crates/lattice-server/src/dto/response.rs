@@ -434,6 +434,35 @@ pub struct CollectionsResponse {
     pub collections: Vec<CollectionDescription>,
 }
 
+// === Import/Export Responses (LatticeDB extension) ===
+
+/// Import mode for collection import operations
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum ImportMode {
+    /// Create new collection, fail if exists
+    Create,
+    /// Drop existing collection and create new
+    Replace,
+    /// Merge points into existing collection (skip duplicates)
+    Merge,
+}
+
+/// Import operation result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+pub struct ImportResult {
+    /// Number of points successfully imported
+    pub points_imported: usize,
+    /// Number of points skipped (duplicates in merge mode)
+    pub points_skipped: usize,
+    /// Vector dimension of imported data
+    pub dimension: usize,
+    /// Import mode used
+    pub mode: ImportMode,
+}
+
 // === OpenAPI Type Aliases ===
 //
 // These concrete types are used for OpenAPI documentation since utoipa

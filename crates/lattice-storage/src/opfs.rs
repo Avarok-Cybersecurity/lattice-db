@@ -33,6 +33,62 @@ mod wasm_impl {
         FileSystemWritableFileStream,
     };
 
+    /// Maximum allowed collection name length
+    const MAX_COLLECTION_NAME_LENGTH: usize = 128;
+
+    /// Validate a collection name to prevent path traversal attacks
+    ///
+    /// # Security
+    ///
+    /// Collection names are used as directory names. Allowing arbitrary
+    /// user input could enable path traversal attacks (e.g., "../../../etc").
+    ///
+    /// Valid names contain only:
+    /// - ASCII letters (a-z, A-Z)
+    /// - Digits (0-9)
+    /// - Underscores (_)
+    /// - Hyphens (-)
+    ///
+    /// Names must be 1-128 characters and cannot be "." or "..".
+    fn validate_collection_name(name: &str) -> StorageResult<()> {
+        // Check length
+        if name.is_empty() {
+            return Err(StorageError::Io {
+                message: "Collection name cannot be empty".to_string(),
+            });
+        }
+        if name.len() > MAX_COLLECTION_NAME_LENGTH {
+            return Err(StorageError::Io {
+                message: format!(
+                    "Collection name too long: {} > {} characters",
+                    name.len(),
+                    MAX_COLLECTION_NAME_LENGTH
+                ),
+            });
+        }
+
+        // Reject . and .. explicitly
+        if name == "." || name == ".." {
+            return Err(StorageError::Io {
+                message: "Collection name cannot be '.' or '..'".to_string(),
+            });
+        }
+
+        // Validate characters
+        for c in name.chars() {
+            if !c.is_ascii_alphanumeric() && c != '_' && c != '-' {
+                return Err(StorageError::Io {
+                    message: format!(
+                        "Invalid character '{}' in collection name. Only a-z, A-Z, 0-9, _, - allowed",
+                        c
+                    ),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// OPFS-based storage backend for browser environments
     ///
     /// Uses `FileSystemSyncAccessHandle` for efficient synchronous I/O.
@@ -56,19 +112,26 @@ mod wasm_impl {
         /// Create a new OPFS storage for a collection
         ///
         /// # Arguments
-        /// * `collection_name` - Name of the collection (used as directory name)
+        /// * `collection_name` - Name of the collection (used as directory name).
+        ///   Must contain only alphanumeric characters, underscores, and hyphens.
         /// * `page_size` - Size of each page in bytes (PCND: required)
         ///
         /// # Errors
-        /// Returns error if OPFS is not available or directory creation fails.
+        /// Returns error if:
+        /// - Collection name is invalid (path traversal attempt, invalid characters)
+        /// - OPFS is not available
+        /// - Directory creation fails
         pub async fn new(collection_name: &str, page_size: usize) -> StorageResult<Self> {
+            // Validate collection name to prevent path traversal
+            validate_collection_name(collection_name)?;
+
             // Get OPFS root directory
             let root = get_opfs_root().await?;
 
             // Create/get lattice-db directory
             let lattice_dir = get_or_create_dir(&root, "lattice-db").await?;
 
-            // Create/get collection directory
+            // Create/get collection directory (safe after validation)
             let dir_handle = get_or_create_dir(&lattice_dir, collection_name).await?;
 
             // Get or create meta file

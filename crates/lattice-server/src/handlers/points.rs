@@ -57,23 +57,75 @@ pub fn upsert_points(
     };
     let mut engine = handle.write();
 
-    // Convert DTO points to core Points
-    let points: Vec<Point> = request
-        .points
-        .into_iter()
-        .map(|p| {
-            let mut point = Point::new_vector(p.id, p.vector);
-            if let Some(payload) = p.payload {
-                for (key, value) in payload {
-                    // Serialize JSON value to bytes
-                    if let Ok(bytes) = serde_json::to_vec(&value) {
-                        point = point.with_field(&key, bytes);
+    // Validate vector dimensions match collection (crash/DoS protection)
+    let expected_dim = engine.config().vectors.size;
+    for (i, p) in request.points.iter().enumerate() {
+        if p.vector.len() != expected_dim {
+            return LatticeResponse::bad_request(&format!(
+                "Point {} vector dimension mismatch: expected {}, got {}",
+                i,
+                expected_dim,
+                p.vector.len()
+            ));
+        }
+    }
+
+    // Convert DTO points to core Points with comprehensive payload validation
+    const MAX_PAYLOAD_SIZE_PER_FIELD: usize = 1_000_000; // 1MB per field
+    const MAX_PAYLOAD_SIZE_TOTAL: usize = 10_000_000; // 10MB total per point
+    const MAX_PAYLOAD_FIELDS: usize = 1_000; // Max fields per point
+    const MAX_FIELD_NAME_LENGTH: usize = 255; // Max field name length
+
+    let mut points: Vec<Point> = Vec::with_capacity(request.points.len());
+    for (point_idx, p) in request.points.into_iter().enumerate() {
+        let mut point = Point::new_vector(p.id, p.vector);
+        if let Some(payload) = p.payload {
+            // Validate field count (DoS protection)
+            if payload.len() > MAX_PAYLOAD_FIELDS {
+                return LatticeResponse::bad_request(&format!(
+                    "Point {} payload has {} fields, exceeds maximum of {}",
+                    point_idx,
+                    payload.len(),
+                    MAX_PAYLOAD_FIELDS
+                ));
+            }
+
+            let mut total_payload_size = 0usize;
+            for (key, value) in payload {
+                // Validate field name length (DoS protection)
+                if key.len() > MAX_FIELD_NAME_LENGTH {
+                    return LatticeResponse::bad_request(&format!(
+                        "Point {} field name '{}...' exceeds maximum length of {} chars",
+                        point_idx,
+                        &key[..32.min(key.len())],
+                        MAX_FIELD_NAME_LENGTH
+                    ));
+                }
+
+                // Serialize JSON value to bytes
+                if let Ok(bytes) = serde_json::to_vec(&value) {
+                    if bytes.len() > MAX_PAYLOAD_SIZE_PER_FIELD {
+                        return LatticeResponse::bad_request(&format!(
+                            "Point {} payload field '{}' exceeds maximum size of {} bytes",
+                            point_idx, key, MAX_PAYLOAD_SIZE_PER_FIELD
+                        ));
                     }
+
+                    // Track total payload size (DoS protection)
+                    total_payload_size = total_payload_size.saturating_add(bytes.len());
+                    if total_payload_size > MAX_PAYLOAD_SIZE_TOTAL {
+                        return LatticeResponse::bad_request(&format!(
+                            "Point {} total payload size exceeds maximum of {} bytes",
+                            point_idx, MAX_PAYLOAD_SIZE_TOTAL
+                        ));
+                    }
+
+                    point = point.with_field(&key, bytes);
                 }
             }
-            point
-        })
-        .collect();
+        }
+        points.push(point);
+    }
 
     // Upsert into engine
     let point_count = points.len();
@@ -269,6 +321,38 @@ pub fn add_edge(
     collection_name: &str,
     request: AddEdgeRequest,
 ) -> LatticeResponse {
+    // Validate edge weight (NaN/Infinity/negative protection)
+    if !request.weight.is_finite() {
+        return LatticeResponse::bad_request(
+            "weight must be a finite number (not NaN or Infinity)",
+        );
+    }
+    if request.weight < 0.0 {
+        return LatticeResponse::bad_request("weight must be non-negative");
+    }
+
+    // Validate relation name
+    const MAX_RELATION_NAME_LENGTH: usize = 255;
+    if request.relation.is_empty() {
+        return LatticeResponse::bad_request("relation cannot be empty");
+    }
+    if request.relation.len() > MAX_RELATION_NAME_LENGTH {
+        return LatticeResponse::bad_request(&format!(
+            "relation name exceeds maximum length of {} chars",
+            MAX_RELATION_NAME_LENGTH
+        ));
+    }
+    // Only allow safe characters in relation names (alphanumeric, underscore, hyphen)
+    if !request
+        .relation
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return LatticeResponse::bad_request(
+            "relation can only contain alphanumeric characters, underscores, and hyphens",
+        );
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {

@@ -9,6 +9,7 @@
 //! The index stores vectors in memory and uses the LatticeStorage trait
 //! for persistence. Core algorithm is pure computation - no I/O calls.
 
+use crate::error::{LatticeError, LatticeResult};
 use crate::index::dense_vectors::DenseVectorStore;
 use crate::index::distance::DistanceCalculator;
 use crate::index::layer::{HnswNode, LayerManager};
@@ -34,14 +35,35 @@ use std::cell::RefCell;
 #[cfg(not(target_arch = "wasm32"))]
 mod prefetch {
     /// Prefetch data into L1 cache for read
+    ///
+    /// # Safety
+    /// This function validates the pointer before prefetching to prevent:
+    /// - NULL pointer dereference
+    /// - Misaligned access on architectures that require it
+    ///
+    /// The prefetch is skipped if validation fails (safe degradation).
     #[inline]
     pub fn prefetch_read<T>(ptr: *const T) {
+        // Validate pointer is not null (security: prevents undefined behavior)
+        if ptr.is_null() {
+            return;
+        }
+
+        // On architectures that require alignment, validate it
+        #[cfg(target_arch = "aarch64")]
+        if (ptr as usize) % std::mem::align_of::<T>() != 0 {
+            return;
+        }
+
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: We validated the pointer is non-null above.
+        // x86_64 is tolerant of misaligned prefetch addresses.
         unsafe {
             std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
         }
 
         #[cfg(target_arch = "aarch64")]
+        // SAFETY: We validated the pointer is non-null and aligned above.
         unsafe {
             std::arch::asm!("prfm pldl1keep, [{x}]", x = in(reg) ptr, options(nostack, preserves_flags));
         }
@@ -119,7 +141,7 @@ impl Ord for Candidate {
 /// let mut index = HnswIndex::new(config, Distance::Cosine);
 ///
 /// // Insert points
-/// index.insert(&point);
+/// index.insert(&point).expect("insert failed");
 ///
 /// // Search
 /// let results = index.search(&query_vector, 10, 100);
@@ -156,7 +178,9 @@ impl HnswIndex {
     }
 
     /// Insert a point into the index
-    pub fn insert(&mut self, point: &Point) {
+    ///
+    /// Returns an error if the vector dimension doesn't match the index dimension.
+    pub fn insert(&mut self, point: &Point) -> LatticeResult<()> {
         let id = point.id;
         let vector = point.vector.clone();
 
@@ -166,15 +190,25 @@ impl HnswIndex {
 
         // If this is the first point, just insert it
         if self.layers.is_empty() {
-            self.vectors.insert(id, vector);
+            self.vectors
+                .insert(id, vector)
+                .ok_or_else(|| LatticeError::DimensionMismatch {
+                    expected: self.vectors.dim(),
+                    actual: point.vector.len(),
+                })?;
             self.layers.insert_node(node);
-            return;
+            return Ok(());
         }
 
         // Defensive: entry_point should exist since we're not the first point
         let entry_point = match self.layers.entry_point() {
             Some(ep) => ep,
-            None => return, // Inconsistent state - skip insertion
+            None => {
+                return Err(LatticeError::Internal {
+                    code: 50010,
+                    message: "Index has points but no entry point".to_string(),
+                })
+            }
         };
         let mut current = entry_point;
 
@@ -230,8 +264,14 @@ impl HnswIndex {
         }
 
         // Store vector and node (move, no second clone)
-        self.vectors.insert(id, vector);
+        self.vectors
+            .insert(id, vector)
+            .ok_or_else(|| LatticeError::DimensionMismatch {
+                expected: self.vectors.dim(),
+                actual: point.vector.len(),
+            })?;
         self.layers.insert_node(node);
+        Ok(())
     }
 
     /// Search for k nearest neighbors
@@ -246,12 +286,17 @@ impl HnswIndex {
     ///
     /// # Returns
     /// Vector of search results sorted by distance (closest first)
+    /// Maximum ef parameter to prevent memory exhaustion attacks
+    /// ef=10000 allows excellent recall while limiting allocation to ~80KB per search
+    const MAX_EF: usize = 10_000;
+
     pub fn search(&self, query: &[f32], k: usize, ef: usize) -> Vec<SearchResult> {
         if self.layers.is_empty() {
             return vec![];
         }
 
-        let ef = ef.max(k); // ef must be >= k
+        // Bound ef to prevent memory exhaustion: must be >= k and <= MAX_EF
+        let ef = ef.max(k).min(Self::MAX_EF);
 
         // Defensive: entry_point should exist since we checked is_empty above
         let entry_point = match self.layers.entry_point() {
@@ -400,22 +445,44 @@ impl HnswIndex {
             .rng_state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1);
-        let random = (self.rng_state >> 33) as f64 / (1u64 << 31) as f64;
+
+        // Generate uniform random in (0, 1] - note: adding 1 ensures never zero
+        // This prevents ln(0) = -Infinity which would cause NaN/Infinity in level calc
+        let random = ((self.rng_state >> 33) + 1) as f64 / ((1u64 << 31) + 1) as f64;
 
         // Level = floor(-ln(uniform) * ml)
-        let level = (-random.ln() * self.config.ml).floor() as u16;
+        // With random in (0, 1], -ln(random) is in [0, +Infinity)
+        // Clamp the f64 result BEFORE casting to u16 to prevent undefined behavior
+        let level_f64 = (-random.ln() * self.config.ml).floor();
 
-        // Cap at reasonable maximum (prevents runaway in edge cases)
-        level.min(16)
+        // Handle NaN (from ml=0) or Infinity (from edge cases) by clamping
+        let level = if level_f64.is_finite() {
+            (level_f64 as u64).min(16) as u16
+        } else {
+            0 // Default to level 0 for invalid calculations
+        };
+
+        level
     }
+
+    /// Maximum iterations for greedy search to prevent infinite loops
+    /// on pathological graph structures with cycles of near-equal distances
+    const MAX_GREEDY_ITERATIONS: usize = 10_000;
 
     /// Search a single layer for the nearest neighbor (greedy)
     #[inline]
     fn search_layer_single(&self, query: &[f32], start: PointId, layer: u16) -> PointId {
         let mut current = start;
         let mut current_dist = self.calc_distance(query, current);
+        let mut iterations = 0;
 
         loop {
+            // Prevent infinite loops on pathological graphs
+            iterations += 1;
+            if iterations > Self::MAX_GREEDY_ITERATIONS {
+                break;
+            }
+
             let mut changed = false;
 
             if let Some(node) = self.layers.get_node(current) {
@@ -452,8 +519,15 @@ impl HnswIndex {
         let mut current = start;
         let mut current_dist = start_dist;
         let mut improved = false;
+        let mut iterations = 0;
 
         loop {
+            // Prevent infinite loops on pathological graphs
+            iterations += 1;
+            if iterations > Self::MAX_GREEDY_ITERATIONS {
+                break;
+            }
+
             let mut changed = false;
 
             if let Some(node) = self.layers.get_node(current) {
@@ -1101,7 +1175,7 @@ mod tests {
         let mut index = HnswIndex::new(test_config(), Distance::Cosine);
         let point = Point::new_vector(1, vec![0.1, 0.2, 0.3]);
 
-        index.insert(&point);
+        index.insert(&point).expect("insert failed");
 
         assert_eq!(index.len(), 1);
         assert!(!index.is_empty());
@@ -1114,7 +1188,7 @@ mod tests {
 
         for i in 0..100 {
             let point = Point::new_vector(i, random_vector(32, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         assert_eq!(index.len(), 100);
@@ -1131,7 +1205,7 @@ mod tests {
 
         for i in 0..50 {
             let point = Point::new_vector(i, random_vector(32, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         let query = random_vector(32, 999);
@@ -1146,7 +1220,7 @@ mod tests {
 
         for i in 0..100 {
             let point = Point::new_vector(i, random_vector(32, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         let query = random_vector(32, 999);
@@ -1170,12 +1244,12 @@ mod tests {
         // Insert points including the query itself
         let query_vec = vec![0.5, 0.5, 0.5, 0.5];
         let query_point = Point::new_vector(42, query_vec.clone());
-        index.insert(&query_point);
+        index.insert(&query_point).expect("insert");
 
         for i in 0..50 {
             if i != 42 {
                 let point = Point::new_vector(i, random_vector(4, i));
-                index.insert(&point);
+                index.insert(&point).expect("insert failed");
             }
         }
 
@@ -1191,7 +1265,7 @@ mod tests {
         let mut index = HnswIndex::new(test_config(), Distance::Cosine);
 
         let point = Point::new_vector(1, vec![0.1, 0.2, 0.3]);
-        index.insert(&point);
+        index.insert(&point).expect("insert failed");
         assert_eq!(index.len(), 1);
 
         let deleted = index.delete(1);
@@ -1214,7 +1288,7 @@ mod tests {
 
         for (i, vec) in vectors.iter().enumerate() {
             let point = Point::new_vector(i as u64, vec.clone());
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         // Test recall on 10 random queries
@@ -1268,7 +1342,7 @@ mod tests {
 
             for i in 0..50 {
                 let point = Point::new_vector(i, random_vector(16, i));
-                index.insert(&point);
+                index.insert(&point).expect("insert failed");
             }
 
             let query = random_vector(16, 999);
@@ -1285,7 +1359,7 @@ mod tests {
         // Insert 100 points
         for i in 0..100 {
             let point = Point::new_vector(i, random_vector(32, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         // Create 10 batch queries
@@ -1357,7 +1431,7 @@ mod tests {
         // Need at least 128-dim vectors for m=8 (128/8 = 16 dim per subvector)
         for i in 0..500 {
             let point = Point::new_vector(i, random_vector(128, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         // Build PQ accelerator with m=8 subvectors
@@ -1375,7 +1449,7 @@ mod tests {
         // Insert vectors
         for i in 0..1000 {
             let point = Point::new_vector(i, random_vector(128, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         // Build PQ accelerator
@@ -1421,7 +1495,7 @@ mod tests {
 
         for i in 0..100 {
             let point = Point::new_vector(i, random_vector(128, i));
-            index.insert(&point);
+            index.insert(&point).expect("insert failed");
         }
 
         let mut accelerator = index.build_pq_accelerator(8, 0);

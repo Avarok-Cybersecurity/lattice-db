@@ -9,6 +9,9 @@ use crate::cypher::error::{CypherError, CypherResult};
 use serde::{Deserialize, Serialize};
 // smallvec removed - using standard Vec
 
+/// Maximum allowed path traversal depth (DoS protection)
+const MAX_PATH_LENGTH: u32 = 100;
+
 /// Logical operation in the query plan
 ///
 /// These operations form a tree that represents the logical execution plan.
@@ -319,9 +322,11 @@ impl QueryPlanner {
                 .clone()
                 .unwrap_or_else(|| String::from(format!("_anon_{}", i)));
 
-            // Determine hop range
+            // Determine hop range (capped at MAX_PATH_LENGTH for DoS protection)
             let (min_hops, max_hops) = if let Some(len) = &rel.length {
-                (len.min.unwrap_or(1), len.max.unwrap_or(u32::MAX))
+                let min = len.min.unwrap_or(1);
+                let max = len.max.unwrap_or(MAX_PATH_LENGTH).min(MAX_PATH_LENGTH);
+                (min, max)
             } else {
                 (1, 1)
             };

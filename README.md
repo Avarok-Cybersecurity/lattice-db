@@ -493,11 +493,20 @@ LatticeDB implements **8 state-of-the-art optimizations**:
 | `/collections/{name}/points/query` | POST | Query (Qdrant v1.16+) |
 | `/collections/{name}/points/search/batch` | POST | Batch search |
 
-### Cypher (LatticeDB Extension)
+### Import/Export (LatticeDB Extension)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/cypher` | POST | Execute Cypher query |
+| `/collections/{name}/export` | GET | Export collection as binary |
+| `/collections/{name}/import?mode={mode}` | POST | Import collection (`create`/`replace`/`merge`) |
+
+### Graph Extensions (LatticeDB)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/collections/{name}/graph/edges` | POST | Add edge between points |
+| `/collections/{name}/graph/traverse` | POST | Traverse graph from point |
+| `/collections/{name}/graph/query` | POST | Execute Cypher query |
 
 📖 [Full API documentation](https://Avarok-Cybersecurity.github.io/lattice-db/book/api/rest.html)
 

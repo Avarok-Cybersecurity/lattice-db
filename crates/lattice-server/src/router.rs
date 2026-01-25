@@ -7,7 +7,7 @@ use crate::dto::{
     DeletePointsRequest, GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest,
     TraverseRequest, UpsertPointsRequest,
 };
-use crate::handlers::{collections, points, search};
+use crate::handlers::{collections, export_import, points, search};
 use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -18,6 +18,15 @@ pub type AppState = Arc<AppStateInner>;
 
 /// Per-collection engine wrapped in its own lock for fine-grained concurrency
 pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
+
+/// Error returned when inserting a collection fails
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InsertError {
+    /// Collection with this name already exists
+    AlreadyExists,
+    /// Maximum number of collections reached
+    AtCapacity(usize),
+}
 
 /// Server configuration (PCND: all fields explicit)
 #[derive(Debug, Clone)]
@@ -30,6 +39,8 @@ pub struct ServerConfig {
     pub max_get_batch_size: usize,
     /// Maximum queries per batch search request
     pub max_search_batch_size: usize,
+    /// Maximum number of collections (prevents unbounded memory growth)
+    pub max_collections: usize,
 }
 
 impl ServerConfig {
@@ -39,12 +50,14 @@ impl ServerConfig {
     /// - 10,000 points per upsert (reasonable for high-dim vectors)
     /// - 10,000 IDs per delete/get
     /// - 100 queries per batch search
+    /// - 1,000 max collections
     pub fn production() -> Self {
         Self {
             max_upsert_batch_size: 10_000,
             max_delete_batch_size: 10_000,
             max_get_batch_size: 10_000,
             max_search_batch_size: 100,
+            max_collections: 1_000,
         }
     }
 
@@ -56,6 +69,7 @@ impl ServerConfig {
             max_delete_batch_size: usize::MAX,
             max_get_batch_size: usize::MAX,
             max_search_batch_size: usize::MAX,
+            max_collections: usize::MAX,
         }
     }
 }
@@ -100,13 +114,26 @@ impl AppStateInner {
     }
 
     /// Insert a new collection (requires write lock on outer HashMap)
-    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> bool {
+    ///
+    /// Returns:
+    /// - `Ok(())` if collection was inserted successfully
+    /// - `Err(InsertError::AlreadyExists)` if collection already exists
+    /// - `Err(InsertError::AtCapacity)` if max_collections limit reached
+    pub fn insert_collection(
+        &self,
+        name: String,
+        engine: CollectionEngine,
+    ) -> Result<(), InsertError> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
-            return false;
+            return Err(InsertError::AlreadyExists);
+        }
+        // Check collection count limit (DoS protection)
+        if collections.len() >= self.config.max_collections {
+            return Err(InsertError::AtCapacity(self.config.max_collections));
         }
         collections.insert(name, Arc::new(RwLock::new(engine)));
-        true
+        Ok(())
     }
 
     /// Remove a collection (requires write lock on outer HashMap)
@@ -152,7 +179,14 @@ pub fn new_app_state() -> AppState {
 pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
     // Method is already uppercase from transport layer
     let method = &request.method;
-    let path = request.path.trim_end_matches('/');
+    let full_path = request.path.trim_end_matches('/');
+
+    // Split path and query string
+    let (path, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     debug!(method = %method, path = %path, "Processing request");
@@ -181,6 +215,21 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // DELETE /collections/{name} - Delete collection
         ("DELETE", ["collections", name]) => collections::delete_collection(&state, name),
+
+        // === Import/Export ===
+
+        // GET /collections/{name}/export - Export collection as binary
+        ("GET", ["collections", name, "export"]) => export_import::export_collection(&state, name),
+
+        // POST /collections/{name}/import?mode={create|replace|merge} - Import collection
+        ("POST", ["collections", name, "import"]) => {
+            match export_import::parse_import_mode(query) {
+                Ok(mode) => {
+                    export_import::import_collection(&state, name, mode, request.body.clone())
+                }
+                Err(e) => e,
+            }
+        }
 
         // === Points ===
 

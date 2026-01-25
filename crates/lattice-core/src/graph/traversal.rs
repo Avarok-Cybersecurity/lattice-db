@@ -6,6 +6,14 @@ use crate::types::point::PointId;
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
+/// Maximum size of the traversal frontier (queue/stack) to prevent memory exhaustion
+/// Set to 100,000 nodes which allows traversing large graphs while preventing DoS
+const MAX_FRONTIER_SIZE: usize = 100_000;
+
+/// Maximum number of visited nodes to prevent memory exhaustion on the visited set
+/// Set to 1,000,000 nodes (approx 8MB for the HashSet overhead)
+const MAX_VISITED_SIZE: usize = 1_000_000;
+
 /// A path through the graph
 #[derive(Debug, Clone)]
 pub struct GraphPath {
@@ -93,10 +101,23 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, depth)) = self.queue.pop_front() {
-            // Expand neighbors if within depth limit
+            // Expand neighbors if within depth limit and memory limits
             if depth < self.max_depth {
+                // Stop expanding if we've hit memory limits
+                if self.visited.len() >= MAX_VISITED_SIZE {
+                    return Some((node, depth));
+                }
+
                 let neighbors = (self.get_neighbors)(node);
                 for neighbor in neighbors {
+                    // Stop adding to queue if frontier is too large
+                    if self.queue.len() >= MAX_FRONTIER_SIZE {
+                        break;
+                    }
+                    // Stop if visited set is too large
+                    if self.visited.len() >= MAX_VISITED_SIZE {
+                        break;
+                    }
                     if self.visited.insert(neighbor) {
                         self.queue.push_back((neighbor, depth + 1));
                     }
@@ -148,11 +169,24 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((node, depth)) = self.stack.pop() {
-            // Expand neighbors if within depth limit
+            // Expand neighbors if within depth limit and memory limits
             if depth < self.max_depth {
+                // Stop expanding if we've hit memory limits
+                if self.visited.len() >= MAX_VISITED_SIZE {
+                    return Some((node, depth));
+                }
+
                 let neighbors = (self.get_neighbors)(node);
                 for neighbor in neighbors.into_iter().rev() {
                     // Reverse to maintain natural order
+                    // Stop adding to stack if frontier is too large
+                    if self.stack.len() >= MAX_FRONTIER_SIZE {
+                        break;
+                    }
+                    // Stop if visited set is too large
+                    if self.visited.len() >= MAX_VISITED_SIZE {
+                        break;
+                    }
                     if self.visited.insert(neighbor) {
                         self.stack.push((neighbor, depth + 1));
                     }

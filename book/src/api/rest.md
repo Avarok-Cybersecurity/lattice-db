@@ -102,6 +102,90 @@ GET /collections
 }
 ```
 
+## Import/Export
+
+Binary import/export for collection backup and migration. Uses rkyv zero-copy serialization for efficient transfer.
+
+### Export Collection
+
+```http
+GET /collections/{collection_name}/export
+```
+
+**Response Headers:**
+
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | `application/octet-stream` |
+| `X-Lattice-Format-Version` | Binary format version (currently `1`) |
+| `X-Lattice-Point-Count` | Number of points in collection |
+| `X-Lattice-Dimension` | Vector dimension |
+| `Content-Disposition` | `attachment; filename="{name}.lattice"` |
+
+**Response Body:** Binary data (rkyv serialized collection)
+
+### Import Collection
+
+```http
+POST /collections/{collection_name}/import?mode={mode}
+```
+
+**Query Parameters:**
+
+| Parameter | Required | Values | Description |
+|-----------|----------|--------|-------------|
+| `mode` | Yes | `create`, `replace`, `merge` | Import behavior |
+
+**Import Modes:**
+- `create`: Create new collection (fails with 409 if exists)
+- `replace`: Drop existing collection and create new
+- `merge`: Add points to existing collection (skips duplicates)
+
+**Request:**
+- `Content-Type: application/octet-stream`
+- Body: Binary data from export
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "result": {
+    "points_imported": 1000,
+    "points_skipped": 50,
+    "dimension": 128,
+    "mode": "merge"
+  }
+}
+```
+
+**Error Codes:**
+- `400`: Invalid mode, corrupted data, or dimension mismatch (merge mode)
+- `404`: Collection not found (merge mode only)
+- `409`: Collection already exists (create mode)
+- `413`: Payload too large (>1GB limit)
+
+**cURL Examples:**
+
+```bash
+# Export collection to file
+curl http://localhost:6333/collections/docs/export -o backup.lattice
+
+# Import as new collection (create mode)
+curl -X POST "http://localhost:6333/collections/new_docs/import?mode=create" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @backup.lattice
+
+# Merge into existing collection
+curl -X POST "http://localhost:6333/collections/docs/import?mode=merge" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @backup.lattice
+
+# Replace existing collection
+curl -X POST "http://localhost:6333/collections/docs/import?mode=replace" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @backup.lattice
+```
+
 ## Points (Vectors)
 
 ### Upsert Points
@@ -400,6 +484,43 @@ GET /collections/{collection_name}/graph/neighbors/{point_id}
         "relation": "CITES"
       }
     ]
+  }
+}
+```
+
+### Traverse Graph
+
+Perform BFS/DFS traversal from a starting point.
+
+```http
+POST /collections/{collection_name}/graph/traverse
+```
+
+**Request Body:**
+```json
+{
+  "start_id": 1,
+  "max_depth": 3,
+  "relations": ["KNOWS", "REFERENCES"]
+}
+```
+
+**Parameters:**
+- `start_id`: Starting point ID (required)
+- `max_depth`: Maximum traversal depth (required, max: 100)
+- `relations`: Filter by relation types (optional, null = all relations)
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "result": {
+    "visited": [2, 5, 8, 12],
+    "edges": [
+      {"from_id": 1, "to_id": 2, "relation": "KNOWS", "weight": 0.95},
+      {"from_id": 2, "to_id": 5, "relation": "KNOWS", "weight": 0.87}
+    ],
+    "max_depth_reached": 2
   }
 }
 ```

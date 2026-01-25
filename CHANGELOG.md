@@ -5,6 +5,29 @@ All notable changes to LatticeDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Import/Export Endpoints**: Binary collection backup and restore
+  - `GET /collections/{name}/export` - Export to rkyv binary format
+  - `POST /collections/{name}/import?mode={create|replace|merge}` - Import with mode selection
+- **Graph Traverse Endpoint**: `POST /collections/{name}/graph/traverse` for BFS/DFS traversal
+- **Authentication**: API key and Bearer token support via environment variables
+- **Rate Limiting**: Token bucket algorithm with configurable limits (100 req/s default)
+
+### Security
+
+- Self-loop detection in graph edge insertion
+- Checked arithmetic in serialization to prevent overflow
+- BFS/DFS frontier size limits to prevent memory exhaustion
+- HNSW insert returns Result for proper error handling
+- Path length validation in Cypher parser (max depth: 100)
+
+### Fixed
+
+- Dense vector operations now return `Option`/`Result` instead of panicking
+
 ## [0.1.0] - 2025-01-22
 
 ### Added

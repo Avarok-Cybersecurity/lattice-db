@@ -101,15 +101,54 @@ impl MmapVectorStore {
 
         let dim = read_u64_le(&mmap, 16)? as usize;
 
-        // Read index
-        let count = read_u64_le(&mmap, 24)? as usize;
+        // Read index with overflow protection
+        let count_u64 = read_u64_le(&mmap, 24)?;
+
+        // Validate count is reasonable for platform (prevents OOM on HashMap allocation)
+        let count: usize = usize::try_from(count_u64).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Index count {} too large for platform", count_u64),
+            )
+        })?;
+
+        // Validate count against file size to detect malicious/corrupted files
+        // Each index entry is 16 bytes, starting at offset 32
+        let index_start: usize = 32;
+        let required_index_bytes = count.checked_mul(16).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Index entry count overflow")
+        })?;
+        let min_file_size = index_start
+            .checked_add(required_index_bytes)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Index size overflow"))?;
+        if mmap.len() < min_file_size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "File too small for {} index entries: need {} bytes, have {}",
+                    count,
+                    min_file_size,
+                    mmap.len()
+                ),
+            ));
+        }
+
         let mut offsets = HashMap::with_capacity(count);
 
-        let index_start = 32;
         for i in 0..count {
+            // Safe: we validated count * 16 fits, so i * 16 cannot overflow
             let entry_offset = index_start + i * 16;
             let point_id = read_u64_le(&mmap, entry_offset)?;
-            let vector_offset = read_u64_le(&mmap, entry_offset + 8)? as usize;
+            let vector_offset_u64 = read_u64_le(&mmap, entry_offset + 8)?;
+
+            // Validate offset fits in usize (32-bit platform protection)
+            let vector_offset: usize = usize::try_from(vector_offset_u64).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Vector offset {} too large for platform", vector_offset_u64),
+                )
+            })?;
+
             offsets.insert(point_id, vector_offset);
         }
 
@@ -120,14 +159,32 @@ impl MmapVectorStore {
     ///
     /// Returns a slice directly into the mmap'd memory.
     /// The OS will page in the data if needed.
+    /// Returns None if the ID is not found or if the offset is out of bounds
+    /// or misaligned (protects against corrupted files).
     #[inline]
     pub fn get(&self, id: PointId) -> Option<&[f32]> {
-        self.offsets.get(&id).map(|&offset| {
-            let byte_slice = &self.mmap[offset..offset + self.dim * 4];
-            // SAFETY: The file format guarantees proper alignment and the
-            // data was written as f32 values. We verify the magic number
-            // and version on load.
-            unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) }
+        self.offsets.get(&id).and_then(|&offset| {
+            // Alignment check: f32 requires 4-byte alignment (defense in depth)
+            // This protects against corrupted/malicious mmap files on strict-alignment
+            // architectures (ARM, SPARC) where misaligned access causes SIGBUS/UB
+            if offset % std::mem::align_of::<f32>() != 0 {
+                return None;
+            }
+
+            // Bounds check to prevent panic on corrupted/truncated files
+            let byte_len = self.dim.checked_mul(4)?;
+            let end = offset.checked_add(byte_len)?;
+            if end > self.mmap.len() {
+                return None;
+            }
+
+            let byte_slice = &self.mmap[offset..end];
+            // SAFETY: We have verified:
+            // 1. offset is 4-byte aligned (checked above)
+            // 2. byte_slice is within mmap bounds (checked above)
+            // 3. byte_len is self.dim * 4 (f32 size)
+            // The data was written as f32 values with proper alignment.
+            Some(unsafe { std::slice::from_raw_parts(byte_slice.as_ptr() as *const f32, self.dim) })
         })
     }
 
@@ -207,10 +264,38 @@ impl MmapVectorBuilder {
 
     /// Build the mmap file and return a reader
     pub fn build(self, path: &Path) -> io::Result<MmapVectorStore> {
-        // Calculate file size
-        let index_size = 8 + self.vectors.len() * 16; // count + entries
-        let vectors_size = self.vectors.len() * self.dim * 4;
-        let total_size = HEADER_SIZE + index_size + vectors_size;
+        // Calculate file size with overflow protection
+        // index_size = 8 (count) + len * 16 (entries)
+        let index_entries_size = self.vectors.len().checked_mul(16).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Index entries size overflow: too many vectors",
+            )
+        })?;
+        let index_size = 8usize
+            .checked_add(index_entries_size)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Index size overflow"))?;
+
+        // vectors_size = len * dim * 4 (f32 size)
+        let vectors_size = self
+            .vectors
+            .len()
+            .checked_mul(self.dim)
+            .and_then(|v| v.checked_mul(4))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Vector data size overflow: too many vectors or dimensions too large",
+                )
+            })?;
+
+        // total_size = HEADER_SIZE + index_size + vectors_size
+        let total_size = HEADER_SIZE
+            .checked_add(index_size)
+            .and_then(|s| s.checked_add(vectors_size))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "Total file size overflow")
+            })?;
 
         // Create and size the file
         let file = OpenOptions::new()
@@ -234,22 +319,25 @@ impl MmapVectorBuilder {
         mmap[24..32].copy_from_slice(&count.to_le_bytes());
 
         // Write index entries and vectors
-        let index_start = 32;
+        // Safe: we already validated total_size fits, so these calculations are safe
+        let index_start: usize = 32;
         let vectors_start = HEADER_SIZE + index_size;
+        let vector_byte_size = self.dim * 4; // Safe: validated in vectors_size calculation
 
         for (i, (point_id, vector)) in self.vectors.iter().enumerate() {
-            // Index entry
+            // Index entry (safe: validated in index_entries_size)
             let entry_offset = index_start + i * 16;
-            let vector_offset = vectors_start + i * self.dim * 4;
+            let vector_offset = vectors_start + i * vector_byte_size;
 
             mmap[entry_offset..entry_offset + 8].copy_from_slice(&point_id.to_le_bytes());
             mmap[entry_offset + 8..entry_offset + 16]
                 .copy_from_slice(&(vector_offset as u64).to_le_bytes());
 
             // Vector data
-            let vector_bytes: &[u8] =
-                unsafe { std::slice::from_raw_parts(vector.as_ptr() as *const u8, self.dim * 4) };
-            mmap[vector_offset..vector_offset + self.dim * 4].copy_from_slice(vector_bytes);
+            let vector_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(vector.as_ptr() as *const u8, vector_byte_size)
+            };
+            mmap[vector_offset..vector_offset + vector_byte_size].copy_from_slice(vector_bytes);
         }
 
         // Flush to disk
