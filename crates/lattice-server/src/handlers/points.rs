@@ -321,6 +321,38 @@ pub fn add_edge(
     collection_name: &str,
     request: AddEdgeRequest,
 ) -> LatticeResponse {
+    // Validate edge weight (NaN/Infinity/negative protection)
+    if !request.weight.is_finite() {
+        return LatticeResponse::bad_request(
+            "weight must be a finite number (not NaN or Infinity)",
+        );
+    }
+    if request.weight < 0.0 {
+        return LatticeResponse::bad_request("weight must be non-negative");
+    }
+
+    // Validate relation name
+    const MAX_RELATION_NAME_LENGTH: usize = 255;
+    if request.relation.is_empty() {
+        return LatticeResponse::bad_request("relation cannot be empty");
+    }
+    if request.relation.len() > MAX_RELATION_NAME_LENGTH {
+        return LatticeResponse::bad_request(&format!(
+            "relation name exceeds maximum length of {} chars",
+            MAX_RELATION_NAME_LENGTH
+        ));
+    }
+    // Only allow safe characters in relation names (alphanumeric, underscore, hyphen)
+    if !request
+        .relation
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return LatticeResponse::bad_request(
+            "relation can only contain alphanumeric characters, underscores, and hyphens",
+        );
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {

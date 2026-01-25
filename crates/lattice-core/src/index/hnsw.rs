@@ -400,13 +400,24 @@ impl HnswIndex {
             .rng_state
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1);
-        let random = (self.rng_state >> 33) as f64 / (1u64 << 31) as f64;
+
+        // Generate uniform random in (0, 1] - note: adding 1 ensures never zero
+        // This prevents ln(0) = -Infinity which would cause NaN/Infinity in level calc
+        let random = ((self.rng_state >> 33) + 1) as f64 / ((1u64 << 31) + 1) as f64;
 
         // Level = floor(-ln(uniform) * ml)
-        let level = (-random.ln() * self.config.ml).floor() as u16;
+        // With random in (0, 1], -ln(random) is in [0, +Infinity)
+        // Clamp the f64 result BEFORE casting to u16 to prevent undefined behavior
+        let level_f64 = (-random.ln() * self.config.ml).floor();
 
-        // Cap at reasonable maximum (prevents runaway in edge cases)
-        level.min(16)
+        // Handle NaN (from ml=0) or Infinity (from edge cases) by clamping
+        let level = if level_f64.is_finite() {
+            (level_f64 as u64).min(16) as u16
+        } else {
+            0 // Default to level 0 for invalid calculations
+        };
+
+        level
     }
 
     /// Search a single layer for the nearest neighbor (greedy)

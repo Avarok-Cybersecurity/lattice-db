@@ -11,7 +11,7 @@ use crate::dto::{
 use crate::dto::{
     ApiResponseBoolResult, ApiResponseCollectionInfo, ApiResponseCollectionsResponse,
 };
-use crate::router::{json_response, AppState};
+use crate::router::{json_response, AppState, InsertError};
 use lattice_core::{
     CollectionConfig, CollectionEngine, Distance, HnswConfig, LatticeResponse, VectorConfig,
 };
@@ -119,6 +119,56 @@ pub fn create_collection(
 
     // Build HNSW config (PCND: require explicit values or use recommended)
     let hnsw_config = if let Some(hnsw) = request.hnsw_config {
+        // Validate m (DoS protection: prevents excessive memory usage per node)
+        const MAX_M: usize = 256;
+        if hnsw.m == 0 {
+            return LatticeResponse::bad_request("m must be at least 1");
+        }
+        if hnsw.m > MAX_M {
+            return LatticeResponse::bad_request(&format!(
+                "m {} exceeds maximum of {}",
+                hnsw.m, MAX_M
+            ));
+        }
+
+        // Validate ef_construct (DoS protection: prevents OOM during index build)
+        const MAX_EF_CONSTRUCT: usize = 100_000;
+        if hnsw.ef_construct == 0 {
+            return LatticeResponse::bad_request("ef_construct must be at least 1");
+        }
+        if hnsw.ef_construct > MAX_EF_CONSTRUCT {
+            return LatticeResponse::bad_request(&format!(
+                "ef_construct {} exceeds maximum of {}",
+                hnsw.ef_construct, MAX_EF_CONSTRUCT
+            ));
+        }
+
+        // Validate m0 if provided (must be >= m for valid HNSW structure)
+        if let Some(m0) = hnsw.m0 {
+            if m0 < hnsw.m {
+                return LatticeResponse::bad_request(&format!(
+                    "m0 ({}) must be >= m ({})",
+                    m0, hnsw.m
+                ));
+            }
+            const MAX_M0: usize = 512;
+            if m0 > MAX_M0 {
+                return LatticeResponse::bad_request(&format!(
+                    "m0 {} exceeds maximum of {}",
+                    m0, MAX_M0
+                ));
+            }
+        }
+
+        // Validate ml if provided (must be finite and positive)
+        if let Some(ml) = hnsw.ml {
+            if !ml.is_finite() || ml <= 0.0 {
+                return LatticeResponse::bad_request(
+                    "ml must be a finite positive number",
+                );
+            }
+        }
+
         let m = hnsw.m;
         HnswConfig {
             m,
@@ -152,10 +202,21 @@ pub fn create_collection(
         Err(e) => return LatticeResponse::bad_request(&format!("Invalid config: {}", e)),
     };
 
-    // Insert with per-collection locking (insert_collection checks for duplicates)
-    if !state.insert_collection(name.to_string(), engine) {
-        warn!(collection = name, "Collection already exists");
-        return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
+    // Insert with per-collection locking (insert_collection checks for duplicates and capacity)
+    if let Err(e) = state.insert_collection(name.to_string(), engine) {
+        return match e {
+            InsertError::AlreadyExists => {
+                warn!(collection = name, "Collection already exists");
+                LatticeResponse::bad_request(&format!("Collection '{}' already exists", name))
+            }
+            InsertError::AtCapacity(max) => {
+                warn!(collection = name, max_collections = max, "Collection limit reached");
+                LatticeResponse::bad_request(&format!(
+                    "Maximum collection limit ({}) reached. Delete unused collections first.",
+                    max
+                ))
+            }
+        };
     }
 
     info!(

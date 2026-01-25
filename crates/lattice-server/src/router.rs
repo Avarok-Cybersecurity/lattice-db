@@ -19,6 +19,15 @@ pub type AppState = Arc<AppStateInner>;
 /// Per-collection engine wrapped in its own lock for fine-grained concurrency
 pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
 
+/// Error returned when inserting a collection fails
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InsertError {
+    /// Collection with this name already exists
+    AlreadyExists,
+    /// Maximum number of collections reached
+    AtCapacity(usize),
+}
+
 /// Server configuration (PCND: all fields explicit)
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -30,6 +39,8 @@ pub struct ServerConfig {
     pub max_get_batch_size: usize,
     /// Maximum queries per batch search request
     pub max_search_batch_size: usize,
+    /// Maximum number of collections (prevents unbounded memory growth)
+    pub max_collections: usize,
 }
 
 impl ServerConfig {
@@ -39,12 +50,14 @@ impl ServerConfig {
     /// - 10,000 points per upsert (reasonable for high-dim vectors)
     /// - 10,000 IDs per delete/get
     /// - 100 queries per batch search
+    /// - 1,000 max collections
     pub fn production() -> Self {
         Self {
             max_upsert_batch_size: 10_000,
             max_delete_batch_size: 10_000,
             max_get_batch_size: 10_000,
             max_search_batch_size: 100,
+            max_collections: 1_000,
         }
     }
 
@@ -56,6 +69,7 @@ impl ServerConfig {
             max_delete_batch_size: usize::MAX,
             max_get_batch_size: usize::MAX,
             max_search_batch_size: usize::MAX,
+            max_collections: usize::MAX,
         }
     }
 }
@@ -100,13 +114,22 @@ impl AppStateInner {
     }
 
     /// Insert a new collection (requires write lock on outer HashMap)
-    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> bool {
+    ///
+    /// Returns:
+    /// - `Ok(())` if collection was inserted successfully
+    /// - `Err(InsertError::AlreadyExists)` if collection already exists
+    /// - `Err(InsertError::AtCapacity)` if max_collections limit reached
+    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> Result<(), InsertError> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
-            return false;
+            return Err(InsertError::AlreadyExists);
+        }
+        // Check collection count limit (DoS protection)
+        if collections.len() >= self.config.max_collections {
+            return Err(InsertError::AtCapacity(self.config.max_collections));
         }
         collections.insert(name, Arc::new(RwLock::new(engine)));
-        true
+        Ok(())
     }
 
     /// Remove a collection (requires write lock on outer HashMap)

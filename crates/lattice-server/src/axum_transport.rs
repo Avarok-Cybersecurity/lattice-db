@@ -133,12 +133,16 @@ where
     // Convert LatticeResponse to Axum response
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
-    // Fast path: most responses have no custom headers
-    if response.headers.is_empty() {
-        return (status, response.body).into_response();
-    }
+    // Build response with security headers
+    let mut builder = axum::http::Response::builder()
+        .status(status)
+        // Security headers to prevent common web vulnerabilities
+        .header("X-Content-Type-Options", "nosniff")
+        .header("X-Frame-Options", "DENY")
+        .header("Cache-Control", "no-store")
+        .header("Content-Security-Policy", "default-src 'none'");
 
-    let mut builder = axum::http::Response::builder().status(status);
+    // Add custom response headers
     for (key, value) in response.headers {
         builder = builder.header(key, value);
     }

@@ -45,6 +45,31 @@ pub fn search_points(
     collection_name: &str,
     request: SearchRequest,
 ) -> LatticeResponse {
+    // Validate score_threshold (NaN/Infinity protection)
+    if let Some(threshold) = request.score_threshold {
+        if !threshold.is_finite() {
+            return LatticeResponse::bad_request(
+                "score_threshold must be a finite number (not NaN or Infinity)",
+            );
+        }
+    }
+
+    // Validate ef parameter bounds (CPU exhaustion protection)
+    const MAX_EF: usize = 10_000;
+    if let Some(ref params) = request.params {
+        if let Some(ef) = params.ef {
+            if ef == 0 {
+                return LatticeResponse::bad_request("ef must be at least 1");
+            }
+            if ef > MAX_EF {
+                return LatticeResponse::bad_request(&format!(
+                    "ef {} exceeds maximum of {}",
+                    ef, MAX_EF
+                ));
+            }
+        }
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -110,6 +135,29 @@ pub fn search_batch(
             request.searches.len(),
             max_batch
         ));
+    }
+
+    // Validate each query's score_threshold and ef
+    const MAX_EF: usize = 10_000;
+    for (i, req) in request.searches.iter().enumerate() {
+        if let Some(threshold) = req.score_threshold {
+            if !threshold.is_finite() {
+                return LatticeResponse::bad_request(&format!(
+                    "Query {}: score_threshold must be a finite number",
+                    i
+                ));
+            }
+        }
+        if let Some(ref params) = req.params {
+            if let Some(ef) = params.ef {
+                if ef == 0 || ef > MAX_EF {
+                    return LatticeResponse::bad_request(&format!(
+                        "Query {}: ef must be between 1 and {}",
+                        i, MAX_EF
+                    ));
+                }
+            }
+        }
     }
 
     let handle = match state.get_collection(collection_name) {
@@ -181,6 +229,28 @@ pub fn query_points(
     collection_name: &str,
     request: SearchRequest,
 ) -> LatticeResponse {
+    // Validate score_threshold (NaN/Infinity protection)
+    if let Some(threshold) = request.score_threshold {
+        if !threshold.is_finite() {
+            return LatticeResponse::bad_request(
+                "score_threshold must be a finite number (not NaN or Infinity)",
+            );
+        }
+    }
+
+    // Validate ef parameter bounds (CPU exhaustion protection)
+    const MAX_EF: usize = 10_000;
+    if let Some(ref params) = request.params {
+        if let Some(ef) = params.ef {
+            if ef == 0 || ef > MAX_EF {
+                return LatticeResponse::bad_request(&format!(
+                    "ef must be between 1 and {}",
+                    MAX_EF
+                ));
+            }
+        }
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {
@@ -330,6 +400,39 @@ pub fn traverse_graph(
     collection_name: &str,
     request: TraverseRequest,
 ) -> LatticeResponse {
+    // Validate max_depth to prevent exponential graph traversal (DoS protection)
+    const MAX_TRAVERSE_DEPTH: usize = 32;
+    if request.max_depth == 0 {
+        return LatticeResponse::bad_request("max_depth must be at least 1");
+    }
+    if request.max_depth > MAX_TRAVERSE_DEPTH {
+        return LatticeResponse::bad_request(&format!(
+            "max_depth {} exceeds maximum of {}",
+            request.max_depth, MAX_TRAVERSE_DEPTH
+        ));
+    }
+
+    // Validate relation filter list size and content
+    const MAX_RELATIONS_FILTER: usize = 100;
+    const MAX_RELATION_NAME_LENGTH: usize = 255;
+    if let Some(ref rels) = request.relations {
+        if rels.len() > MAX_RELATIONS_FILTER {
+            return LatticeResponse::bad_request(&format!(
+                "relations filter size {} exceeds maximum of {}",
+                rels.len(),
+                MAX_RELATIONS_FILTER
+            ));
+        }
+        for rel in rels {
+            if rel.len() > MAX_RELATION_NAME_LENGTH {
+                return LatticeResponse::bad_request(&format!(
+                    "relation name exceeds maximum length of {} chars",
+                    MAX_RELATION_NAME_LENGTH
+                ));
+            }
+        }
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {

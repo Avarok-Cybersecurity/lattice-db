@@ -478,7 +478,12 @@ where
     let mut builder = Response::builder()
         .status(status)
         .header("Content-Type", CONTENT_TYPE_JSON)
-        .header("Server-Timing", server_timing);
+        .header("Server-Timing", server_timing)
+        // Security headers to prevent common web vulnerabilities
+        .header("X-Content-Type-Options", "nosniff")
+        .header("X-Frame-Options", "DENY")
+        .header("Cache-Control", "no-store")
+        .header("Content-Security-Policy", "default-src 'none'");
 
     // Add rate limit headers if rate limiting is enabled
     if let Some(limiter) = rate_limiter {

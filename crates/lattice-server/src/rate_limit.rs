@@ -17,15 +17,18 @@ pub struct RateLimitConfig {
     pub burst_size: u32,
     /// Cleanup interval for stale entries
     pub cleanup_interval: Duration,
+    /// Maximum number of tracked IPs (DoS protection against spoofed IPs)
+    pub max_buckets: usize,
 }
 
 impl RateLimitConfig {
-    /// Production defaults - 100 req/s with burst of 200
+    /// Production defaults - 100 req/s with burst of 200, max 100K IPs
     pub fn production() -> Self {
         Self {
             requests_per_second: 100,
             burst_size: 200,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 100_000,
         }
     }
 
@@ -36,6 +39,7 @@ impl RateLimitConfig {
             requests_per_second: u32::MAX,
             burst_size: u32::MAX,
             cleanup_interval: Duration::from_secs(3600),
+            max_buckets: usize::MAX,
         }
     }
 }
@@ -97,6 +101,9 @@ impl RateLimiter {
     /// Check if a request from the given IP should be allowed
     ///
     /// Returns `true` if allowed, `false` if rate limited.
+    ///
+    /// If max_buckets limit is reached and IP is unknown, returns `false` to prevent
+    /// memory exhaustion from spoofed IP attacks.
     pub fn check(&self, ip: IpAddr) -> bool {
         // Periodic cleanup of stale entries
         self.maybe_cleanup();
@@ -105,11 +112,24 @@ impl RateLimiter {
         let burst = self.config.burst_size as f64;
 
         let mut buckets = self.buckets.lock();
-        let bucket = buckets
-            .entry(ip)
-            .or_insert_with(|| TokenBucket::new(self.config.burst_size));
 
-        bucket.try_consume(rate, burst)
+        // Check if IP already exists
+        if let Some(bucket) = buckets.get_mut(&ip) {
+            return bucket.try_consume(rate, burst);
+        }
+
+        // New IP - check capacity limit (DoS protection against spoofed IPs)
+        if buckets.len() >= self.config.max_buckets {
+            // At capacity - treat unknown IPs as rate limited
+            // This prevents memory exhaustion from IP spoofing attacks
+            return false;
+        }
+
+        // Create new bucket for this IP
+        let mut bucket = TokenBucket::new(self.config.burst_size);
+        let allowed = bucket.try_consume(rate, burst);
+        buckets.insert(ip, bucket);
+        allowed
     }
 
     /// Get remaining tokens for an IP (for headers)
@@ -163,6 +183,7 @@ mod tests {
             requests_per_second: 10,
             burst_size: 5,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -182,6 +203,7 @@ mod tests {
             requests_per_second: 1000, // High rate for fast refill
             burst_size: 1,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -203,6 +225,7 @@ mod tests {
             requests_per_second: 10,
             burst_size: 1,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip1 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));

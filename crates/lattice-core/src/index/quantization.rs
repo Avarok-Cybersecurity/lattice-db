@@ -142,9 +142,19 @@ impl QuantizedVector {
     /// vs full-precision query vector.
     ///
     /// Returns negated dot product (lower = more similar).
+    ///
+    /// # Panics
+    /// Panics if query length doesn't match quantized vector length.
     #[inline]
     pub fn dot_distance_asymmetric(&self, query: &[f32]) -> f32 {
-        debug_assert_eq!(self.data.len(), query.len(), "Dimension mismatch");
+        // Runtime check (not debug_assert) to prevent OOB access in release builds
+        assert_eq!(
+            self.data.len(),
+            query.len(),
+            "Dimension mismatch: quantized vector has {} dims, query has {}",
+            self.data.len(),
+            query.len()
+        );
 
         let mut dot = 0.0f32;
 
@@ -178,9 +188,19 @@ impl QuantizedVector {
     /// Asymmetric euclidean distance
     ///
     /// Computes L2 distance between a quantized vector and a f32 query.
+    ///
+    /// # Panics
+    /// Panics if query length doesn't match quantized vector length.
     #[inline]
     pub fn euclidean_distance_asymmetric(&self, query: &[f32]) -> f32 {
-        debug_assert_eq!(self.data.len(), query.len(), "Dimension mismatch");
+        // Runtime check (not debug_assert) to prevent OOB access in release builds
+        assert_eq!(
+            self.data.len(),
+            query.len(),
+            "Dimension mismatch: quantized vector has {} dims, query has {}",
+            self.data.len(),
+            query.len()
+        );
 
         let mut sum = 0.0f32;
 
@@ -209,9 +229,19 @@ impl QuantizedVector {
     /// Asymmetric cosine distance
     ///
     /// Computes cosine distance between a quantized vector and a f32 query.
+    ///
+    /// # Panics
+    /// Panics if query length doesn't match quantized vector length.
     #[inline]
     pub fn cosine_distance_asymmetric(&self, query: &[f32]) -> f32 {
-        debug_assert_eq!(self.data.len(), query.len(), "Dimension mismatch");
+        // Runtime check (not debug_assert) to prevent OOB access in release builds
+        assert_eq!(
+            self.data.len(),
+            query.len(),
+            "Dimension mismatch: quantized vector has {} dims, query has {}",
+            self.data.len(),
+            query.len()
+        );
 
         let mut dot = 0.0f32;
         let mut norm_a = 0.0f32;

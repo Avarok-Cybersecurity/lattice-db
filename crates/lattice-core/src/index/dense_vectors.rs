@@ -107,7 +107,10 @@ impl DenseVectorStore {
         // Check if ID already exists (update case)
         if let Some(&existing_idx) = self.id_to_idx.get(&id) {
             // Update in place
-            let start = existing_idx as usize * self.dim;
+            // Safe: existing_idx is u32, self.dim is usize, checked_mul prevents overflow
+            let start = (existing_idx as usize)
+                .checked_mul(self.dim)
+                .expect("Index overflow in dense vector update");
             self.data[start..start + self.dim].copy_from_slice(&vector);
             return existing_idx;
         }
@@ -115,7 +118,9 @@ impl DenseVectorStore {
         // Try to reuse a deleted slot
         let idx = if let Some(free_idx) = self.free_list.pop() {
             // Reuse deleted slot
-            let start = free_idx as usize * self.dim;
+            let start = (free_idx as usize)
+                .checked_mul(self.dim)
+                .expect("Index overflow in dense vector slot reuse");
             self.data[start..start + self.dim].copy_from_slice(&vector);
             self.idx_to_id[free_idx as usize] = id;
             self.clear_deleted(free_idx);
@@ -161,17 +166,28 @@ impl DenseVectorStore {
     }
 
     /// Get vector by dense index (fast O(1) access - use in hot path)
+    ///
+    /// # Panics
+    /// Panics if index is out of bounds or would cause integer overflow.
     #[inline]
     pub fn get_by_idx(&self, idx: DenseIdx) -> &[f32] {
-        let start = idx as usize * self.dim;
+        // Checked multiplication to prevent integer overflow with large dim
+        let start = (idx as usize)
+            .checked_mul(self.dim)
+            .expect("Index overflow in dense vector access");
         debug_assert!(start + self.dim <= self.data.len(), "Index out of bounds");
         &self.data[start..start + self.dim]
     }
 
     /// Get raw pointer to vector data (for prefetching)
+    ///
+    /// # Panics
+    /// Panics if index calculation would overflow.
     #[inline]
     pub fn get_ptr(&self, idx: DenseIdx) -> *const f32 {
-        let start = idx as usize * self.dim;
+        let start = (idx as usize)
+            .checked_mul(self.dim)
+            .expect("Index overflow in dense vector pointer access");
         unsafe { self.data.as_ptr().add(start) }
     }
 
