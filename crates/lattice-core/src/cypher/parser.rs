@@ -43,7 +43,7 @@ impl CypherParser {
             return Err(CypherError::syntax(
                 0,
                 0,
-                &format!(
+                format!(
                     "Query too large: {} bytes exceeds maximum of {} bytes",
                     input.len(),
                     MAX_QUERY_LENGTH
@@ -294,7 +294,7 @@ impl CypherParser {
                         return Err(CypherError::syntax(
                             0,
                             0,
-                            &format!("Invalid path range syntax: '{}'", range_str),
+                            format!("Invalid path range syntax: '{}'", range_str),
                         ));
                     }
                     if !parts[0].is_empty() {
@@ -302,7 +302,7 @@ impl CypherParser {
                             CypherError::syntax(
                                 0,
                                 0,
-                                &format!("Invalid path minimum: '{}'", parts[0]),
+                                format!("Invalid path minimum: '{}'", parts[0]),
                             )
                         })?);
                     }
@@ -311,13 +311,13 @@ impl CypherParser {
                             CypherError::syntax(
                                 0,
                                 0,
-                                &format!("Invalid path maximum: '{}'", parts[1]),
+                                format!("Invalid path maximum: '{}'", parts[1]),
                             )
                         })?);
                     }
                 } else {
                     let n: u32 = range_str.parse().map_err(|_| {
-                        CypherError::syntax(0, 0, &format!("Invalid path length: '{}'", range_str))
+                        CypherError::syntax(0, 0, format!("Invalid path length: '{}'", range_str))
                     })?;
                     min = Some(n);
                     max = Some(n);
@@ -332,7 +332,7 @@ impl CypherParser {
             return Err(CypherError::syntax(
                 0,
                 0,
-                &format!(
+                format!(
                     "Path length {} exceeds maximum allowed depth of {}",
                     effective_max, MAX_PATH_LENGTH
                 ),
@@ -345,7 +345,7 @@ impl CypherParser {
                 return Err(CypherError::syntax(
                     0,
                     0,
-                    &format!(
+                    format!(
                         "Invalid path range: minimum {} exceeds maximum {}",
                         min_val, max_val
                     ),
