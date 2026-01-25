@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.svg" alt="LatticeDB Logo" width="200">
+
 # LatticeDB
 
 ### World's First Production-Grade Hybrid Graph/Vector Database
