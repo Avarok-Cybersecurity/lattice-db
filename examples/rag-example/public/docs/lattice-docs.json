@@ -1,0 +1,113 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-01-25T18:31:15.983Z",
+  "source": "crates/lattice-server/README.md",
+  "chunks": [
+    {
+      "id": "overview-0",
+      "section": "Overview",
+      "content": "# LatticeDB Server\n\nHigh-performance Vector + Graph database REST API server. Qdrant-compatible with graph extensions.",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "quick-start-1",
+      "section": "Quick Start",
+      "content": "```bash\n# Run with default settings (port 6333)\ncargo run -p lattice-server\n\n# Run with custom address\ncargo run -p lattice-server -- 127.0.0.1:8080\n\n# Run with OpenAPI/Swagger UI\ncargo run -p lattice-server --features openapi\n# Visit http://localhost:6333/docs\n```",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "api-endpoints-collections-2",
+      "section": "API Endpoints > Collections",
+      "content": "#### List Collections\n```http\nGET /collections\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"collections\": [\n      { \"name\": \"my_collection\" }\n    ]\n  }\n}\n```\n\n#### Create Collection\n```http\nPUT /collections/{name}\nContent-Type: application/json\n\n{\n  \"vectors\": {\n    \"size\": 128,\n    \"distance\": \"Cosine\"\n  },\n  \"hnsw_config\": {\n    \"m\": 16,\n    \"ef_construct\": 200\n  }\n}\n```\n\n**Parameters:**\n- `vectors.size` - Vector dimensionality (required)\n- `vectors.distance` - Distance metric: `Cosine`, `Euclid`, or `Dot` (required)\n- `hnsw_config.m` - Max connections per node (optional, default: 16)\n- `hnsw_config.ef_construct` - Construction-time search queue size (optional, default: 100)\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": { \"result\": true }\n}\n```\n\n#### Get Collection Info\n```http\nGET /collections/{name}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"status\": \"green\",\n    \"vectors_count\": 1000,\n    \"points_count\": 1000,\n    \"config\": {\n      \"params\": {\n        \"vectors\": { \"size\": 128, \"distance\": \"Cosine\" }\n      },\n      \"hnsw_config\": { \"m\": 16, \"ef_construct\": 200 }\n    }\n  }\n}\n```\n\n#### Delete Collection\n```http\nDELETE /collections/{name}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": { \"result\": true }\n}\n```",
+      "metadata": {
+        "category": "api",
+        "method": "GET",
+        "path": "/collections"
+      }
+    },
+    {
+      "id": "api-endpoints-points-3",
+      "section": "API Endpoints > Points",
+      "content": "#### Upsert Points\n```http\nPUT /collections/{name}/points\nContent-Type: application/json\n\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": [0.1, 0.2, 0.3, ...],\n      \"payload\": { \"city\": \"London\", \"price\": 100 }\n    },\n    {\n      \"id\": 2,\n      \"vector\": [0.4, 0.5, 0.6, ...],\n      \"payload\": { \"city\": \"Paris\", \"price\": 200 }\n    }\n  ]\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"operation_id\": 0,\n    \"status\": \"completed\"\n  }\n}\n```\n\n#### Get Points by IDs\n```http\nPOST /collections/{name}/points\nContent-Type: application/json\n\n{\n  \"ids\": [1, 2, 3],\n  \"with_payload\": true,\n  \"with_vector\": false\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": [\n    { \"id\": 1, \"payload\": { \"city\": \"London\" } },\n    { \"id\": 2, \"payload\": { \"city\": \"Paris\" } }\n  ]\n}\n```\n\n#### Delete Points\n```http\nPOST /collections/{name}/points/delete\nContent-Type: application/json\n\n{\n  \"points\": [1, 2, 3]\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"operation_id\": 0,\n    \"status\": \"completed\"\n  }\n}\n```",
+      "metadata": {
+        "category": "api",
+        "method": "PUT",
+        "path": "/collections/{name}/points"
+      }
+    },
+    {
+      "id": "api-endpoints-search-4",
+      "section": "API Endpoints > Search",
+      "content": "#### Vector Search\n```http\nPOST /collections/{name}/points/search\nContent-Type: application/json\n\n{\n  \"vector\": [0.1, 0.2, 0.3, ...],\n  \"limit\": 10,\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.5,\n  \"params\": {\n    \"ef\": 128\n  }\n}\n```\n\n**Parameters:**\n- `vector` - Query vector (required)\n- `limit` - Number of results (required)\n- `with_payload` - Include payload in results (default: true)\n- `with_vector` - Include vector in results (default: false)\n- `score_threshold` - Filter results by score (optional)\n- `params.ef` - Search queue size (optional, overrides collection default)\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": [\n    { \"id\": 1, \"score\": 0.95, \"payload\": { \"city\": \"London\" } },\n    { \"id\": 5, \"score\": 0.89, \"payload\": { \"city\": \"Berlin\" } }\n  ]\n}\n```\n\n#### Scroll Points\n```http\nPOST /collections/{name}/points/scroll\nContent-Type: application/json\n\n{\n  \"limit\": 100,\n  \"offset\": null,\n  \"with_payload\": true,\n  \"with_vector\": false\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"points\": [\n      { \"id\": 1, \"payload\": { \"city\": \"London\" } },\n      { \"id\": 2, \"payload\": { \"city\": \"Paris\" } }\n    ],\n    \"next_page_offset\": 100\n  }\n}\n```",
+      "metadata": {
+        "category": "api",
+        "method": "POST",
+        "path": "/collections/{name}/points/search"
+      }
+    },
+    {
+      "id": "api-endpoints-graph-extensions-latticedb-5",
+      "section": "API Endpoints > Graph Extensions (LatticeDB)",
+      "content": "#### Add Edge\n```http\nPOST /collections/{name}/graph/edges\nContent-Type: application/json\n\n{\n  \"from_id\": 1,\n  \"to_id\": 2,\n  \"relation\": \"similar_to\",\n  \"weight\": 0.95\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": { \"status\": \"created\" }\n}\n```\n\n#### Traverse Graph\n```http\nPOST /collections/{name}/graph/traverse\nContent-Type: application/json\n\n{\n  \"start_id\": 1,\n  \"max_depth\": 3,\n  \"relations\": [\"similar_to\", \"related_to\"]\n}\n```\n\n**Parameters:**\n- `start_id` - Starting point ID (required)\n- `max_depth` - Maximum traversal depth (required)\n- `relations` - Filter by relation types (optional, null = all relations)\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"visited\": [2, 5, 8],\n    \"edges\": [\n      { \"from_id\": 1, \"to_id\": 2, \"relation\": \"similar_to\", \"weight\": 0.95 }\n    ],\n    \"max_depth_reached\": 2\n  }\n}\n```\n\n#### Cypher Query\n```http\nPOST /collections/{name}/graph/query\nContent-Type: application/json\n\n{\n  \"query\": \"MATCH (n:Person) WHERE n.age > 25 RETURN n.name\",\n  \"params\": { \"min_age\": 25 }\n}\n```\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"columns\": [\"n.name\"],\n    \"rows\": [[\"Alice\"], [\"Bob\"]],\n    \"stats\": { \"nodes_scanned\": 100, \"rows_returned\": 2 }\n  }\n}\n```",
+      "metadata": {
+        "category": "api",
+        "method": "POST",
+        "path": "/collections/{name}/graph/edges"
+      }
+    },
+    {
+      "id": "api-endpoints-import-export-6",
+      "section": "API Endpoints > Import/Export",
+      "content": "Binary import/export for collection backup and migration.\n\n#### Export Collection\n```http\nGET /collections/{name}/export\n```\n\n**Response:**\n- Content-Type: `application/octet-stream`\n- Headers: `X-Lattice-Format-Version`, `X-Lattice-Point-Count`, `X-Lattice-Dimension`\n- Body: Binary data (rkyv serialized)\n\n#### Import Collection\n```http\nPOST /collections/{name}/import?mode={mode}\n```\n\n**Query Parameters:**\n- `mode` (required): `create`, `replace`, or `merge`\n\n**Import Modes:**\n- `create` - Fail if collection exists (409)\n- `replace` - Drop existing, create new\n- `merge` - Add points to existing (skip duplicates)\n\n**Request:**\n- Content-Type: `application/octet-stream`\n- Body: Binary data from export\n\n**Response:**\n```json\n{\n  \"status\": \"ok\",\n  \"result\": {\n    \"points_imported\": 1000,\n    \"points_skipped\": 0,\n    \"dimension\": 128,\n    \"mode\": \"create\"\n  }\n}\n```\n\n**cURL Examples:**\n```bash\n# Export\ncurl http://localhost:6333/collections/test/export -o backup.lattice\n\n# Import (create)\ncurl -X POST \"http://localhost:6333/collections/new/import?mode=create\" \\\n  -H \"Content-Type: application/octet-stream\" \\\n  --data-binary @backup.lattice\n\n# Import (merge)\ncurl -X POST \"http://localhost:6333/collections/test/import?mode=merge\" \\\n  -H \"Content-Type: application/octet-stream\" \\\n  --data-binary @backup.lattice\n```",
+      "metadata": {
+        "category": "api",
+        "method": "GET",
+        "path": "/collections/{name}/export"
+      }
+    },
+    {
+      "id": "error-responses-7",
+      "section": "Error Responses",
+      "content": "All endpoints return errors in this format:\n\n```json\n{\n  \"status\": \"error\",\n  \"error\": \"Collection 'test' not found\"\n}\n```\n\n**HTTP Status Codes:**\n- `200` - Success\n- `400` - Bad Request (invalid JSON, validation error)\n- `404` - Not Found (collection or point not found)\n- `500` - Internal Server Error",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "feature-flags-8",
+      "section": "Feature Flags",
+      "content": "| Feature | Description |\n|---------|-------------|\n| `native` | Enable native HTTP server (default) |\n| `wasm` | Enable WASM/Service Worker transport |\n| `openapi` | Enable OpenAPI/Swagger UI at `/docs` |\n\n```bash\n# Build with specific features\ncargo build -p lattice-server --features \"native,openapi\"\n```",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "qdrant-compatibility-9",
+      "section": "Qdrant Compatibility",
+      "content": "This API is designed to be compatible with the [Qdrant](https://qdrant.tech/) vector database API. Most Qdrant client libraries should work with LatticeDB with minimal changes.\n\n**Supported Qdrant endpoints:**\n- Collection CRUD\n- Point upsert/get/delete\n- Vector search with scoring\n- Scroll pagination\n\n**LatticeDB Extensions:**\n- Graph edges between points\n- Graph traversal queries\n- Cypher query language\n- Binary import/export",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "security-authentication-10",
+      "section": "Security > Authentication",
+      "content": "Enable via environment variables:\n\n```bash\n# API Key authentication\nLATTICE_API_KEYS=key1,key2,key3\n\n# Bearer token authentication\nLATTICE_BEARER_TOKENS=token1,token2\n```\n\n**Usage:**\n```bash\ncurl -H \"Authorization: ApiKey your-key\" http://localhost:6333/collections\ncurl -H \"Authorization: Bearer your-token\" http://localhost:6333/collections\n```",
+      "metadata": {
+        "category": "api"
+      }
+    },
+    {
+      "id": "security-rate-limiting-11",
+      "section": "Security > Rate Limiting",
+      "content": "Enable rate limiting for production:\n\n```bash\nLATTICE_RATE_LIMIT=1  # Any value enables it\n```\n\n**Defaults:** 100 requests/second, burst capacity 200\n\n**Response Headers:**\n- `X-RateLimit-Limit`: Requests per second\n- `X-RateLimit-Remaining`: Available tokens\n- `X-RateLimit-Reset`: Reset window (1s)",
+      "metadata": {
+        "category": "api"
+      }
+    }
+  ]
+}

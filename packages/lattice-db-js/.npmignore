@@ -1,0 +1,17 @@
+# Ignore source files
+src/
+*.ts
+!*.d.ts
+
+# Ignore test files
+**/__tests__/
+*.test.ts
+
+# Ignore config files
+tsconfig.json
+jest.config.js
+esbuild.config.js
+
+# Include everything in dist and wasm
+!dist/
+!wasm/
