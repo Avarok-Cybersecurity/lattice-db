@@ -3,7 +3,8 @@ import type { DocChunk, DocsManifest } from './types';
 const CORS_PROXY = 'https://corsproxy.io/?';
 
 export async function loadLatticeDBDocs(): Promise<DocChunk[]> {
-  const response = await fetch('/docs/lattice-docs.json');
+  const baseUrl = import.meta.env.BASE_URL || '/';
+  const response = await fetch(`${baseUrl}docs/lattice-docs.json`);
   if (!response.ok) {
     throw new Error(`Failed to load docs: ${response.status}`);
   }
