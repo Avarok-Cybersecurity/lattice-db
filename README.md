@@ -49,6 +49,7 @@
 | [📚 API Reference](#-api-reference) | REST endpoints |
 | [🗺️ Roadmap](#️-roadmap) | What's next |
 | [🔬 Research](#-research) | Papers we build on |
+| [❓ FAQ](#-faq) | Common questions answered |
 | [🤝 Contributing](#-contributing) | How to help |
 | [📄 License](#-license) | MIT License |
 
@@ -599,12 +600,15 @@ LatticeDB implements **8 state-of-the-art optimizations**:
 - [x] Product Quantization (ScaNN-style)
 - [x] Qdrant API compatibility
 - [x] WASM browser support
+- [x] npm package (`lattice-db`)
+- [x] IndexedDB/OPFS persistence
+- [x] Hybrid vector+graph queries
 
 ### 🔨 In Progress
 
-- [ ] npm package for easy browser integration
-- [ ] IndexedDB/OPFS persistence for WASM
-- [ ] Hybrid vector+graph queries in Cypher
+- [ ] Data migrator tool (import from Qdrant/Neo4j)
+- [ ] Payload & metadata encryption (AES-256)
+- [ ] npm package improvements & documentation
 
 ### 📋 Planned
 
@@ -627,6 +631,258 @@ LatticeDB incorporates techniques from cutting-edge research:
 | [ScaNN](https://research.google/blog/announcing-scann-efficient-vector-similarity-search/) | Anisotropic quantization |
 | [VLDB 2025 Shortcuts](https://www.vldb.org/pvldb/vol18/p3518-chen.pdf) | Layer skip optimization |
 | [SimSIMD](https://github.com/ashvardanian/SimSIMD) | SIMD best practices |
+
+---
+
+## ❓ FAQ
+
+<details>
+<summary><b>🔷 I just want a graph database. Does LatticeDB support that?</b></summary>
+
+**Yes!** LatticeDB is a fully-featured graph database with Cypher query support. You can use it purely as a graph DB without touching vectors:
+
+```cypher
+// Create nodes
+CREATE (alice:Person {name: 'Alice', age: 30})
+CREATE (bob:Person {name: 'Bob', age: 25})
+
+// Create relationships
+MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+CREATE (a)-[:FRIENDS_WITH {since: 2020}]->(b)
+
+// Query relationships
+MATCH (p:Person)-[:FRIENDS_WITH]->(friend)
+RETURN p.name, friend.name
+```
+
+The vector field is optional - just don't include it and you have a lightweight graph database.
+
+</details>
+
+<details>
+<summary><b>🔶 I just want a vector database. Can I use LatticeDB for that?</b></summary>
+
+**Also yes!** LatticeDB implements the Qdrant REST API, so you can use it as a pure vector database:
+
+```python
+from qdrant_client import QdrantClient
+
+client = QdrantClient(host="localhost", port=6333)
+client.create_collection("my_vectors", vectors_config={"size": 128, "distance": "Cosine"})
+client.upsert("my_vectors", points=[...])
+results = client.search("my_vectors", query_vector=[...], limit=10)
+```
+
+The graph features (edges, Cypher) are optional - simply don't use them and you have a fast vector database.
+
+</details>
+
+<details>
+<summary><b>🔌 Can I use an existing Qdrant client to connect to LatticeDB?</b></summary>
+
+**Yes!** LatticeDB implements the Qdrant REST API, so any Qdrant client works out of the box:
+
+- ✅ Python: `qdrant-client`
+- ✅ JavaScript/TypeScript: `@qdrant/js-client-rest`
+- ✅ Go: `qdrant-go`
+- ✅ Rust: `qdrant-client`
+
+Just point your client to LatticeDB instead of Qdrant:
+
+```python
+# Instead of: QdrantClient(host="your-qdrant-server")
+client = QdrantClient(host="localhost", port=6333)  # LatticeDB
+```
+
+See the [Quick Start](#-quick-start) section for a complete example.
+
+</details>
+
+<details>
+<summary><b>📊 Do Cypher commands from Neo4j work with LatticeDB?</b></summary>
+
+**Yes!** LatticeDB supports standard Cypher query language:
+
+```cypher
+// All these work in LatticeDB
+MATCH (n:Label) RETURN n
+MATCH (a)-[r:RELATION]->(b) WHERE a.prop = 'value' RETURN a, b
+CREATE (n:Person {name: 'Alice'})
+MATCH (a), (b) WHERE a.id = 1 AND b.id = 2 CREATE (a)-[:KNOWS]->(b)
+MATCH (n) WHERE n.age > 25 RETURN n ORDER BY n.name LIMIT 10
+```
+
+LatticeDB's Cypher parser handles `MATCH`, `WHERE`, `RETURN`, `CREATE`, `ORDER BY`, `LIMIT`, and relationship traversals.
+
+</details>
+
+<details>
+<summary><b>⚡ Why is LatticeDB faster than both Qdrant and Neo4j?</b></summary>
+
+Several architectural advantages combine to make LatticeDB faster:
+
+| Factor | Impact |
+|--------|--------|
+| **No network overhead** | In-browser/embedded = zero RTT latency |
+| **No JVM** | Native Rust vs Neo4j's Java runtime |
+| **SIMD acceleration** | AVX2/NEON/WASM SIMD128 for distance calculations |
+| **In-process execution** | No serialization/deserialization between client and server |
+| **Optimized for small-medium data** | Algorithms tuned for 1K-50K points |
+| **Zero-copy operations** | Memory-mapped files, direct data access |
+
+For browser deployments, eliminating the network round-trip alone provides **100x+ speedup** compared to hosted databases.
+
+</details>
+
+<details>
+<summary><b>🌐 How can you possibly run a database in a browser?</b></summary>
+
+**100% Rust compiled to WebAssembly (WASM).**
+
+```
+Rust Source Code
+      ↓
+  wasm-pack
+      ↓
+WebAssembly Module (~500 KB gzipped)
+      ↓
+Runs in Browser with near-native speed
+```
+
+Key technologies that make this possible:
+
+- **Rust → WASM**: The entire codebase compiles to WASM with zero JavaScript
+- **WASM SIMD128**: Browser-native SIMD for fast vector operations
+- **IndexedDB/OPFS**: Persistent storage APIs for durability
+- **Web Workers**: Background indexing without blocking the UI
+
+The same code runs natively (Linux/macOS/Windows) and in browsers - true write-once, run-anywhere.
+
+</details>
+
+<details>
+<summary><b>🔄 How do I migrate from Neo4j or Qdrant to LatticeDB?</b></summary>
+
+**We're working on a data migration tool!** 🚧
+
+The planned migrator will support:
+
+- **Qdrant → LatticeDB**: Export collections and import via the compatible API
+- **Neo4j → LatticeDB**: Export Cypher dumps and replay CREATE statements
+
+For now, you can manually migrate by:
+
+1. Exporting data from your source database
+2. Using LatticeDB's API to import (Qdrant client for vectors, Cypher for graphs)
+
+**Stay tuned!** Follow the [GitHub repo](https://github.com/Avarok-Cybersecurity/lattice-db) for migration tool updates.
+
+</details>
+
+<details>
+<summary><b>💾 Where is data stored when running in the browser?</b></summary>
+
+LatticeDB uses browser-native storage APIs:
+
+| Storage | Use Case | Capacity |
+|---------|----------|----------|
+| **IndexedDB** | Persistent key-value storage | ~50% of free disk |
+| **OPFS** | File system API (faster) | ~50% of free disk |
+| **Memory** | Temporary/ephemeral mode | Limited by browser |
+
+Data persists across browser sessions and survives page refreshes. For OPFS, data is sandboxed per-origin (your domain only).
+
+</details>
+
+<details>
+<summary><b>📴 Does LatticeDB work offline?</b></summary>
+
+**Yes!** LatticeDB is designed for offline-first applications:
+
+- ✅ All operations run locally - no server required
+- ✅ Data persists in IndexedDB/OPFS
+- ✅ Perfect for PWAs (Progressive Web Apps)
+- ✅ Works on airplane mode, spotty connections, etc.
+
+Once the WASM module and your data are loaded, LatticeDB requires zero network connectivity.
+
+</details>
+
+<details>
+<summary><b>⚠️ When should I NOT use LatticeDB?</b></summary>
+
+Consider alternatives when:
+
+| Scenario | Why | Alternative |
+|----------|-----|-------------|
+| **Massive datasets (>100K vectors)** | Browser memory limits, indexing time | Hosted Qdrant, Pinecone |
+| **Strict data centralization** | LatticeDB runs on client devices | Traditional server DB |
+| **Sensitive IP in vectors** | Data lives on user's device | Server-side vector DB |
+| **Multi-user real-time sync** | No built-in replication | Firebase, Supabase |
+
+**However**, many "centralized" use cases still work great:
+
+```javascript
+// App downloads latest embeddings from your server on startup
+const latestData = await fetch('/api/knowledge-base');
+await db.import('knowledge', latestData);
+// Now queries run locally - fast & free!
+```
+
+This pattern gives you **centralized data synchronicity** without paying for compute - clients do all the heavy lifting. Great for knowledge bases, documentation, product catalogs, etc.
+
+</details>
+
+<details>
+<summary><b>🔐 Does LatticeDB have at-rest encryption?</b></summary>
+
+**Not yet, but it's coming soon!**
+
+We're working on encryption support for:
+
+- 🔒 **Payload encryption** - Encrypt the metadata stored with each point
+- 🔒 **Metadata encryption** - Encrypt collection and point metadata
+
+> **Note:** Vector encryption is not planned - vectors must remain unencrypted for similarity search to work. If your embeddings contain sensitive information, consider using privacy-preserving embedding techniques.
+
+For now, if you need encryption, consider:
+- Encrypting sensitive payload fields before inserting
+- Using the browser's Web Crypto API for client-side encryption
+- Running in a secure context (HTTPS only)
+
+**Stay tuned!** Payload encryption is on the roadmap.
+
+</details>
+
+<details>
+<summary><b>🤔 Why hasn't anyone built this before?</b></summary>
+
+Great question! Here's our totally scientific analysis:
+
+```mermaid
+quadrantChart
+    title Why No One Built This Before
+    x-axis Low Sanity --> High Sanity
+    y-axis "Just use hosted DB" --> "Compile Rust to WASM with SIMD"
+    quadrant-1 "LatticeDB Zone"
+    quadrant-2 "Theoretical Physicists"
+    quadrant-3 "Normal Developers"
+    quadrant-4 "Mass Psychosis"
+    "LatticeDB Team": [0.85, 0.90]
+    "Everyone Else": [0.75, 0.15]
+    "The mass we're trying to convert": [0.50, 0.50]
+```
+
+Real talk: it required several technologies to mature simultaneously:
+
+1. **WASM SIMD** - Only standardized in 2021
+2. **OPFS** - File system API for browsers, relatively new
+3. **Rust ecosystem** - `wasm-pack`, `wasm-bindgen` needed to mature
+4. **Someone crazy enough** - To think "what if Neo4j but in a browser?" 🤪
+
+We're just built different. (And by "different" we mean "slightly unhinged Rust developers who think everything should compile to WASM.")
+
+</details>
 
 ---
 
