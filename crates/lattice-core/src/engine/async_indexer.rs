@@ -225,7 +225,9 @@ impl AsyncIndexer {
         }
 
         // Signal waiters once after batch
-        let (_lock, cv) = &*self.backpressure_signal;
+        // CRITICAL: Must hold lock when calling notify_all to prevent lost wakeup race
+        let (lock, cv) = &*self.backpressure_signal;
+        let _guard = lock.lock();
         cv.notify_all();
     }
 }
