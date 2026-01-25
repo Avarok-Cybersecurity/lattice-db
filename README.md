@@ -809,6 +809,28 @@ Once the WASM module and your data are loaded, LatticeDB requires zero network c
 </details>
 
 <details>
+<summary><b>🖥️ Can I host LatticeDB on a centralized server?</b></summary>
+
+**Absolutely!** LatticeDB has blazing-fast native support for server deployments:
+
+```bash
+# Run as a server (Qdrant-compatible API)
+cargo run --release -p lattice-server
+# Listening on http://localhost:6333
+```
+
+This is perfect for:
+
+- 🔄 **Multi-user real-time sync** - All clients connect to the same server
+- 🏢 **Enterprise deployments** - Central data management and access control
+- 📊 **Larger datasets** - Server has more memory than browser tabs
+- 🔐 **Sensitive data** - Keep vectors and payloads on infrastructure you control
+
+You get the same API whether running in-browser (WASM) or on a server (native) - same code, same queries, flexible deployment.
+
+</details>
+
+<details>
 <summary><b>⚠️ When should I NOT use LatticeDB?</b></summary>
 
 Consider alternatives when:
@@ -818,7 +840,6 @@ Consider alternatives when:
 | **Massive datasets (>100K vectors)** | Browser memory limits, indexing time | Hosted Qdrant, Pinecone |
 | **Strict data centralization** | LatticeDB runs on client devices | Traditional server DB |
 | **Sensitive IP in vectors** | Data lives on user's device | Server-side vector DB |
-| **Multi-user real-time sync** | No built-in replication | Firebase, Supabase |
 
 **However**, many "centralized" use cases still work great:
 
@@ -860,17 +881,22 @@ For now, if you need encryption, consider:
 Great question! Here's our totally scientific analysis:
 
 ```mermaid
-quadrantChart
-    title Why No One Built This Before
-    x-axis Low Sanity --> High Sanity
-    y-axis "Just use hosted DB" --> "Compile Rust to WASM with SIMD"
-    quadrant-1 "LatticeDB Zone"
-    quadrant-2 "Theoretical Physicists"
-    quadrant-3 "Normal Developers"
-    quadrant-4 "Mass Psychosis"
-    "LatticeDB Team": [0.85, 0.90]
-    "Everyone Else": [0.75, 0.15]
-    "The mass we're trying to convert": [0.50, 0.50]
+graph TD
+    A[🤔 Want a browser database?] --> B{Just use SQLite?}
+    B -->|But I need vectors| C{Use a hosted DB?}
+    C -->|But latency...| D{Build it yourself?}
+    D -->|In Rust?| E{Compile to WASM?}
+    E -->|With SIMD?| F{And graph support?}
+    F -->|Yes to all| G[🎉 You built LatticeDB!]
+
+    B -->|OK fine| H[😴 Normal Developer]
+    C -->|Sure| H
+    D -->|Nope| H
+    E -->|Too hard| H
+    F -->|Why bother| H
+
+    style G fill:#90EE90
+    style H fill:#FFB6C1
 ```
 
 Real talk: it required several technologies to mature simultaneously:
