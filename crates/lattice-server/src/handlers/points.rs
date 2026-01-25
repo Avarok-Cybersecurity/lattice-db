@@ -286,6 +286,24 @@ pub fn add_edge(
     collection_name: &str,
     request: AddEdgeRequest,
 ) -> LatticeResponse {
+    // Validate edge weight (DoS/corruption protection)
+    if request.weight.is_nan() || request.weight.is_infinite() {
+        return LatticeResponse::bad_request("Edge weight must be a finite number");
+    }
+    if request.weight < 0.0 {
+        return LatticeResponse::bad_request("Edge weight cannot be negative");
+    }
+
+    // Validate relation name length (DoS protection)
+    if request.relation.is_empty() {
+        return LatticeResponse::bad_request("Relation name cannot be empty");
+    }
+    if request.relation.len() > 255 {
+        return LatticeResponse::bad_request(
+            "Relation name exceeds maximum length of 255 characters",
+        );
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {

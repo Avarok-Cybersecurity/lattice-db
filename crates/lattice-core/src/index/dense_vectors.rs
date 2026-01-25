@@ -58,9 +58,16 @@ impl DenseVectorStore {
     }
 
     /// Create with pre-allocated capacity
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dim * capacity` would overflow `usize`.
     pub fn with_capacity(dim: usize, capacity: usize) -> Self {
+        let data_capacity = dim
+            .checked_mul(capacity)
+            .expect("DenseVectorStore: dim * capacity overflow");
         Self {
-            data: Vec::with_capacity(dim * capacity),
+            data: Vec::with_capacity(data_capacity),
             dim,
             id_to_idx: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
             idx_to_id: Vec::with_capacity(capacity),
@@ -106,16 +113,20 @@ impl DenseVectorStore {
 
         // Check if ID already exists (update case)
         if let Some(&existing_idx) = self.id_to_idx.get(&id) {
-            // Update in place
-            let start = existing_idx as usize * self.dim;
+            // Update in place (checked_mul prevents overflow on large idx * dim)
+            let start = (existing_idx as usize)
+                .checked_mul(self.dim)
+                .expect("DenseVectorStore: index overflow in update");
             self.data[start..start + self.dim].copy_from_slice(&vector);
             return existing_idx;
         }
 
         // Try to reuse a deleted slot
         let idx = if let Some(free_idx) = self.free_list.pop() {
-            // Reuse deleted slot
-            let start = free_idx as usize * self.dim;
+            // Reuse deleted slot (checked_mul prevents overflow)
+            let start = (free_idx as usize)
+                .checked_mul(self.dim)
+                .expect("DenseVectorStore: index overflow in reuse");
             self.data[start..start + self.dim].copy_from_slice(&vector);
             self.idx_to_id[free_idx as usize] = id;
             self.clear_deleted(free_idx);
@@ -161,17 +172,35 @@ impl DenseVectorStore {
     }
 
     /// Get vector by dense index (fast O(1) access - use in hot path)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx * dim` overflows or if index is out of bounds.
     #[inline]
     pub fn get_by_idx(&self, idx: DenseIdx) -> &[f32] {
-        let start = idx as usize * self.dim;
+        // checked_mul prevents memory corruption from overflow
+        let start = (idx as usize)
+            .checked_mul(self.dim)
+            .expect("DenseVectorStore: index overflow in get_by_idx");
         debug_assert!(start + self.dim <= self.data.len(), "Index out of bounds");
         &self.data[start..start + self.dim]
     }
 
     /// Get raw pointer to vector data (for prefetching)
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure idx is valid and not deleted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx * dim` overflows.
     #[inline]
     pub fn get_ptr(&self, idx: DenseIdx) -> *const f32 {
-        let start = idx as usize * self.dim;
+        // checked_mul prevents memory corruption from overflow
+        let start = (idx as usize)
+            .checked_mul(self.dim)
+            .expect("DenseVectorStore: index overflow in get_ptr");
         unsafe { self.data.as_ptr().add(start) }
     }
 

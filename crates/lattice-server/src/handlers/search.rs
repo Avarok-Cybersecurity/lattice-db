@@ -66,6 +66,13 @@ pub fn search_points(
         ));
     }
 
+    // Validate score_threshold is finite (type confusion protection)
+    if let Some(threshold) = request.score_threshold {
+        if threshold.is_nan() || threshold.is_infinite() {
+            return LatticeResponse::bad_request("score_threshold must be a finite number");
+        }
+    }
+
     // Cap search limit to prevent memory exhaustion (DoS protection)
     const MAX_SEARCH_LIMIT: usize = 10_000;
     let limit = request.limit.min(MAX_SEARCH_LIMIT);
@@ -137,7 +144,7 @@ pub fn search_batch(
     };
     let engine = handle.read();
 
-    // Validate query vector dimensions (crash/DoS protection)
+    // Validate query vector dimensions and score_threshold (crash/DoS protection)
     let expected_dim = engine.config().vectors.size;
     for (i, req) in request.searches.iter().enumerate() {
         if req.vector.len() != expected_dim {
@@ -147,6 +154,15 @@ pub fn search_batch(
                 expected_dim,
                 req.vector.len()
             ));
+        }
+        // Validate score_threshold is finite (type confusion protection)
+        if let Some(threshold) = req.score_threshold {
+            if threshold.is_nan() || threshold.is_infinite() {
+                return LatticeResponse::bad_request(&format!(
+                    "Query {} score_threshold must be a finite number",
+                    i
+                ));
+            }
         }
     }
 
@@ -230,6 +246,13 @@ pub fn query_points(
             expected_dim,
             request.vector.len()
         ));
+    }
+
+    // Validate score_threshold is finite (type confusion protection)
+    if let Some(threshold) = request.score_threshold {
+        if threshold.is_nan() || threshold.is_infinite() {
+            return LatticeResponse::bad_request("score_threshold must be a finite number");
+        }
     }
 
     // Cap search limit to prevent memory exhaustion (DoS protection)
@@ -362,6 +385,34 @@ pub fn traverse_graph(
     collection_name: &str,
     request: TraverseRequest,
 ) -> LatticeResponse {
+    // Validate max_depth to prevent full graph traversal (DoS protection)
+    const MAX_TRAVERSE_DEPTH: usize = 100;
+    if request.max_depth > MAX_TRAVERSE_DEPTH {
+        return LatticeResponse::bad_request(&format!(
+            "max_depth {} exceeds maximum of {}",
+            request.max_depth, MAX_TRAVERSE_DEPTH
+        ));
+    }
+
+    // Validate relation filter list (DoS protection)
+    if let Some(ref rels) = request.relations {
+        const MAX_RELATION_FILTERS: usize = 100;
+        if rels.len() > MAX_RELATION_FILTERS {
+            return LatticeResponse::bad_request(&format!(
+                "Relation filter count {} exceeds maximum of {}",
+                rels.len(),
+                MAX_RELATION_FILTERS
+            ));
+        }
+        for rel in rels {
+            if rel.len() > 255 {
+                return LatticeResponse::bad_request(
+                    "Relation name exceeds maximum length of 255 characters",
+                );
+            }
+        }
+    }
+
     let handle = match state.get_collection(collection_name) {
         Some(h) => h,
         None => {

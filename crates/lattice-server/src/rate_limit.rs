@@ -17,15 +17,22 @@ pub struct RateLimitConfig {
     pub burst_size: u32,
     /// Cleanup interval for stale entries
     pub cleanup_interval: Duration,
+    /// Maximum number of IP buckets to track (DoS protection)
+    /// When exceeded, oldest entries are evicted
+    pub max_buckets: usize,
 }
 
 impl RateLimitConfig {
     /// Production defaults - 100 req/s with burst of 200
+    ///
+    /// max_buckets set to 100,000 to limit memory usage (~10MB at ~100 bytes/bucket)
+    /// while supporting legitimate high-cardinality client pools
     pub fn production() -> Self {
         Self {
             requests_per_second: 100,
             burst_size: 200,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 100_000,
         }
     }
 
@@ -36,6 +43,7 @@ impl RateLimitConfig {
             requests_per_second: u32::MAX,
             burst_size: u32::MAX,
             cleanup_interval: Duration::from_secs(3600),
+            max_buckets: usize::MAX,
         }
     }
 }
@@ -105,6 +113,19 @@ impl RateLimiter {
         let burst = self.config.burst_size as f64;
 
         let mut buckets = self.buckets.lock();
+
+        // Evict oldest entry if at max capacity and this is a new IP
+        if buckets.len() >= self.config.max_buckets && !buckets.contains_key(&ip) {
+            // Find and remove the oldest bucket (LRU eviction)
+            if let Some(oldest_ip) = buckets
+                .iter()
+                .min_by_key(|(_, bucket)| bucket.last_update)
+                .map(|(ip, _)| *ip)
+            {
+                buckets.remove(&oldest_ip);
+            }
+        }
+
         let bucket = buckets
             .entry(ip)
             .or_insert_with(|| TokenBucket::new(self.config.burst_size));
@@ -163,6 +184,7 @@ mod tests {
             requests_per_second: 10,
             burst_size: 5,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -182,6 +204,7 @@ mod tests {
             requests_per_second: 1000, // High rate for fast refill
             burst_size: 1,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -203,6 +226,7 @@ mod tests {
             requests_per_second: 10,
             burst_size: 1,
             cleanup_interval: Duration::from_secs(60),
+            max_buckets: 1000,
         };
         let limiter = RateLimiter::new(config);
         let ip1 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
@@ -215,5 +239,43 @@ mod tests {
         // Both should be rate limited now
         assert!(!limiter.check(ip1));
         assert!(!limiter.check(ip2));
+    }
+
+    #[test]
+    fn test_rate_limiter_max_buckets_eviction() {
+        let config = RateLimitConfig {
+            requests_per_second: 10,
+            burst_size: 5,
+            cleanup_interval: Duration::from_secs(60),
+            max_buckets: 2, // Very small for testing
+        };
+        let limiter = RateLimiter::new(config);
+        let ip1 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let ip2 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+        let ip3 = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3));
+
+        // Add first two IPs
+        limiter.check(ip1);
+        std::thread::sleep(Duration::from_millis(1)); // Ensure different timestamps
+        limiter.check(ip2);
+
+        // Verify both are tracked
+        {
+            let buckets = limiter.buckets.lock();
+            assert_eq!(buckets.len(), 2);
+        }
+
+        // Add third IP - should evict oldest (ip1)
+        std::thread::sleep(Duration::from_millis(1));
+        limiter.check(ip3);
+
+        // Verify only 2 buckets and ip1 was evicted
+        {
+            let buckets = limiter.buckets.lock();
+            assert_eq!(buckets.len(), 2);
+            assert!(!buckets.contains_key(&ip1), "ip1 should be evicted");
+            assert!(buckets.contains_key(&ip2), "ip2 should remain");
+            assert!(buckets.contains_key(&ip3), "ip3 should be added");
+        }
     }
 }

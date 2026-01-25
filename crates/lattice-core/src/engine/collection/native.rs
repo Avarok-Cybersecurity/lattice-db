@@ -147,17 +147,33 @@ impl CollectionEngine {
                 drop(pending); // Release read lock
 
                 // Wait for indexer to catch up using condvar (efficient, no CPU spin)
+                // Use exponential backoff with max retries to prevent infinite loops
+                const MAX_BACKPRESSURE_RETRIES: u32 = 100;
+                const INITIAL_WAIT_MS: u64 = 10;
+                const MAX_WAIT_MS: u64 = 1000;
+
                 let (lock, cv) = &*self.backpressure_signal;
                 let mut guard = lock.lock_safe()?;
+                let mut retries = 0u32;
+                let mut wait_ms = INITIAL_WAIT_MS;
+
                 while self.pending_index.read_safe()?.len() > PENDING_THRESHOLD / 2 {
-                    // Wait with timeout to handle edge cases (indexer stopped, etc.)
+                    if retries >= MAX_BACKPRESSURE_RETRIES {
+                        // Indexer may be stuck or stopped - proceed anyway to prevent deadlock
+                        break;
+                    }
+
+                    // Wait with exponential backoff
                     let result = cv
-                        .wait_timeout(guard, std::time::Duration::from_millis(10))
+                        .wait_timeout(guard, std::time::Duration::from_millis(wait_ms))
                         .map_err(|e| LatticeError::Internal {
                             code: 50004,
                             message: format!("Condvar wait failed: {}", e),
                         })?;
                     guard = result.0;
+
+                    retries += 1;
+                    wait_ms = (wait_ms * 2).min(MAX_WAIT_MS); // Exponential backoff capped at 1s
                 }
             }
         }

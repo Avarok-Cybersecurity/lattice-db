@@ -164,10 +164,21 @@ pub fn create_collection(
         Err(e) => return LatticeResponse::bad_request(&format!("Invalid config: {}", e)),
     };
 
-    // Insert with per-collection locking (insert_collection checks for duplicates)
-    if !state.insert_collection(name.to_string(), engine) {
-        warn!(collection = name, "Collection already exists");
-        return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
+    // Insert with per-collection locking (insert_collection checks for duplicates and limits)
+    match state.insert_collection(name.to_string(), engine) {
+        Ok(true) => {} // Successfully created
+        Ok(false) => {
+            warn!(collection = name, "Collection already exists");
+            return LatticeResponse::bad_request(&format!("Collection '{}' already exists", name));
+        }
+        Err(msg) => {
+            warn!(
+                collection = name,
+                error = msg,
+                "Failed to create collection"
+            );
+            return LatticeResponse::bad_request(msg);
+        }
     }
 
     info!(

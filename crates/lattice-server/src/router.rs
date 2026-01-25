@@ -30,6 +30,8 @@ pub struct ServerConfig {
     pub max_get_batch_size: usize,
     /// Maximum queries per batch search request
     pub max_search_batch_size: usize,
+    /// Maximum number of collections (DoS protection)
+    pub max_collections: usize,
 }
 
 impl ServerConfig {
@@ -39,12 +41,14 @@ impl ServerConfig {
     /// - 10,000 points per upsert (reasonable for high-dim vectors)
     /// - 10,000 IDs per delete/get
     /// - 100 queries per batch search
+    /// - 1,000 max collections (reasonable for multi-tenant deployments)
     pub fn production() -> Self {
         Self {
             max_upsert_batch_size: 10_000,
             max_delete_batch_size: 10_000,
             max_get_batch_size: 10_000,
             max_search_batch_size: 100,
+            max_collections: 1_000,
         }
     }
 
@@ -56,6 +60,7 @@ impl ServerConfig {
             max_delete_batch_size: usize::MAX,
             max_get_batch_size: usize::MAX,
             max_search_batch_size: usize::MAX,
+            max_collections: usize::MAX,
         }
     }
 }
@@ -100,13 +105,25 @@ impl AppStateInner {
     }
 
     /// Insert a new collection (requires write lock on outer HashMap)
-    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> bool {
+    ///
+    /// Returns:
+    /// - `Ok(true)` if collection was created
+    /// - `Ok(false)` if collection already exists
+    /// - `Err(msg)` if max collections limit reached
+    pub fn insert_collection(
+        &self,
+        name: String,
+        engine: CollectionEngine,
+    ) -> Result<bool, &'static str> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
-            return false;
+            return Ok(false);
+        }
+        if collections.len() >= self.config.max_collections {
+            return Err("Maximum number of collections reached");
         }
         collections.insert(name, Arc::new(RwLock::new(engine)));
-        true
+        Ok(true)
     }
 
     /// Remove a collection (requires write lock on outer HashMap)
