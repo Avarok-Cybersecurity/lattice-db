@@ -1,17 +1,16 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="LatticeDB Logo" width="200">
+<img src="assets/logo.svg" alt="LatticeDB Logo" width="300vw">
 
-# LatticeDB
+# LatticeDB: World's First Hybrid Graph/Vector Database
 
-### World's First Production-Grade Hybrid Graph/Vector Database
+### Built in pure Rust
 
 **Runs in your browser. Zero backend required.**
 
 *Democratizing AI databases for frontend developers*
 
 [![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Try_It_Now!-ff6b6b?style=for-the-badge)](https://avarok-cybersecurity.github.io/lattice-db/chat/)
-[![Deploy Status](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/release.yml/badge.svg)](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/release.yml)
 
 [![CI](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/ci.yml/badge.svg)](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-book-blue.svg)](https://Avarok-Cybersecurity.github.io/lattice-db/)
@@ -21,6 +20,7 @@
 [![Qdrant Compatible](https://img.shields.io/badge/qdrant-API%20compatible-green.svg)](https://qdrant.tech)
 [![Cypher](https://img.shields.io/badge/cypher-query%20language-blue.svg)](https://neo4j.com/docs/cypher-manual/)
 [![Memory](https://img.shields.io/badge/memory-2.4MB-brightgreen.svg)](#-ultra-low-footprint)
+[![Deploy Status](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/release.yml/badge.svg)](https://github.com/Avarok-Cybersecurity/lattice-db/actions/workflows/release.yml)
 
 ---
 
