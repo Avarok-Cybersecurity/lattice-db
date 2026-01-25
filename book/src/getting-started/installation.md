@@ -58,16 +58,17 @@ cargo build --release -p lattice-server
 ### NPM Package
 
 ```bash
-npm install @lattice-db/client
+npm install lattice-db
 ```
 
 ### CDN
 
 ```html
 <script type="module">
-  import { LatticeDB } from 'https://unpkg.com/@lattice-db/client/dist/lattice.js';
+  import init, { LatticeDB } from 'https://unpkg.com/lattice-db/lattice_db.js';
 
-  const db = await LatticeDB.create();
+  await init();
+  const db = new LatticeDB();
 </script>
 ```
 

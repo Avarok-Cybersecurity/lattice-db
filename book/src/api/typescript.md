@@ -129,11 +129,11 @@ const results = db.search(
   10            // limit
 );
 
-// Search with options
+// Search with options (snake_case for WASM binding)
 const results = db.search('my_collection', queryVector, 10, {
-  ef: 100,           // Search quality parameter
-  withPayload: true,
-  withVector: false
+  with_payload: true,   // Include payload in results (default: true)
+  with_vector: false,   // Include vector in results (default: false)
+  score_threshold: 0.5  // Optional minimum score filter
 });
 
 // Results format
@@ -214,15 +214,15 @@ const client = new LatticeClient('http://localhost:6333', {
 ### Collections
 
 ```typescript
-// Create
+// Create (REST API uses snake_case)
 await client.createCollection('docs', {
   vectors: { size: 128, distance: 'Cosine' },
-  hnswConfig: { m: 16, efConstruct: 200 }
+  hnsw_config: { m: 16, ef_construct: 200 }
 });
 
 // Get info
 const info = await client.getCollection('docs');
-console.log(`Vectors: ${info.vectorsCount}`);
+console.log(`Vectors: ${info.vectors_count}`);
 
 // List all
 const collections = await client.listCollections();
@@ -259,7 +259,7 @@ const results = await client.search('docs', {
       { key: 'category', match: { value: 'tech' } }
     ]
   },
-  withPayload: true
+  with_payload: true  // Note: REST API uses snake_case
 });
 ```
 
@@ -269,14 +269,14 @@ const results = await client.search('docs', {
 // First page
 let result = await client.scroll('docs', {
   limit: 100,
-  withPayload: true
+  with_payload: true  // Note: REST API uses snake_case
 });
 
 // Subsequent pages
-while (result.nextPageOffset !== null) {
+while (result.next_page_offset !== null) {
   result = await client.scroll('docs', {
     limit: 100,
-    offset: result.nextPageOffset
+    offset: result.next_page_offset
   });
   // Process result.points
 }
@@ -299,7 +299,7 @@ const neighbors = await client.getNeighbors('docs', 1);
 // Cypher query
 const result = await client.cypherQuery('docs', {
   query: 'MATCH (n:Person) RETURN n.name',
-  params: {}
+  parameters: {}
 });
 ```
 

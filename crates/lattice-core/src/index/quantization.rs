@@ -69,10 +69,15 @@ impl QuantizedVector {
         let offset = min_val;
 
         // Quantize: map to [0, 255] then shift to [-128, 127]
+        // Guard against division by zero (can occur if scale underflows to 0)
         let data: Vec<i8> = vector
             .iter()
             .map(|&v| {
-                let normalized = (v - offset) / scale;
+                let normalized = if scale != 0.0 {
+                    (v - offset) / scale
+                } else {
+                    0.0
+                };
                 let clamped = normalized.clamp(0.0, 255.0);
                 (clamped.round() - 128.0) as i8
             })

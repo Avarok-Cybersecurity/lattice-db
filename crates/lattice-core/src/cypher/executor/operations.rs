@@ -151,7 +151,11 @@ impl QueryExecutor {
                 match self.evaluate_predicate(pred, &row, ctx) {
                     Ok(true) => filtered.push(row),
                     Ok(false) => continue,
-                    Err(_) => continue, // Skip on error
+                    Err(e) => {
+                        return Err(CypherError::Internal {
+                            message: format!("Predicate evaluation failed for node {}: {}", id, e),
+                        })
+                    }
                 }
             }
             filtered
@@ -831,7 +835,8 @@ impl QueryExecutor {
             .get(from.as_str())
             .and_then(|v| match v {
                 CypherValue::NodeRef(id) => Some(*id),
-                CypherValue::Int(id) => Some(*id as u64),
+                // Only accept non-negative integers as valid point IDs
+                CypherValue::Int(id) if *id >= 0 => Some(*id as u64),
                 _ => None,
             })
             .ok_or_else(|| CypherError::unknown_variable(from.as_str()))?;
@@ -841,7 +846,8 @@ impl QueryExecutor {
             .get(to.as_str())
             .and_then(|v| match v {
                 CypherValue::NodeRef(id) => Some(*id),
-                CypherValue::Int(id) => Some(*id as u64),
+                // Only accept non-negative integers as valid point IDs
+                CypherValue::Int(id) if *id >= 0 => Some(*id as u64),
                 _ => None,
             })
             .ok_or_else(|| CypherError::unknown_variable(to.as_str()))?;
@@ -879,22 +885,42 @@ impl QueryExecutor {
     }
 
     /// Execute DeleteNode operation
+    ///
+    /// If `detach` is true, removes all outgoing edges from the node first.
+    /// Note: Incoming edges (where this node is the target) are not removed
+    /// as this would require scanning all nodes. Use explicit relationship
+    /// deletion for complete cleanup.
     pub(crate) fn execute_delete_node(
         &self,
         input: &LogicalOp,
         _variable: &String,
-        _detach: bool,
+        detach: bool,
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, _) = self.execute_op(input, ctx)?;
 
         let mut deleted = 0u64;
+        let mut relationships_deleted = 0u64;
 
         for row in input_rows {
             // Find the node ID in the row
             for value in row.iter() {
                 if let CypherValue::NodeRef(id) = value {
-                    // TODO: If detach, remove all relationships first
+                    // If detach, remove all outgoing relationships first
+                    if detach {
+                        if let Ok(edges) = ctx.collection.get_edges(*id) {
+                            for edge in edges {
+                                if ctx
+                                    .collection
+                                    .remove_edge(*id, edge.target_id, Some(&edge.relation))
+                                    .is_ok()
+                                {
+                                    relationships_deleted += 1;
+                                }
+                            }
+                        }
+                    }
+
                     deleted += ctx.collection.delete_points(&[*id])? as u64;
                 }
             }
@@ -902,6 +928,7 @@ impl QueryExecutor {
 
         let mut stats = QueryStats::default();
         stats.nodes_deleted = deleted;
+        stats.relationships_deleted = relationships_deleted;
 
         Ok((Vec::new(), stats))
     }

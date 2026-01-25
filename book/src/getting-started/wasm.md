@@ -21,24 +21,28 @@ LatticeDB compiles to WebAssembly (WASM) and runs entirely in the browser. This 
       await init();
 
       // Create database instance
-      const db = await LatticeDB.create({
-        name: 'my_collection',
-        vectorSize: 128,
-        distance: 'cosine'
+      const db = new LatticeDB();
+
+      // Create a collection
+      db.createCollection('my_collection', {
+        vectors: { size: 128, distance: 'Cosine' }
       });
 
-      // Add a point
-      await db.upsert({
-        id: 1,
-        vector: new Float32Array(128).fill(0.1),
-        payload: { title: 'Hello World' }
-      });
+      // Add points
+      db.upsert('my_collection', [
+        {
+          id: 1,
+          vector: Array.from({ length: 128 }, () => 0.1),
+          payload: { title: 'Hello World' }
+        }
+      ]);
 
       // Search
-      const results = await db.search({
-        vector: new Float32Array(128).fill(0.1),
-        limit: 10
-      });
+      const results = db.search(
+        'my_collection',
+        Array.from({ length: 128 }, () => 0.1),
+        10  // limit
+      );
 
       console.log('Results:', results);
     }
@@ -49,155 +53,67 @@ LatticeDB compiles to WebAssembly (WASM) and runs entirely in the browser. This 
 </html>
 ```
 
-### Service Worker
+### Service Worker (Planned)
 
-> **Note**: Service Worker transport (fetch interception) is not yet implemented.
-> The examples below show the planned API. Currently, use the direct
-> LatticeDB API from the main thread or a Web Worker.
+> **Note**: Service Worker transport is planned for a future release.
+> Currently, use the direct LatticeDB API from the main thread or a Web Worker.
 
-For persistent storage and background processing:
+## Storage
 
-```javascript
-// sw.js - Service Worker
-import init, { LatticeDB } from './lattice_db.js';
+LatticeDB currently uses **in-memory storage** by default. All data is lost when the page reloads.
 
-let db = null;
+Future releases will support:
+- Origin Private File System (OPFS) for persistent storage
+- IndexedDB fallback for older browsers
 
-self.addEventListener('install', async (event) => {
-  event.waitUntil(async () => {
-    await init();
-    db = await LatticeDB.create({
-      name: 'persistent_collection',
-      vectorSize: 128,
-      storage: 'opfs'  // Use Origin Private File System
-    });
-  });
-});
-
-self.addEventListener('message', async (event) => {
-  const { type, data } = event.data;
-
-  switch (type) {
-    case 'upsert':
-      await db.upsert(data);
-      event.ports[0].postMessage({ success: true });
-      break;
-    case 'search':
-      const results = await db.search(data);
-      event.ports[0].postMessage({ results });
-      break;
-  }
-});
-```
-
-Register the service worker:
-
-```javascript
-// main.js
-if ('serviceWorker' in navigator) {
-  const registration = await navigator.serviceWorker.register('/sw.js');
-
-  // Send messages to the service worker
-  async function search(vector) {
-    const channel = new MessageChannel();
-    registration.active.postMessage(
-      { type: 'search', data: { vector, limit: 10 } },
-      [channel.port2]
-    );
-    return new Promise(resolve => {
-      channel.port1.onmessage = (e) => resolve(e.data.results);
-    });
-  }
-}
-```
-
-## Storage Options
-
-### In-Memory (Default)
-
-Fast but not persistent across page reloads:
-
-```javascript
-const db = await LatticeDB.create({
-  name: 'temp_collection',
-  storage: 'memory'
-});
-```
-
-### Origin Private File System (OPFS)
-
-Persistent browser storage with high performance:
-
-```javascript
-const db = await LatticeDB.create({
-  name: 'persistent_collection',
-  storage: 'opfs'
-});
-```
-
-OPFS provides:
-- Persistent storage across sessions
-- Better performance than IndexedDB
-- File system-like API
-- Available in modern browsers (Chrome 86+, Firefox 111+, Safari 15.2+)
-
-### IndexedDB Fallback
-
-For older browsers without OPFS:
-
-```javascript
-const db = await LatticeDB.create({
-  name: 'fallback_collection',
-  storage: 'indexeddb'
-});
-```
+For now, if you need persistence, consider serializing your data to localStorage or IndexedDB separately.
 
 ## Framework Integration
 
 ### React
 
 ```jsx
-import { useEffect, useState } from 'react';
-import init, { LatticeDB } from '@lattice-db/client';
+import { useEffect, useState, useRef } from 'react';
+import init, { LatticeDB } from 'lattice-db';
 
-function useLatticeDB(config) {
-  const [db, setDb] = useState(null);
-  const [loading, setLoading] = useState(true);
+function useLatticeDB(collectionName, vectorSize) {
+  const dbRef = useRef(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     async function initialize() {
       await init();
-      const instance = await LatticeDB.create(config);
-      setDb(instance);
-      setLoading(false);
+      const db = new LatticeDB();
+      db.createCollection(collectionName, {
+        vectors: { size: vectorSize, distance: 'Cosine' }
+      });
+      dbRef.current = db;
+      setReady(true);
     }
     initialize();
-  }, []);
+  }, [collectionName, vectorSize]);
 
-  return { db, loading };
+  return { db: dbRef.current, ready };
 }
 
 function SearchComponent() {
-  const { db, loading } = useLatticeDB({
-    name: 'my_collection',
-    vectorSize: 128
-  });
+  const { db, ready } = useLatticeDB('my_collection', 128);
   const [results, setResults] = useState([]);
 
   const handleSearch = async (query) => {
     if (!db) return;
     const embedding = await getEmbedding(query); // Your embedding function
-    const searchResults = await db.search({ vector: embedding, limit: 10 });
+    const searchResults = db.search('my_collection', embedding, 10);
     setResults(searchResults);
   };
 
-  if (loading) return <div>Loading...</div>;
+  if (!ready) return <div>Loading...</div>;
 
   return (
     <div>
       <input onChange={(e) => handleSearch(e.target.value)} />
       <ul>
-        {results.map(r => <li key={r.id}>{r.payload.title}</li>)}
+        {results.map(r => <li key={r.id}>{r.payload?.title}</li>)}
       </ul>
     </div>
   );
@@ -209,29 +125,30 @@ function SearchComponent() {
 ```vue
 <script setup>
 import { ref, onMounted } from 'vue';
-import init, { LatticeDB } from '@lattice-db/client';
+import init, { LatticeDB } from 'lattice-db';
 
 const db = ref(null);
 const results = ref([]);
 
 onMounted(async () => {
   await init();
-  db.value = await LatticeDB.create({
-    name: 'my_collection',
-    vectorSize: 128
+  const instance = new LatticeDB();
+  instance.createCollection('my_collection', {
+    vectors: { size: 128, distance: 'Cosine' }
   });
+  db.value = instance;
 });
 
-async function search(query) {
-  const embedding = await getEmbedding(query);
-  results.value = await db.value.search({ vector: embedding, limit: 10 });
+function search(query) {
+  const embedding = getEmbedding(query); // Your embedding function
+  results.value = db.value.search('my_collection', embedding, 10);
 }
 </script>
 
 <template>
   <input @input="search($event.target.value)" />
   <ul>
-    <li v-for="r in results" :key="r.id">{{ r.payload.title }}</li>
+    <li v-for="r in results" :key="r.id">{{ r.payload?.title }}</li>
   </ul>
 </template>
 ```
@@ -255,12 +172,12 @@ const vector = [0.1, 0.2, 0.3, ...];
 Batch upserts for better performance:
 
 ```javascript
-// Good - single WASM call
-await db.upsertBatch(points);
+// Good - single WASM call with multiple points
+db.upsert('my_collection', [point1, point2, point3]);
 
 // Bad - multiple WASM calls
 for (const point of points) {
-  await db.upsert(point);
+  db.upsert('my_collection', [point]);
 }
 ```
 
@@ -270,19 +187,20 @@ Offload heavy operations to a Web Worker:
 
 ```javascript
 // worker.js
-import init, { LatticeDB } from '@lattice-db/client';
+import init, { LatticeDB } from 'lattice-db';
 
 let db;
 
 self.onmessage = async ({ data }) => {
   if (data.type === 'init') {
     await init();
-    db = await LatticeDB.create(data.config);
+    db = new LatticeDB();
+    db.createCollection(data.collection, data.config);
     self.postMessage({ type: 'ready' });
   }
 
   if (data.type === 'search') {
-    const results = await db.search(data.query);
+    const results = db.search(data.collection, data.vector, data.limit);
     self.postMessage({ type: 'results', results });
   }
 };
@@ -296,7 +214,7 @@ WASM SIMD is enabled by default for 4-8x faster distance calculations. Ensure yo
 // vite.config.js
 export default {
   optimizeDeps: {
-    exclude: ['@lattice-db/client']  // Don't transform WASM
+    exclude: ['lattice-db']  // Don't transform WASM
   }
 };
 ```

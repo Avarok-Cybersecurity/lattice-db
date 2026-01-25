@@ -32,7 +32,17 @@ PUT /collections/{collection_name}
 }
 ```
 
-**Distance Options:** `Cosine`, `Euclid`, `Dot`
+**Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `vectors.size` | Yes | Vector dimension |
+| `vectors.distance` | Yes | `Cosine`, `Euclid`, or `Dot` |
+| `hnsw_config` | No | HNSW index configuration (uses defaults if omitted) |
+| `hnsw_config.m` | Yes* | Max connections per node (*required if hnsw_config provided) |
+| `hnsw_config.ef_construct` | Yes* | Build-time search queue size (*required if hnsw_config provided) |
+| `hnsw_config.m0` | No | Layer 0 connections (default: 2*m) |
+| `hnsw_config.ml` | No | Level multiplier (default: 1/ln(m)) |
 
 **Response:**
 ```json
@@ -229,24 +239,43 @@ PUT /collections/{collection_name}/points
 }
 ```
 
-### Get Point
+### Get Points
+
+Retrieve points by their IDs (batch operation).
 
 ```http
-GET /collections/{collection_name}/points/{point_id}
+POST /collections/{collection_name}/points
+```
+
+**Request Body:**
+```json
+{
+  "ids": [1, 2, 3],
+  "with_payload": true,
+  "with_vector": false
+}
 ```
 
 **Response:**
 ```json
 {
   "status": "ok",
-  "result": {
-    "id": 1,
-    "vector": [0.1, 0.2, 0.3, ...],
-    "payload": {
-      "title": "Document 1",
-      "category": "tech"
+  "result": [
+    {
+      "id": 1,
+      "payload": {
+        "title": "Document 1",
+        "category": "tech"
+      }
+    },
+    {
+      "id": 2,
+      "payload": {
+        "title": "Document 2",
+        "category": "science"
+      }
     }
-  }
+  ]
 }
 ```
 
@@ -440,8 +469,8 @@ POST /collections/{collection_name}/graph/edges
 **Request Body:**
 ```json
 {
-  "source_id": 1,
-  "target_id": 2,
+  "from_id": 1,
+  "to_id": 2,
   "weight": 0.9,
   "relation": "REFERENCES"
 }
@@ -535,7 +564,7 @@ POST /collections/{collection_name}/graph/query
 ```json
 {
   "query": "MATCH (n:Person) WHERE n.age > $min_age RETURN n.name",
-  "params": {
+  "parameters": {
     "min_age": 25
   }
 }
@@ -721,7 +750,7 @@ curl -X POST http://localhost:6333/collections/docs/points/query \
 # Add edge
 curl -X POST http://localhost:6333/collections/docs/graph/edges \
   -H "Content-Type: application/json" \
-  -d '{"source_id": 1, "target_id": 2, "weight": 0.9, "relation": "REFS"}'
+  -d '{"from_id": 1, "to_id": 2, "weight": 0.9, "relation": "REFS"}'
 
 # Cypher query
 curl -X POST http://localhost:6333/collections/docs/graph/query \

@@ -53,15 +53,16 @@ curl -X PUT http://localhost:6333/collections/my_collection \
 use lattice_core::Point;
 
 // Create a point with vector and metadata
-let point = Point::new(
+// Payload values are stored as JSON-encoded bytes
+let point = Point::new_vector(
     1,  // Point ID
     vec![0.1, 0.2, 0.3, /* ... 128 dimensions */],
 )
-.with_payload("title", "Introduction to LatticeDB")
-.with_payload("category", "documentation");
+.with_field("title", serde_json::to_vec("Introduction to LatticeDB").unwrap())
+.with_field("category", serde_json::to_vec("documentation").unwrap());
 
 // Upsert the point
-engine.upsert(point)?;
+engine.upsert_points(vec![point])?;
 ```
 
 ### REST API
@@ -120,12 +121,12 @@ curl -X POST http://localhost:6333/collections/my_collection/points/query \
 ### Rust
 
 ```rust
-use lattice_core::Edge;
-
 // Add an edge between two points
 engine.add_edge(
-    1,  // Source point ID
-    Edge::new(2, 0.9, "REFERENCES"),  // Target, weight, relation
+    1,               // Source point ID
+    2,               // Target point ID
+    "REFERENCES",    // Relation type
+    0.9,             // Edge weight
 )?;
 ```
 
@@ -217,10 +218,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add documents with embeddings
     for (id, title, embedding) in documents {
-        let point = Point::new(id, embedding)
-            .with_payload("title", title)
-            .with_label("Document");
-        engine.upsert(point)?;
+        let point = Point::new_vector(id, embedding)
+            .with_field("title", serde_json::to_vec(&title).unwrap());
+        engine.upsert_points(vec![point])?;
     }
 
     // Add relationships via Cypher

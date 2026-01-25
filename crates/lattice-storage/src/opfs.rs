@@ -423,7 +423,13 @@ mod wasm_impl {
         stream: &FileSystemWritableFileStream,
         data: &[u8],
     ) -> StorageResult<()> {
-        let array = Uint8Array::new_with_length(data.len() as u32);
+        let len = u32::try_from(data.len()).map_err(|_| StorageError::Io {
+            message: format!(
+                "Data too large for OPFS write: {} bytes (max: 4GB)",
+                data.len()
+            ),
+        })?;
+        let array = Uint8Array::new_with_length(len);
         array.copy_from(data);
 
         let promise = stream
