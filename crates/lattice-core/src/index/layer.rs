@@ -59,7 +59,12 @@ impl HnswNode {
     ///
     /// Uses binary search for O(log n) duplicate check instead of O(n) linear scan.
     /// Maintains sorted order for efficient iteration and lookup.
+    /// Silently rejects self-loops (node cannot be its own neighbor).
     pub fn add_neighbor(&mut self, layer: u16, neighbor: PointId) {
+        // Prevent self-loops - a node cannot be its own neighbor
+        if neighbor == self.point_id {
+            return;
+        }
         if let Some(neighbors) = self.neighbors.get_mut(layer as usize) {
             match neighbors.binary_search(&neighbor) {
                 Ok(_) => {}                                  // Already exists
@@ -262,6 +267,21 @@ mod tests {
         node.add_neighbor(0, 10); // Duplicate
 
         assert_eq!(node.neighbors_at(0).len(), 1);
+    }
+
+    #[test]
+    fn test_node_no_self_loops() {
+        let mut node = HnswNode::new(42, 0);
+
+        // Try to add self as neighbor
+        node.add_neighbor(0, 42); // Self-loop - should be rejected
+
+        // Self should not be in neighbor list
+        assert!(node.neighbors_at(0).is_empty());
+
+        // Other neighbors should still work
+        node.add_neighbor(0, 10);
+        assert_eq!(node.neighbors_at(0), &[10]);
     }
 
     #[test]

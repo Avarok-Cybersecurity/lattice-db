@@ -22,6 +22,9 @@ parking_lot = "0.12"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
 
+# Constant-time comparison for auth (timing attack prevention)
+subtle = "2.5"
+
 # Native HTTP server (Hyper - fast, or Axum - convenient)
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }

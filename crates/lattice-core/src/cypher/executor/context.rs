@@ -78,6 +78,9 @@ pub struct ExecutionContext<'a> {
     pub collection: &'a mut CollectionEngine,
     /// Query parameters
     pub parameters: HashMap<String, CypherValue>,
+    /// Variable name → column index mapping for proper variable binding
+    /// Updated by scan/expand operations as they add columns to rows
+    variable_bindings: HashMap<String, usize>,
     /// Cache for point lookups using FxHashMap for faster integer hashing
     /// Uses `Arc<Point>` to avoid cloning entire Point structs on cache hit
     /// Uses SyncCell for thread-safe parallel access during sort key extraction
@@ -103,6 +106,7 @@ impl<'a> ExecutionContext<'a> {
         Self {
             collection,
             parameters: HashMap::new(),
+            variable_bindings: HashMap::new(),
             point_cache: SyncCell::new(FxHashMap::default()),
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
@@ -119,12 +123,39 @@ impl<'a> ExecutionContext<'a> {
         Self {
             collection,
             parameters,
+            variable_bindings: HashMap::new(),
             point_cache: SyncCell::new(FxHashMap::default()),
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
             label_bitmap_cache: SyncCell::new(FxHashMap::default()),
             arena: Bump::with_capacity(64 * 1024), // 64KB initial capacity
         }
+    }
+
+    /// Register a variable with its column index
+    /// Called by scan/expand operations when they add columns to rows
+    #[inline]
+    pub fn bind_variable(&mut self, name: &str, column_index: usize) {
+        self.variable_bindings.insert(name.to_string(), column_index);
+    }
+
+    /// Get the column index for a variable
+    /// Returns None if the variable is not bound
+    #[inline]
+    pub fn get_variable_column(&self, name: &str) -> Option<usize> {
+        self.variable_bindings.get(name).copied()
+    }
+
+    /// Get current number of bound variables (next column index)
+    #[inline]
+    pub fn column_count(&self) -> usize {
+        self.variable_bindings.len()
+    }
+
+    /// Clear variable bindings (for subquery isolation)
+    #[inline]
+    pub fn clear_bindings(&mut self) {
+        self.variable_bindings.clear();
     }
 
     /// Get a point by ID, using cache if available

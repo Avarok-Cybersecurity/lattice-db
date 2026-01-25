@@ -35,11 +35,22 @@ impl QueryExecutor {
                     return Ok(value.clone());
                 }
 
-                // For now, assume first column is the variable
-                // TODO: Proper variable binding
-                row.first()
-                    .cloned()
-                    .ok_or_else(|| CypherError::unknown_variable(name.as_str()))
+                // Look up variable binding to get correct column index
+                if let Some(column_index) = ctx.get_variable_column(name.as_str()) {
+                    row.get(column_index)
+                        .cloned()
+                        .ok_or_else(|| CypherError::Internal {
+                            message: format!(
+                                "Variable '{}' bound to column {} but row has only {} columns",
+                                name,
+                                column_index,
+                                row.len()
+                            ),
+                        })
+                } else {
+                    // Variable not bound - return error with clear message
+                    Err(CypherError::unknown_variable(name.as_str()))
+                }
             }
 
             Expr::Property { expr, property } => {
@@ -191,7 +202,13 @@ impl QueryExecutor {
         match op {
             UnaryOp::Not => Ok(CypherValue::Bool(!value.is_truthy())),
             UnaryOp::Neg => match value {
-                CypherValue::Int(i) => Ok(CypherValue::Int(-i)),
+                CypherValue::Int(i) => {
+                    i.checked_neg()
+                        .map(CypherValue::Int)
+                        .ok_or_else(|| CypherError::ArithmeticOverflow {
+                            operation: "negation".to_string(),
+                        })
+                }
                 CypherValue::Float(f) => Ok(CypherValue::Float(-f)),
                 _ => Err(CypherError::InvalidOperation {
                     operation: "negation".to_string(),
@@ -202,14 +219,20 @@ impl QueryExecutor {
         }
     }
 
-    /// Add two values
+    /// Add two values with overflow checking
     pub(crate) fn add_values(
         &self,
         left: &CypherValue,
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a + b)),
+            (CypherValue::Int(a), CypherValue::Int(b)) => {
+                a.checked_add(*b)
+                    .map(CypherValue::Int)
+                    .ok_or_else(|| CypherError::ArithmeticOverflow {
+                        operation: "addition".to_string(),
+                    })
+            }
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a + b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 + b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a + *b as f64)),
@@ -224,14 +247,20 @@ impl QueryExecutor {
         }
     }
 
-    /// Subtract two values
+    /// Subtract two values with overflow checking
     pub(crate) fn sub_values(
         &self,
         left: &CypherValue,
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a - b)),
+            (CypherValue::Int(a), CypherValue::Int(b)) => {
+                a.checked_sub(*b)
+                    .map(CypherValue::Int)
+                    .ok_or_else(|| CypherError::ArithmeticOverflow {
+                        operation: "subtraction".to_string(),
+                    })
+            }
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a - b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 - b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a - *b as f64)),
@@ -242,14 +271,20 @@ impl QueryExecutor {
         }
     }
 
-    /// Multiply two values
+    /// Multiply two values with overflow checking
     pub(crate) fn mul_values(
         &self,
         left: &CypherValue,
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => Ok(CypherValue::Int(a * b)),
+            (CypherValue::Int(a), CypherValue::Int(b)) => {
+                a.checked_mul(*b)
+                    .map(CypherValue::Int)
+                    .ok_or_else(|| CypherError::ArithmeticOverflow {
+                        operation: "multiplication".to_string(),
+                    })
+            }
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a * b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 * b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a * *b as f64)),
@@ -372,6 +407,10 @@ impl QueryExecutor {
     }
 
     /// Get a property from a point
+    ///
+    /// # Security
+    /// Properties starting with `_` (except `_labels`) are internal and blocked
+    /// to prevent access to internal metadata.
     pub(crate) fn get_point_property(
         &self,
         point: &Point,
@@ -381,6 +420,7 @@ impl QueryExecutor {
         match property {
             "id" => return Ok(CypherValue::Int(point.id as i64)),
             "_labels" => {
+                // _labels is allowed for label queries
                 if let Some(labels_bytes) = point.payload.get("_labels") {
                     if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
                         return Ok(CypherValue::list(
@@ -394,6 +434,15 @@ impl QueryExecutor {
                 return Ok(CypherValue::list(vec![]));
             }
             _ => {}
+        }
+
+        // Block access to other internal properties (starting with _)
+        // This prevents access to internal metadata
+        if property.starts_with('_') {
+            return Err(CypherError::UnknownProperty {
+                variable: "node".to_string(),
+                property: property.to_string(),
+            });
         }
 
         // Get from payload

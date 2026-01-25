@@ -11,6 +11,12 @@ use pest::Parser;
 use pest_derive::Parser;
 // smallvec removed - AST now uses Vec for simplicity
 
+/// Maximum allowed query string length (100KB) - prevents OOM from huge queries
+const MAX_QUERY_LENGTH: usize = 100 * 1024;
+
+/// Maximum allowed path traversal depth - prevents DoS via graph explosion
+const MAX_PATH_LENGTH: u32 = 100;
+
 #[derive(Parser)]
 #[grammar = "cypher/cypher.pest"]
 struct CypherPestParser;
@@ -27,7 +33,24 @@ impl CypherParser {
     }
 
     /// Parse a Cypher statement
+    ///
+    /// # Security
+    /// - Enforces maximum query length to prevent OOM attacks
+    /// - Validates path lengths to prevent graph traversal DoS
     pub fn parse(&self, input: &str) -> CypherResult<Statement> {
+        // Validate query size (DoS protection)
+        if input.len() > MAX_QUERY_LENGTH {
+            return Err(CypherError::syntax(
+                0,
+                0,
+                &format!(
+                    "Query too large: {} bytes exceeds maximum of {} bytes",
+                    input.len(),
+                    MAX_QUERY_LENGTH
+                ),
+            ));
+        }
+
         let pairs = CypherPestParser::parse(Rule::statement, input)
             .map_err(|e| self.pest_error_to_cypher(e))?;
 
@@ -266,17 +289,71 @@ impl CypherParser {
                 let range_str = inner.as_str();
                 if range_str.contains("..") {
                     let parts: Vec<&str> = range_str.split("..").collect();
-                    if !parts[0].is_empty() {
-                        min = Some(parts[0].parse().unwrap_or(1));
+                    // Validate exactly 2 parts for range syntax
+                    if parts.len() != 2 {
+                        return Err(CypherError::syntax(
+                            0,
+                            0,
+                            &format!("Invalid path range syntax: '{}'", range_str),
+                        ));
                     }
-                    if parts.len() > 1 && !parts[1].is_empty() {
-                        max = Some(parts[1].parse().unwrap_or(u32::MAX));
+                    if !parts[0].is_empty() {
+                        min = Some(parts[0].parse().map_err(|_| {
+                            CypherError::syntax(
+                                0,
+                                0,
+                                &format!("Invalid path minimum: '{}'", parts[0]),
+                            )
+                        })?);
+                    }
+                    if !parts[1].is_empty() {
+                        max = Some(parts[1].parse().map_err(|_| {
+                            CypherError::syntax(
+                                0,
+                                0,
+                                &format!("Invalid path maximum: '{}'", parts[1]),
+                            )
+                        })?);
                     }
                 } else {
-                    let n: u32 = range_str.parse().unwrap_or(1);
+                    let n: u32 = range_str.parse().map_err(|_| {
+                        CypherError::syntax(
+                            0,
+                            0,
+                            &format!("Invalid path length: '{}'", range_str),
+                        )
+                    })?;
                     min = Some(n);
                     max = Some(n);
                 }
+            }
+        }
+
+        // Apply security limits (DoS protection)
+        // Default unbounded paths to MAX_PATH_LENGTH instead of u32::MAX
+        let effective_max = max.unwrap_or(MAX_PATH_LENGTH);
+        if effective_max > MAX_PATH_LENGTH {
+            return Err(CypherError::syntax(
+                0,
+                0,
+                &format!(
+                    "Path length {} exceeds maximum allowed depth of {}",
+                    effective_max, MAX_PATH_LENGTH
+                ),
+            ));
+        }
+
+        // Validate min doesn't exceed max
+        if let (Some(min_val), Some(max_val)) = (min, max) {
+            if min_val > max_val {
+                return Err(CypherError::syntax(
+                    0,
+                    0,
+                    &format!(
+                        "Invalid path range: minimum {} exceeds maximum {}",
+                        min_val, max_val
+                    ),
+                ));
             }
         }
 

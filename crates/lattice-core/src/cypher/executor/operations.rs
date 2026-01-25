@@ -11,6 +11,20 @@ use crate::types::value::CypherValue;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
+/// Safely convert u64 to usize with bounds checking.
+///
+/// On 64-bit systems this is a no-op. On 32-bit systems, caps at usize::MAX
+/// to prevent truncation attacks (e.g., `LIMIT 2^63` becoming `LIMIT 0`).
+///
+/// For user-facing values like LIMIT/SKIP, capping at max is the correct behavior
+/// since it effectively means "unlimited" which is a safe interpretation.
+#[inline]
+fn u64_to_usize_saturating(value: u64) -> usize {
+    // On 64-bit: usize::MAX == u64::MAX, so this is essentially a no-op
+    // On 32-bit: usize::MAX == u32::MAX, so large values are capped
+    value.min(usize::MAX as u64) as usize
+}
+
 impl QueryExecutor {
     /// Execute a single logical operation
     pub(crate) fn execute_op(
@@ -92,9 +106,13 @@ impl QueryExecutor {
     /// Execute AllNodesScan
     pub(crate) fn execute_all_nodes_scan(
         &self,
-        _variable: &String,
-        ctx: &ExecutionContext,
+        variable: &String,
+        ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
+        // Register variable binding for this scan
+        let column_index = ctx.column_count();
+        ctx.bind_variable(variable, column_index);
+
         let ids = ctx.collection.point_ids()?;
         // Preallocate outer Vec to avoid reallocation during collect
         let mut rows = Vec::with_capacity(ids.len());
@@ -108,11 +126,15 @@ impl QueryExecutor {
     /// Execute NodeByLabelScan
     pub(crate) fn execute_label_scan(
         &self,
-        _variable: &String,
+        variable: &String,
         label: &String,
         predicate: Option<&Expr>,
-        ctx: &ExecutionContext,
+        ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
+        // Register variable binding for this scan
+        let column_index = ctx.column_count();
+        ctx.bind_variable(variable, column_index);
+
         // Use label index for O(1) lookup instead of scanning all points
         let ids = ctx.collection.point_ids_by_label(label)?;
 
@@ -146,10 +168,14 @@ impl QueryExecutor {
     /// Execute NodeByIdSeek
     pub(crate) fn execute_id_seek(
         &self,
-        _variable: &String,
+        variable: &String,
         ids: &[u64],
-        ctx: &ExecutionContext,
+        ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
+        // Register variable binding for this seek
+        let column_index = ctx.column_count();
+        ctx.bind_variable(variable, column_index);
+
         let points = ctx.collection.get_points(ids)?;
         let rows: InternalRows = ids
             .iter()
@@ -168,9 +194,9 @@ impl QueryExecutor {
     pub(crate) fn execute_expand(
         &self,
         input: &LogicalOp,
-        _from: &String,
-        _rel_variable: Option<&String>,
-        _to: &String,
+        from: &String,
+        rel_variable: Option<&String>,
+        to: &String,
         rel_types: &Vec<String>,
         _direction: Direction,
         min_hops: u32,
@@ -179,12 +205,28 @@ impl QueryExecutor {
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
+        // Register target variable binding (adds new column)
+        // Note: rel_variable would also add a column if we were returning relationship refs
+        let to_column_index = ctx.column_count();
+        ctx.bind_variable(to, to_column_index);
+
+        // Note: We don't add rel_variable binding yet since we don't return RelationshipRef
+        // in the current implementation. When we do, add:
+        // if let Some(rel_var) = rel_variable {
+        //     ctx.bind_variable(rel_var, ctx.column_count());
+        // }
+        let _ = rel_variable; // Suppress unused warning
+
+        // Get the source column index from bindings
+        let from_column = ctx.get_variable_column(from).ok_or_else(|| CypherError::Internal {
+            message: format!("Source variable '{}' not bound in expand", from),
+        })?;
+
         let mut result_rows = Vec::new();
 
         for mut row in input_rows {
-            // Get the source node ID from the row
-            // Assume the first column is the source node
-            if let Some(CypherValue::NodeRef(source_id)) = row.first() {
+            // Get the source node ID from the correct column
+            if let Some(CypherValue::NodeRef(source_id)) = row.get(from_column) {
                 // Use collection traverse for multi-hop
                 let relations: Option<Vec<&str>> = if rel_types.is_empty() {
                     None
@@ -369,7 +411,8 @@ impl QueryExecutor {
             self.sort_i64_simd(&mut keyed_indices, items[0].ascending);
         } else if let Some(k) = limit {
             // Optimization: Use partial sort when LIMIT is specified
-            let k = k as usize;
+            // Use saturating conversion to prevent truncation on 32-bit systems
+            let k = u64_to_usize_saturating(k);
             if k > 0 && k < keyed_indices.len() {
                 // Partial sort: O(n) partition + O(k log k) sort of top k elements
                 keyed_indices.select_nth_unstable_by(k - 1, |(keys_a, _), (keys_b, _)| {
@@ -433,7 +476,8 @@ impl QueryExecutor {
             use crate::cypher::row::{radix_partial_sort_i64_indexed, radix_sort_i64_indexed};
 
             if let Some(k) = limit {
-                let k = k as usize;
+                // Use saturating conversion to prevent truncation on 32-bit systems
+                let k = u64_to_usize_saturating(k);
                 if k == 0 {
                     return Ok((Vec::new(), stats));
                 }
@@ -456,7 +500,8 @@ impl QueryExecutor {
             };
 
             if let Some(k) = limit {
-                let k = k as usize;
+                // Use saturating conversion to prevent truncation on 32-bit systems
+                let k = u64_to_usize_saturating(k);
                 if k > 0 && k < keyed_indices.len() {
                     // Partial sort: O(n) partition + O(k log k) sort
                     keyed_indices.select_nth_unstable_by(k - 1, compare);
@@ -638,7 +683,9 @@ impl QueryExecutor {
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
-        let result_rows: InternalRows = input_rows.into_iter().skip(count as usize).collect();
+        // Use saturating conversion to prevent truncation on 32-bit systems
+        let count_usize = u64_to_usize_saturating(count);
+        let result_rows: InternalRows = input_rows.into_iter().skip(count_usize).collect();
         Ok((result_rows, stats))
     }
 
@@ -650,7 +697,9 @@ impl QueryExecutor {
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
-        let result_rows: InternalRows = input_rows.into_iter().take(count as usize).collect();
+        // Use saturating conversion to prevent truncation on 32-bit systems
+        let count_usize = u64_to_usize_saturating(count);
+        let result_rows: InternalRows = input_rows.into_iter().take(count_usize).collect();
         Ok((result_rows, stats))
     }
 

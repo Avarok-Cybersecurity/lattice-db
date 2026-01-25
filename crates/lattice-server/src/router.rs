@@ -7,7 +7,7 @@ use crate::dto::{
     DeletePointsRequest, GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest,
     TraverseRequest, UpsertPointsRequest,
 };
-use crate::handlers::{collections, points, search};
+use crate::handlers::{collections, export_import, points, search};
 use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -175,7 +175,14 @@ pub fn new_app_state() -> AppState {
 pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse {
     // Method is already uppercase from transport layer
     let method = &request.method;
-    let path = request.path.trim_end_matches('/');
+    let full_path = request.path.trim_end_matches('/');
+
+    // Split path and query string
+    let (path, query) = match full_path.split_once('?') {
+        Some((p, q)) => (p, q),
+        None => (full_path, ""),
+    };
+
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     debug!(method = %method, path = %path, "Processing request");
@@ -204,6 +211,21 @@ pub async fn route(state: AppState, request: LatticeRequest) -> LatticeResponse 
 
         // DELETE /collections/{name} - Delete collection
         ("DELETE", ["collections", name]) => collections::delete_collection(&state, name),
+
+        // === Import/Export ===
+
+        // GET /collections/{name}/export - Export collection as binary
+        ("GET", ["collections", name, "export"]) => export_import::export_collection(&state, name),
+
+        // POST /collections/{name}/import?mode={create|replace|merge} - Import collection
+        ("POST", ["collections", name, "import"]) => {
+            match export_import::parse_import_mode(query) {
+                Ok(mode) => {
+                    export_import::import_collection(&state, name, mode, request.body.clone())
+                }
+                Err(e) => e,
+            }
+        }
 
         // === Points ===
 

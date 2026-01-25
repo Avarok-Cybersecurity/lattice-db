@@ -90,44 +90,49 @@ impl DenseVectorStore {
     /// Insert a vector, returns its dense index
     ///
     /// If the store was created with dim=0, the dimension is set from the first vector.
-    pub fn insert(&mut self, id: PointId, vector: Vector) -> DenseIdx {
+    /// Returns `None` if dimension mismatches or index calculation overflows.
+    pub fn insert(&mut self, id: PointId, vector: Vector) -> Option<DenseIdx> {
         // Lazy dimension initialization from first vector
         if self.dim == 0 {
             self.dim = vector.len();
         }
 
-        debug_assert_eq!(
-            vector.len(),
-            self.dim,
-            "Vector dimension mismatch: expected {}, got {}",
-            self.dim,
-            vector.len()
-        );
+        // Validate dimension instead of panicking
+        if vector.len() != self.dim {
+            return None;
+        }
 
         // Check if ID already exists (update case)
         if let Some(&existing_idx) = self.id_to_idx.get(&id) {
-            // Update in place
-            // Safe: existing_idx is u32, self.dim is usize, checked_mul prevents overflow
-            let start = (existing_idx as usize)
-                .checked_mul(self.dim)
-                .expect("Index overflow in dense vector update");
+            // Update in place with overflow check
+            let start = (existing_idx as usize).checked_mul(self.dim)?;
+            if start + self.dim > self.data.len() {
+                return None;
+            }
             self.data[start..start + self.dim].copy_from_slice(&vector);
-            return existing_idx;
+            return Some(existing_idx);
         }
 
         // Try to reuse a deleted slot
         let idx = if let Some(free_idx) = self.free_list.pop() {
-            // Reuse deleted slot
-            let start = (free_idx as usize)
-                .checked_mul(self.dim)
-                .expect("Index overflow in dense vector slot reuse");
+            // Reuse deleted slot with overflow check
+            let start = (free_idx as usize).checked_mul(self.dim)?;
+            if start + self.dim > self.data.len() {
+                // Put it back and return error
+                self.free_list.push(free_idx);
+                return None;
+            }
             self.data[start..start + self.dim].copy_from_slice(&vector);
             self.idx_to_id[free_idx as usize] = id;
             self.clear_deleted(free_idx);
             free_idx
         } else {
-            // Append new slot
-            let idx = self.idx_to_id.len() as DenseIdx;
+            // Append new slot - check for u32 overflow on index
+            let idx_usize = self.idx_to_id.len();
+            if idx_usize > DenseIdx::MAX as usize {
+                return None; // Cannot store more than u32::MAX vectors
+            }
+            let idx = idx_usize as DenseIdx;
             self.data.extend_from_slice(&vector);
             self.idx_to_id.push(id);
             // Expand deleted bitmap if needed
@@ -139,7 +144,7 @@ impl DenseVectorStore {
         };
 
         self.id_to_idx.insert(id, idx);
-        idx
+        Some(idx)
     }
 
     /// Get dense index for a PointId
@@ -167,28 +172,52 @@ impl DenseVectorStore {
 
     /// Get vector by dense index (fast O(1) access - use in hot path)
     ///
-    /// # Panics
-    /// Panics if index is out of bounds or would cause integer overflow.
+    /// Returns `None` if index is out of bounds or would cause integer overflow.
+    /// Prefer `try_get_by_idx` for untrusted input; use this when index is known valid.
     #[inline]
     pub fn get_by_idx(&self, idx: DenseIdx) -> &[f32] {
-        // Checked multiplication to prevent integer overflow with large dim
-        let start = (idx as usize)
-            .checked_mul(self.dim)
-            .expect("Index overflow in dense vector access");
-        debug_assert!(start + self.dim <= self.data.len(), "Index out of bounds");
-        &self.data[start..start + self.dim]
+        // Use try variant internally - optimizes to same code when bounds check succeeds
+        self.try_get_by_idx(idx)
+            .expect("Index out of bounds in dense vector access")
+    }
+
+    /// Safe variant that returns `Option` instead of panicking
+    ///
+    /// Use this for untrusted input or when graceful error handling is needed.
+    #[inline]
+    pub fn try_get_by_idx(&self, idx: DenseIdx) -> Option<&[f32]> {
+        let start = (idx as usize).checked_mul(self.dim)?;
+        let end = start.checked_add(self.dim)?;
+        if end <= self.data.len() {
+            Some(&self.data[start..end])
+        } else {
+            None
+        }
     }
 
     /// Get raw pointer to vector data (for prefetching)
     ///
-    /// # Panics
-    /// Panics if index calculation would overflow.
+    /// Returns `None` if index calculation would overflow or be out of bounds.
+    /// Prefer `try_get_ptr` for untrusted input.
     #[inline]
     pub fn get_ptr(&self, idx: DenseIdx) -> *const f32 {
-        let start = (idx as usize)
-            .checked_mul(self.dim)
-            .expect("Index overflow in dense vector pointer access");
-        unsafe { self.data.as_ptr().add(start) }
+        self.try_get_ptr(idx)
+            .expect("Index out of bounds in dense vector pointer access")
+    }
+
+    /// Safe variant that returns `Option` instead of panicking
+    ///
+    /// Use this for untrusted input or when graceful error handling is needed.
+    #[inline]
+    pub fn try_get_ptr(&self, idx: DenseIdx) -> Option<*const f32> {
+        let start = (idx as usize).checked_mul(self.dim)?;
+        let end = start.checked_add(self.dim)?;
+        if end <= self.data.len() {
+            // SAFETY: We verified start is within bounds
+            Some(unsafe { self.data.as_ptr().add(start) })
+        } else {
+            None
+        }
     }
 
     /// Delete a vector by PointId (soft delete via tombstone)
@@ -311,7 +340,7 @@ mod tests {
         // Insert vectors
         for i in 0..100 {
             let vec = random_vector(dim, i);
-            let idx = store.insert(i, vec.clone());
+            let idx = store.insert(i, vec.clone()).expect("insert failed");
             assert_eq!(idx, i as DenseIdx);
         }
 
@@ -335,11 +364,11 @@ mod tests {
 
         // Insert
         let vec1 = random_vector(dim, 42);
-        store.insert(1, vec1.clone());
+        store.insert(1, vec1.clone()).expect("insert failed");
 
         // Update
         let vec2 = random_vector(dim, 99);
-        let idx = store.insert(1, vec2.clone());
+        let idx = store.insert(1, vec2.clone()).expect("update failed");
 
         // Should reuse same index
         assert_eq!(idx, 0);
@@ -351,13 +380,37 @@ mod tests {
     }
 
     #[test]
+    fn test_dimension_mismatch_returns_none() {
+        let mut store = DenseVectorStore::new(64);
+        store.insert(0, random_vector(64, 0)).expect("first insert");
+
+        // Try to insert wrong dimension
+        let result = store.insert(1, random_vector(128, 1));
+        assert!(result.is_none(), "should reject mismatched dimension");
+    }
+
+    #[test]
+    fn test_try_get_by_idx_bounds() {
+        let dim = 32;
+        let mut store = DenseVectorStore::new(dim);
+        store.insert(0, random_vector(dim, 0)).expect("insert");
+
+        // Valid index
+        assert!(store.try_get_by_idx(0).is_some());
+
+        // Invalid index
+        assert!(store.try_get_by_idx(100).is_none());
+        assert!(store.try_get_by_idx(DenseIdx::MAX).is_none());
+    }
+
+    #[test]
     fn test_delete_and_reuse() {
         let dim = 32;
         let mut store = DenseVectorStore::new(dim);
 
         // Insert 5 vectors
         for i in 0..5 {
-            store.insert(i, random_vector(dim, i));
+            store.insert(i, random_vector(dim, i)).expect("insert");
         }
         assert_eq!(store.len(), 5);
 
@@ -368,7 +421,7 @@ mod tests {
 
         // Insert new vector - should reuse slot 2
         let new_vec = random_vector(dim, 999);
-        let idx = store.insert(10, new_vec);
+        let idx = store.insert(10, new_vec).expect("insert");
         assert_eq!(idx, 2); // Reused deleted slot
 
         assert_eq!(store.len(), 5);
@@ -382,7 +435,7 @@ mod tests {
 
         // Insert 10 vectors
         for i in 0..10 {
-            store.insert(i, random_vector(dim, i));
+            store.insert(i, random_vector(dim, i)).expect("insert");
         }
 
         // Delete half
@@ -413,7 +466,7 @@ mod tests {
 
         // Insert 1000 vectors
         for i in 0..1000 {
-            store.insert(i, random_vector(dim, i));
+            store.insert(i, random_vector(dim, i)).expect("insert");
         }
 
         // Access by index should be O(1)

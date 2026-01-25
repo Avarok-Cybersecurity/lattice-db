@@ -888,11 +888,21 @@ impl CollectionEngine {
             });
         }
 
-        // Read config length
+        // Read config length with overflow check
         let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let config_end = 4 + config_len;
+        let config_end = 4usize.checked_add(config_len).ok_or_else(|| {
+            LatticeError::Serialization {
+                message: "Invalid data: config length overflow".to_string(),
+            }
+        })?;
 
-        if bytes.len() < config_end + 4 {
+        let config_end_plus_4 = config_end.checked_add(4).ok_or_else(|| {
+            LatticeError::Serialization {
+                message: "Invalid data: offset overflow".to_string(),
+            }
+        })?;
+
+        if bytes.len() < config_end_plus_4 {
             return Err(LatticeError::Serialization {
                 message: "Invalid data: config truncated".to_string(),
             });
@@ -914,12 +924,28 @@ impl CollectionEngine {
             bytes[config_end + 3],
         ]) as usize;
 
-        // Calculate padding (same formula as serialization)
-        let header_size = 4 + config_len + 4;
+        // Calculate padding (same formula as serialization) with overflow checks
+        let header_size = 4usize
+            .checked_add(config_len)
+            .and_then(|v| v.checked_add(4))
+            .ok_or_else(|| LatticeError::Serialization {
+                message: "Invalid data: header size overflow".to_string(),
+            })?;
         let padding = (16 - (header_size % 16)) % 16;
-        let points_start = config_end + 4 + padding;
+        let points_start = config_end
+            .checked_add(4)
+            .and_then(|v| v.checked_add(padding))
+            .ok_or_else(|| LatticeError::Serialization {
+                message: "Invalid data: points start offset overflow".to_string(),
+            })?;
 
-        if bytes.len() < points_start + points_len {
+        let required_len = points_start.checked_add(points_len).ok_or_else(|| {
+            LatticeError::Serialization {
+                message: "Invalid data: total size overflow".to_string(),
+            }
+        })?;
+
+        if bytes.len() < required_len {
             return Err(LatticeError::Serialization {
                 message: "Invalid data: points truncated".to_string(),
             });

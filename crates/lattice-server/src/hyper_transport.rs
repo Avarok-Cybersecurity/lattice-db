@@ -3,7 +3,7 @@
 //! Uses Hyper directly for minimum overhead HTTP handling.
 //! Supports optional TLS for HTTPS (requires `tls` feature).
 
-use crate::auth::Authenticator;
+use crate::auth::{AuthRateLimiter, Authenticator};
 use crate::rate_limit::{RateLimitConfig, RateLimiter};
 #[cfg(feature = "tls")]
 use crate::tls::TlsConfig;
@@ -52,6 +52,7 @@ pub struct HyperTransport {
     addr: String,
     rate_limiter: Option<Arc<RateLimiter>>,
     authenticator: Option<Arc<Authenticator>>,
+    auth_rate_limiter: Option<Arc<AuthRateLimiter>>,
 }
 
 impl HyperTransport {
@@ -61,6 +62,7 @@ impl HyperTransport {
             addr: addr.into(),
             rate_limiter: None,
             authenticator: None,
+            auth_rate_limiter: None,
         }
     }
 
@@ -70,6 +72,7 @@ impl HyperTransport {
             addr: addr.into(),
             rate_limiter: Some(Arc::new(RateLimiter::new(config))),
             authenticator: None,
+            auth_rate_limiter: None,
         }
     }
 
@@ -79,8 +82,18 @@ impl HyperTransport {
     }
 
     /// Add authentication to the transport
+    ///
+    /// Also enables auth rate limiting by default to prevent brute-force attacks.
     pub fn with_auth(mut self, authenticator: Authenticator) -> Self {
         self.authenticator = Some(Arc::new(authenticator));
+        // Enable auth rate limiting by default when auth is enabled
+        self.auth_rate_limiter = Some(Arc::new(AuthRateLimiter::default()));
+        self
+    }
+
+    /// Add custom auth rate limiter (for testing or custom config)
+    pub fn with_auth_rate_limiter(mut self, limiter: AuthRateLimiter) -> Self {
+        self.auth_rate_limiter = Some(Arc::new(limiter));
         self
     }
 }
@@ -116,6 +129,7 @@ impl LatticeTransport for HyperTransport {
         let handler = Arc::new(handler);
         let rate_limiter = self.rate_limiter;
         let authenticator = self.authenticator;
+        let auth_rate_limiter = self.auth_rate_limiter;
 
         loop {
             let (stream, client_addr) = listener.accept().await?;
@@ -127,6 +141,7 @@ impl LatticeTransport for HyperTransport {
             let handler = handler.clone();
             let rate_limiter = rate_limiter.clone();
             let authenticator = authenticator.clone();
+            let auth_rate_limiter = auth_rate_limiter.clone();
             let client_ip = client_addr.ip();
 
             tokio::task::spawn(async move {
@@ -134,12 +149,14 @@ impl LatticeTransport for HyperTransport {
                     let handler = handler.clone();
                     let rate_limiter = rate_limiter.clone();
                     let authenticator = authenticator.clone();
+                    let auth_rate_limiter = auth_rate_limiter.clone();
                     async move {
                         handle_request(
                             req,
                             handler,
                             rate_limiter.as_ref(),
                             authenticator.as_ref(),
+                            auth_rate_limiter.as_ref(),
                             client_ip,
                         )
                         .await
@@ -179,6 +196,7 @@ pub struct HyperTlsTransport {
     tls_config: TlsConfig,
     rate_limiter: Option<Arc<RateLimiter>>,
     authenticator: Option<Arc<Authenticator>>,
+    auth_rate_limiter: Option<Arc<AuthRateLimiter>>,
 }
 
 #[cfg(feature = "tls")]
@@ -190,6 +208,7 @@ impl HyperTlsTransport {
             tls_config,
             rate_limiter: None,
             authenticator: None,
+            auth_rate_limiter: None,
         }
     }
 
@@ -204,12 +223,22 @@ impl HyperTlsTransport {
             tls_config,
             rate_limiter: Some(Arc::new(RateLimiter::new(rate_config))),
             authenticator: None,
+            auth_rate_limiter: None,
         }
     }
 
     /// Add authentication to the transport
+    ///
+    /// Also enables auth rate limiting by default to prevent brute-force attacks.
     pub fn with_auth(mut self, authenticator: Authenticator) -> Self {
         self.authenticator = Some(Arc::new(authenticator));
+        self.auth_rate_limiter = Some(Arc::new(AuthRateLimiter::default()));
+        self
+    }
+
+    /// Add custom auth rate limiter (for testing or custom config)
+    pub fn with_auth_rate_limiter(mut self, limiter: AuthRateLimiter) -> Self {
+        self.auth_rate_limiter = Some(Arc::new(limiter));
         self
     }
 }
@@ -243,6 +272,7 @@ impl LatticeTransport for HyperTlsTransport {
         let handler = Arc::new(handler);
         let rate_limiter = self.rate_limiter;
         let authenticator = self.authenticator;
+        let auth_rate_limiter = self.auth_rate_limiter;
         let tls_acceptor = self.tls_config.acceptor().clone();
 
         loop {
@@ -254,6 +284,7 @@ impl LatticeTransport for HyperTlsTransport {
             let handler = handler.clone();
             let rate_limiter = rate_limiter.clone();
             let authenticator = authenticator.clone();
+            let auth_rate_limiter = auth_rate_limiter.clone();
             let client_ip = client_addr.ip();
             let acceptor = tls_acceptor.clone();
 
@@ -272,12 +303,14 @@ impl LatticeTransport for HyperTlsTransport {
                     let handler = handler.clone();
                     let rate_limiter = rate_limiter.clone();
                     let authenticator = authenticator.clone();
+                    let auth_rate_limiter = auth_rate_limiter.clone();
                     async move {
                         handle_request(
                             req,
                             handler,
                             rate_limiter.as_ref(),
                             authenticator.as_ref(),
+                            auth_rate_limiter.as_ref(),
                             client_ip,
                         )
                         .await
@@ -322,6 +355,7 @@ static RATE_LIMITED: &[u8] = b"{\"status\":\"error\",\"result\":\"Rate limit exc
 /// Authentication failure responses
 static AUTH_MISSING: &[u8] = b"{\"status\":\"error\",\"result\":\"Missing Authorization header\"}";
 static AUTH_INVALID: &[u8] = b"{\"status\":\"error\",\"result\":\"Invalid credentials\"}";
+static AUTH_BLOCKED: &[u8] = b"{\"status\":\"error\",\"result\":\"Too many failed attempts. Try again later.\"}";
 
 /// Handle incoming HTTP requests with minimal overhead
 async fn handle_request<H, Fut>(
@@ -329,6 +363,7 @@ async fn handle_request<H, Fut>(
     handler: Arc<H>,
     rate_limiter: Option<&Arc<RateLimiter>>,
     authenticator: Option<&Arc<Authenticator>>,
+    auth_rate_limiter: Option<&Arc<AuthRateLimiter>>,
     client_ip: IpAddr,
 ) -> Result<Response<Full<Bytes>>, Infallible>
 where
@@ -355,6 +390,21 @@ where
         }
     }
 
+    // === Auth Brute-Force Protection Check ===
+    // Check if IP is blocked due to too many failed auth attempts
+    if let Some(auth_limiter) = auth_rate_limiter {
+        if let Some(remaining) = auth_limiter.is_blocked(client_ip) {
+            debug!(ip = %client_ip, blocked_for = ?remaining, "IP blocked due to auth failures");
+            let retry_after = remaining.as_secs().max(1);
+            return Ok(Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .header("Content-Type", CONTENT_TYPE_JSON)
+                .header("Retry-After", retry_after.to_string())
+                .body(Full::new(Bytes::from_static(AUTH_BLOCKED)))
+                .unwrap());
+        }
+    }
+
     // === Authentication Check ===
     if let Some(auth) = authenticator {
         let path = req.uri().path();
@@ -364,7 +414,15 @@ where
             .and_then(|v| v.to_str().ok());
 
         if let Err(e) = auth.validate(path, auth_header) {
-            debug!(ip = %client_ip, path = %path, error = %e, "Authentication failed");
+            // Record failed auth attempt for brute-force protection
+            if let Some(auth_limiter) = auth_rate_limiter {
+                auth_limiter.record_failure(client_ip);
+                let failures = auth_limiter.failure_count(client_ip);
+                debug!(ip = %client_ip, path = %path, error = %e, failures = failures, "Authentication failed");
+            } else {
+                debug!(ip = %client_ip, path = %path, error = %e, "Authentication failed");
+            }
+
             let (status, body) = match e {
                 crate::auth::AuthError::MissingHeader => (StatusCode::UNAUTHORIZED, AUTH_MISSING),
                 _ => (StatusCode::UNAUTHORIZED, AUTH_INVALID),
@@ -376,6 +434,11 @@ where
                 .header("WWW-Authenticate", "ApiKey, Bearer")
                 .body(Full::new(Bytes::from_static(body)))
                 .unwrap());
+        }
+
+        // Auth succeeded - reset failure count
+        if let Some(auth_limiter) = auth_rate_limiter {
+            auth_limiter.record_success(client_ip);
         }
     }
 

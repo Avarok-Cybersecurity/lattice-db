@@ -59,6 +59,9 @@ pub enum CypherError {
     #[error("Division by zero")]
     DivisionByZero,
 
+    #[error("Integer overflow in {operation}")]
+    ArithmeticOverflow { operation: String },
+
     #[error("Null property access: '{property}' on null value")]
     NullPropertyAccess { property: String },
 
