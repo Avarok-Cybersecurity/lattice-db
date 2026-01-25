@@ -190,12 +190,12 @@ impl HnswIndex {
 
         // If this is the first point, just insert it
         if self.layers.is_empty() {
-            self.vectors.insert(id, vector).ok_or_else(|| {
-                LatticeError::DimensionMismatch {
+            self.vectors
+                .insert(id, vector)
+                .ok_or_else(|| LatticeError::DimensionMismatch {
                     expected: self.vectors.dim(),
                     actual: point.vector.len(),
-                }
-            })?;
+                })?;
             self.layers.insert_node(node);
             return Ok(());
         }
@@ -264,12 +264,12 @@ impl HnswIndex {
         }
 
         // Store vector and node (move, no second clone)
-        self.vectors.insert(id, vector).ok_or_else(|| {
-            LatticeError::DimensionMismatch {
+        self.vectors
+            .insert(id, vector)
+            .ok_or_else(|| LatticeError::DimensionMismatch {
                 expected: self.vectors.dim(),
                 actual: point.vector.len(),
-            }
-        })?;
+            })?;
         self.layers.insert_node(node);
         Ok(())
     }
@@ -1244,7 +1244,7 @@ mod tests {
         // Insert points including the query itself
         let query_vec = vec![0.5, 0.5, 0.5, 0.5];
         let query_point = Point::new_vector(42, query_vec.clone());
-        index.insert(&query_point);
+        index.insert(&query_point).expect("insert");
 
         for i in 0..50 {
             if i != 42 {

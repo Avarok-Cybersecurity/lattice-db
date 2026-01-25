@@ -218,9 +218,11 @@ impl QueryExecutor {
         let _ = rel_variable; // Suppress unused warning
 
         // Get the source column index from bindings
-        let from_column = ctx.get_variable_column(from).ok_or_else(|| CypherError::Internal {
-            message: format!("Source variable '{}' not bound in expand", from),
-        })?;
+        let from_column = ctx
+            .get_variable_column(from)
+            .ok_or_else(|| CypherError::Internal {
+                message: format!("Source variable '{}' not bound in expand", from),
+            })?;
 
         let mut result_rows = Vec::new();
 

@@ -119,7 +119,11 @@ impl AppStateInner {
     /// - `Ok(())` if collection was inserted successfully
     /// - `Err(InsertError::AlreadyExists)` if collection already exists
     /// - `Err(InsertError::AtCapacity)` if max_collections limit reached
-    pub fn insert_collection(&self, name: String, engine: CollectionEngine) -> Result<(), InsertError> {
+    pub fn insert_collection(
+        &self,
+        name: String,
+        engine: CollectionEngine,
+    ) -> Result<(), InsertError> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
             return Err(InsertError::AlreadyExists);

@@ -890,17 +890,19 @@ impl CollectionEngine {
 
         // Read config length with overflow check
         let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let config_end = 4usize.checked_add(config_len).ok_or_else(|| {
-            LatticeError::Serialization {
-                message: "Invalid data: config length overflow".to_string(),
-            }
-        })?;
+        let config_end =
+            4usize
+                .checked_add(config_len)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: config length overflow".to_string(),
+                })?;
 
-        let config_end_plus_4 = config_end.checked_add(4).ok_or_else(|| {
-            LatticeError::Serialization {
-                message: "Invalid data: offset overflow".to_string(),
-            }
-        })?;
+        let config_end_plus_4 =
+            config_end
+                .checked_add(4)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: offset overflow".to_string(),
+                })?;
 
         if bytes.len() < config_end_plus_4 {
             return Err(LatticeError::Serialization {
@@ -939,11 +941,12 @@ impl CollectionEngine {
                 message: "Invalid data: points start offset overflow".to_string(),
             })?;
 
-        let required_len = points_start.checked_add(points_len).ok_or_else(|| {
-            LatticeError::Serialization {
-                message: "Invalid data: total size overflow".to_string(),
-            }
-        })?;
+        let required_len =
+            points_start
+                .checked_add(points_len)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: total size overflow".to_string(),
+                })?;
 
         if bytes.len() < required_len {
             return Err(LatticeError::Serialization {

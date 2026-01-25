@@ -202,13 +202,11 @@ impl QueryExecutor {
         match op {
             UnaryOp::Not => Ok(CypherValue::Bool(!value.is_truthy())),
             UnaryOp::Neg => match value {
-                CypherValue::Int(i) => {
-                    i.checked_neg()
-                        .map(CypherValue::Int)
-                        .ok_or_else(|| CypherError::ArithmeticOverflow {
-                            operation: "negation".to_string(),
-                        })
-                }
+                CypherValue::Int(i) => i.checked_neg().map(CypherValue::Int).ok_or_else(|| {
+                    CypherError::ArithmeticOverflow {
+                        operation: "negation".to_string(),
+                    }
+                }),
                 CypherValue::Float(f) => Ok(CypherValue::Float(-f)),
                 _ => Err(CypherError::InvalidOperation {
                     operation: "negation".to_string(),
@@ -226,13 +224,12 @@ impl QueryExecutor {
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => {
-                a.checked_add(*b)
-                    .map(CypherValue::Int)
-                    .ok_or_else(|| CypherError::ArithmeticOverflow {
-                        operation: "addition".to_string(),
-                    })
-            }
+            (CypherValue::Int(a), CypherValue::Int(b)) => a
+                .checked_add(*b)
+                .map(CypherValue::Int)
+                .ok_or_else(|| CypherError::ArithmeticOverflow {
+                    operation: "addition".to_string(),
+                }),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a + b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 + b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a + *b as f64)),
@@ -254,13 +251,12 @@ impl QueryExecutor {
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => {
-                a.checked_sub(*b)
-                    .map(CypherValue::Int)
-                    .ok_or_else(|| CypherError::ArithmeticOverflow {
-                        operation: "subtraction".to_string(),
-                    })
-            }
+            (CypherValue::Int(a), CypherValue::Int(b)) => a
+                .checked_sub(*b)
+                .map(CypherValue::Int)
+                .ok_or_else(|| CypherError::ArithmeticOverflow {
+                    operation: "subtraction".to_string(),
+                }),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a - b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 - b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a - *b as f64)),
@@ -278,13 +274,12 @@ impl QueryExecutor {
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => {
-                a.checked_mul(*b)
-                    .map(CypherValue::Int)
-                    .ok_or_else(|| CypherError::ArithmeticOverflow {
-                        operation: "multiplication".to_string(),
-                    })
-            }
+            (CypherValue::Int(a), CypherValue::Int(b)) => a
+                .checked_mul(*b)
+                .map(CypherValue::Int)
+                .ok_or_else(|| CypherError::ArithmeticOverflow {
+                    operation: "multiplication".to_string(),
+                }),
             (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a * b)),
             (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 * b)),
             (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a * *b as f64)),

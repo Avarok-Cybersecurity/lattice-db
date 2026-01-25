@@ -468,11 +468,8 @@ mod tests {
 
     #[test]
     fn test_auth_rate_limiter_tracks_failures() {
-        let limiter = AuthRateLimiter::new(
-            3,
-            Duration::from_millis(10),
-            Duration::from_millis(100),
-        );
+        let limiter =
+            AuthRateLimiter::new(3, Duration::from_millis(10), Duration::from_millis(100));
         let ip = "127.0.0.1".parse().unwrap();
 
         assert_eq!(limiter.failure_count(ip), 0);
@@ -487,11 +484,7 @@ mod tests {
 
     #[test]
     fn test_auth_rate_limiter_lockout() {
-        let limiter = AuthRateLimiter::new(
-            3,
-            Duration::from_millis(10),
-            Duration::from_millis(50),
-        );
+        let limiter = AuthRateLimiter::new(3, Duration::from_millis(10), Duration::from_millis(50));
         let ip = "127.0.0.1".parse().unwrap();
 
         // 3 failures should trigger lockout
@@ -505,11 +498,8 @@ mod tests {
 
     #[test]
     fn test_auth_rate_limiter_success_resets() {
-        let limiter = AuthRateLimiter::new(
-            5,
-            Duration::from_millis(10),
-            Duration::from_millis(100),
-        );
+        let limiter =
+            AuthRateLimiter::new(5, Duration::from_millis(10), Duration::from_millis(100));
         let ip = "127.0.0.1".parse().unwrap();
 
         limiter.record_failure(ip);
@@ -522,11 +512,8 @@ mod tests {
 
     #[test]
     fn test_auth_rate_limiter_per_ip() {
-        let limiter = AuthRateLimiter::new(
-            2,
-            Duration::from_millis(10),
-            Duration::from_millis(100),
-        );
+        let limiter =
+            AuthRateLimiter::new(2, Duration::from_millis(10), Duration::from_millis(100));
         let ip1: IpAddr = "127.0.0.1".parse().unwrap();
         let ip2: IpAddr = "127.0.0.2".parse().unwrap();
 

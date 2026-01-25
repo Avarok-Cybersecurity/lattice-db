@@ -163,9 +163,7 @@ pub fn create_collection(
         // Validate ml if provided (must be finite and positive)
         if let Some(ml) = hnsw.ml {
             if !ml.is_finite() || ml <= 0.0 {
-                return LatticeResponse::bad_request(
-                    "ml must be a finite positive number",
-                );
+                return LatticeResponse::bad_request("ml must be a finite positive number");
             }
         }
 
@@ -210,7 +208,11 @@ pub fn create_collection(
                 LatticeResponse::bad_request(&format!("Collection '{}' already exists", name))
             }
             InsertError::AtCapacity(max) => {
-                warn!(collection = name, max_collections = max, "Collection limit reached");
+                warn!(
+                    collection = name,
+                    max_collections = max,
+                    "Collection limit reached"
+                );
                 LatticeResponse::bad_request(&format!(
                     "Maximum collection limit ({}) reached. Delete unused collections first.",
                     max

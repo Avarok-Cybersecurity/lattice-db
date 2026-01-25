@@ -101,7 +101,10 @@ fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
     if state.get_collection(name).is_some() {
         return LatticeResponse::error(
             409,
-            &format!("Collection '{}' already exists. Use mode=replace or mode=merge", name),
+            &format!(
+                "Collection '{}' already exists. Use mode=replace or mode=merge",
+                name
+            ),
         );
     }
 
@@ -123,10 +126,9 @@ fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
             InsertError::AlreadyExists => {
                 LatticeResponse::error(409, &format!("Collection '{}' already exists", name))
             }
-            InsertError::AtCapacity(max) => LatticeResponse::bad_request(&format!(
-                "Maximum collection limit ({}) reached",
-                max
-            )),
+            InsertError::AtCapacity(max) => {
+                LatticeResponse::bad_request(&format!("Maximum collection limit ({}) reached", max))
+            }
         };
     }
 
@@ -167,12 +169,14 @@ fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse 
         return match e {
             InsertError::AlreadyExists => {
                 // Race condition: another request created the collection
-                LatticeResponse::error(409, &format!("Collection '{}' was created concurrently", name))
+                LatticeResponse::error(
+                    409,
+                    &format!("Collection '{}' was created concurrently", name),
+                )
             }
-            InsertError::AtCapacity(max) => LatticeResponse::bad_request(&format!(
-                "Maximum collection limit ({}) reached",
-                max
-            )),
+            InsertError::AtCapacity(max) => {
+                LatticeResponse::bad_request(&format!("Maximum collection limit ({}) reached", max))
+            }
         };
     }
 
@@ -196,10 +200,12 @@ fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
     // Get existing collection
     let handle = match state.get_collection(name) {
         Some(h) => h,
-        None => return LatticeResponse::not_found(&format!(
-            "Collection '{}' not found. Use mode=create for new collections",
-            name
-        )),
+        None => {
+            return LatticeResponse::not_found(&format!(
+                "Collection '{}' not found. Use mode=create for new collections",
+                name
+            ))
+        }
     };
 
     // Deserialize the import data
@@ -321,16 +327,16 @@ pub fn parse_import_mode(query: &str) -> Result<ImportMode, LatticeResponse> {
 
     // Mode is required (PCND)
     Err(LatticeResponse::bad_request(
-        "Missing required 'mode' query parameter. Use mode=create, mode=replace, or mode=merge"
+        "Missing required 'mode' query parameter. Use mode=create, mode=replace, or mode=merge",
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dto::CreateCollectionRequest;
     use crate::dto::VectorParams;
     use crate::handlers::collections::create_collection;
-    use crate::dto::CreateCollectionRequest;
     use crate::router::new_app_state;
     use lattice_core::Point;
 
@@ -339,11 +345,23 @@ mod tests {
 
     #[test]
     fn test_parse_import_mode() {
-        assert_eq!(parse_import_mode("mode=create").unwrap(), ImportMode::Create);
-        assert_eq!(parse_import_mode("mode=replace").unwrap(), ImportMode::Replace);
+        assert_eq!(
+            parse_import_mode("mode=create").unwrap(),
+            ImportMode::Create
+        );
+        assert_eq!(
+            parse_import_mode("mode=replace").unwrap(),
+            ImportMode::Replace
+        );
         assert_eq!(parse_import_mode("mode=merge").unwrap(), ImportMode::Merge);
-        assert_eq!(parse_import_mode("?mode=create").unwrap(), ImportMode::Create);
-        assert_eq!(parse_import_mode("foo=bar&mode=replace").unwrap(), ImportMode::Replace);
+        assert_eq!(
+            parse_import_mode("?mode=create").unwrap(),
+            ImportMode::Create
+        );
+        assert_eq!(
+            parse_import_mode("foo=bar&mode=replace").unwrap(),
+            ImportMode::Replace
+        );
 
         // Missing mode
         assert!(parse_import_mode("").is_err());
@@ -394,15 +412,13 @@ mod tests {
             response.headers.get("X-Lattice-Format-Version").unwrap(),
             "1"
         );
-        assert_eq!(
-            response.headers.get("X-Lattice-Point-Count").unwrap(),
-            "1"
-        );
+        assert_eq!(response.headers.get("X-Lattice-Point-Count").unwrap(), "1");
 
         let exported_data = response.body;
 
         // Import to new collection (create mode)
-        let response = import_collection(&state, "test2", ImportMode::Create, exported_data.clone());
+        let response =
+            import_collection(&state, "test2", ImportMode::Create, exported_data.clone());
         assert_eq!(response.status, 200);
 
         // Verify imported collection
@@ -451,7 +467,9 @@ mod tests {
         {
             let handle = state.get_collection("test").unwrap();
             let mut engine = handle.write();
-            engine.upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])]).unwrap();
+            engine
+                .upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])])
+                .unwrap();
         }
 
         // Export
@@ -462,7 +480,9 @@ mod tests {
         {
             let handle = state.get_collection("test").unwrap();
             let mut engine = handle.write();
-            engine.upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])]).unwrap();
+            engine
+                .upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])])
+                .unwrap();
         }
 
         // Import with replace mode (should reset to 1 point)
@@ -493,7 +513,9 @@ mod tests {
         {
             let handle = state.get_collection("test").unwrap();
             let mut engine = handle.write();
-            engine.upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])]).unwrap();
+            engine
+                .upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])])
+                .unwrap();
         }
 
         // Create another collection with 2 points (id=1, id=2)
@@ -501,8 +523,12 @@ mod tests {
         {
             let handle = state.get_collection("source").unwrap();
             let mut engine = handle.write();
-            engine.upsert_points(vec![Point::new_vector(1, vec![0.9, 0.9, 0.9, 0.9])]).unwrap();
-            engine.upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])]).unwrap();
+            engine
+                .upsert_points(vec![Point::new_vector(1, vec![0.9, 0.9, 0.9, 0.9])])
+                .unwrap();
+            engine
+                .upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])])
+                .unwrap();
         }
 
         // Export source
@@ -530,7 +556,8 @@ mod tests {
     #[test]
     fn test_import_merge_not_found() {
         let state = new_app_state();
-        let response = import_collection(&state, "nonexistent", ImportMode::Merge, vec![0, 0, 0, 0]);
+        let response =
+            import_collection(&state, "nonexistent", ImportMode::Merge, vec![0, 0, 0, 0]);
         assert_eq!(response.status, 404);
     }
 

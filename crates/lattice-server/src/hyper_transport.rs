@@ -355,7 +355,8 @@ static RATE_LIMITED: &[u8] = b"{\"status\":\"error\",\"result\":\"Rate limit exc
 /// Authentication failure responses
 static AUTH_MISSING: &[u8] = b"{\"status\":\"error\",\"result\":\"Missing Authorization header\"}";
 static AUTH_INVALID: &[u8] = b"{\"status\":\"error\",\"result\":\"Invalid credentials\"}";
-static AUTH_BLOCKED: &[u8] = b"{\"status\":\"error\",\"result\":\"Too many failed attempts. Try again later.\"}";
+static AUTH_BLOCKED: &[u8] =
+    b"{\"status\":\"error\",\"result\":\"Too many failed attempts. Try again later.\"}";
 
 /// Handle incoming HTTP requests with minimal overhead
 async fn handle_request<H, Fut>(

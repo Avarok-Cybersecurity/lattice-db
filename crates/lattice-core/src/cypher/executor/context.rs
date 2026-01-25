@@ -136,7 +136,8 @@ impl<'a> ExecutionContext<'a> {
     /// Called by scan/expand operations when they add columns to rows
     #[inline]
     pub fn bind_variable(&mut self, name: &str, column_index: usize) {
-        self.variable_bindings.insert(name.to_string(), column_index);
+        self.variable_bindings
+            .insert(name.to_string(), column_index);
     }
 
     /// Get the column index for a variable

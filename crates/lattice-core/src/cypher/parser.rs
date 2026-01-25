@@ -317,11 +317,7 @@ impl CypherParser {
                     }
                 } else {
                     let n: u32 = range_str.parse().map_err(|_| {
-                        CypherError::syntax(
-                            0,
-                            0,
-                            &format!("Invalid path length: '{}'", range_str),
-                        )
+                        CypherError::syntax(0, 0, &format!("Invalid path length: '{}'", range_str))
                     })?;
                     min = Some(n);
                     max = Some(n);

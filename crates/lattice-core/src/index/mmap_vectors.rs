@@ -116,23 +116,19 @@ impl MmapVectorStore {
         // Each index entry is 16 bytes, starting at offset 32
         let index_start: usize = 32;
         let required_index_bytes = count.checked_mul(16).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Index entry count overflow",
-            )
+            io::Error::new(io::ErrorKind::InvalidData, "Index entry count overflow")
         })?;
-        let min_file_size = index_start.checked_add(required_index_bytes).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Index size overflow",
-            )
-        })?;
+        let min_file_size = index_start
+            .checked_add(required_index_bytes)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Index size overflow"))?;
         if mmap.len() < min_file_size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "File too small for {} index entries: need {} bytes, have {}",
-                    count, min_file_size, mmap.len()
+                    count,
+                    min_file_size,
+                    mmap.len()
                 ),
             ));
         }
@@ -276,12 +272,9 @@ impl MmapVectorBuilder {
                 "Index entries size overflow: too many vectors",
             )
         })?;
-        let index_size = 8usize.checked_add(index_entries_size).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Index size overflow",
-            )
-        })?;
+        let index_size = 8usize
+            .checked_add(index_entries_size)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Index size overflow"))?;
 
         // vectors_size = len * dim * 4 (f32 size)
         let vectors_size = self
@@ -301,10 +294,7 @@ impl MmapVectorBuilder {
             .checked_add(index_size)
             .and_then(|s| s.checked_add(vectors_size))
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Total file size overflow",
-                )
+                io::Error::new(io::ErrorKind::InvalidInput, "Total file size overflow")
             })?;
 
         // Create and size the file
@@ -344,8 +334,9 @@ impl MmapVectorBuilder {
                 .copy_from_slice(&(vector_offset as u64).to_le_bytes());
 
             // Vector data
-            let vector_bytes: &[u8] =
-                unsafe { std::slice::from_raw_parts(vector.as_ptr() as *const u8, vector_byte_size) };
+            let vector_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(vector.as_ptr() as *const u8, vector_byte_size)
+            };
             mmap[vector_offset..vector_offset + vector_byte_size].copy_from_slice(vector_bytes);
         }
 
