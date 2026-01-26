@@ -93,29 +93,32 @@ At these scales, LatticeDB dramatically outperforms server-based solutions by el
 
 | Operation | LatticeDB In-Memory¹ | LatticeDB HTTP² | Qdrant HTTP |
 |-----------|---------------------|-----------------|-------------|
-| **Search** | **77 µs** | **166 µs** | 381 µs |
-| **Upsert** | **0.80 µs** | **88 µs** | 306 µs |
-| **Retrieve** | **1.5 µs** | **90 µs** | 275 µs |
-| **Scroll** | **20 µs** | **130 µs** | 394 µs |
+| **Search** | **84 µs** | **168 µs** | 330 µs |
+| **Upsert** | **0.76 µs** | **115 µs** | 287 µs |
+| **Retrieve** | **2.2 µs** | — | 306 µs |
+| **Scroll** | **18 µs** | — | 398 µs |
 
 ¹ In-memory applies to browser/WASM deployments (no network overhead)
 ² HTTP server uses simd-json, Hyper with pipelining, TCP_NODELAY
 
-> **LatticeDB wins in ALL deployment modes**: In-memory LatticeDB is **50-100x faster** than HTTP. Even LatticeDB HTTP is **2-3x faster** than Qdrant HTTP.
+> **LatticeDB wins in ALL deployment modes**: In-memory is **4-400x faster**. Even LatticeDB HTTP is **2-2.5x faster** than Qdrant HTTP.
 
 ### Graph Operations: LatticeDB vs Neo4j
 
 **Benchmark**: 1,000 nodes with labels and properties, Cypher queries
 
-| Operation | LatticeDB | Neo4j | Speedup |
-|-----------|-----------|-------|---------|
-| `MATCH (n) RETURN n LIMIT 100` | **63 µs** | 3,543 µs | **56x** |
-| `MATCH (n:Person) RETURN n LIMIT 100` | **57 µs** | 3,689 µs | **65x** |
-| `MATCH (n:Person) RETURN n LIMIT 10` | **12 µs** | 610 µs | **51x** |
-| `ORDER BY n.name LIMIT 50` | **116 µs** | 953 µs | **8x** |
-| `WHERE n.age > 30 RETURN n` | **555 µs** | 2,538 µs | **5x** |
+| Operation | LatticeDB In-Memory¹ | LatticeDB HTTP² | Neo4j Bolt |
+|-----------|---------------------|-----------------|------------|
+| `MATCH (n) RETURN n LIMIT 100` | **74 µs** | **85 µs** | 1,147 µs |
+| `MATCH (n:Person) RETURN n LIMIT 100` | **72 µs** | **110 µs** | 816 µs |
+| `MATCH (n:Person) RETURN n LIMIT 10` | **12 µs** | **72 µs** | 596 µs |
+| `ORDER BY n.name LIMIT 50` | **120 µs** | **173 µs** | 889 µs |
+| `WHERE n.age > 30 RETURN n` | **619 µs** | **965 µs** | 3,136 µs |
 
-> **LatticeDB wins all graph operations** at 1K nodes. No JVM overhead, native Rust data structures, and direct query execution.
+¹ In-memory applies to browser/WASM deployments (no network overhead)
+² HTTP server uses Hyper with pipelining, TCP_NODELAY
+
+> **LatticeDB wins ALL graph operations**: In-memory is **5-78x faster**. Even LatticeDB HTTP is **3-13x faster** than Neo4j Bolt.
 
 ### Scaling Considerations
 

@@ -251,6 +251,37 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_JS_TOKEN }}
 
+  publish-crates:
+    name: Publish to crates.io
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Publish lattice-core
+        run: cargo publish -p lattice-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true  # May already be published
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
+      - name: Publish lattice-storage
+        run: cargo publish -p lattice-storage --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
+      - name: Publish lattice-server
+        run: cargo publish -p lattice-server --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
   create-release:
     name: Create Release
     if: startsWith(github.ref, 'refs/tags/v')

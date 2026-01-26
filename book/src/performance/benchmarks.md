@@ -10,27 +10,28 @@ LatticeDB is benchmarked against industry-standard databases: **Qdrant** for vec
 
 | Operation | LatticeDB In-Memory¹ | LatticeDB HTTP² | Qdrant HTTP |
 |-----------|---------------------|-----------------|-------------|
-| **Search** | **77 µs** | **166 µs** | 381 µs |
-| **Upsert** | **0.80 µs** | **88 µs** | 306 µs |
-| **Retrieve** | **1.5 µs** | **90 µs** | 275 µs |
-| **Scroll** | **20 µs** | **130 µs** | 394 µs |
+| **Search** | **84 µs** | **168 µs** | 330 µs |
+| **Upsert** | **0.76 µs** | **115 µs** | 287 µs |
+| **Retrieve** | **2.2 µs** | — | 306 µs |
+| **Scroll** | **18 µs** | — | 398 µs |
 
 ¹ In-memory performance applies to browser/WASM deployments (no network overhead)
 
 ² HTTP server uses simd-json, Hyper with pipelining, TCP_NODELAY
 
-### Graph Operations: LatticeDB In-Memory³ vs Neo4j Bolt
+### Graph Operations: LatticeDB vs Neo4j Bolt
 
-| Operation | LatticeDB In-Memory | Neo4j Bolt | Speedup |
-|-----------|---------------------|------------|---------|
-| match_all | **63 µs** | 3,543 µs | **56x** |
-| match_by_label | **57 µs** | 3,689 µs | **65x** |
-| match_with_limit | **12 µs** | 610 µs | **51x** |
-| order_by | **116 µs** | 953 µs | **8x** |
-| where_property | **555 µs** | 2,538 µs | **5x** |
+| Operation | LatticeDB In-Memory³ | LatticeDB HTTP⁴ | Neo4j Bolt |
+|-----------|---------------------|-----------------|------------|
+| match_all | **74 µs** | **85 µs** | 1,147 µs |
+| match_by_label | **72 µs** | **110 µs** | 816 µs |
+| match_with_limit | **12 µs** | **72 µs** | 596 µs |
+| order_by | **120 µs** | **173 µs** | 889 µs |
+| where_property | **619 µs** | **965 µs** | 3,136 µs |
 
-³ In-memory graph queries have no HTTP overhead. For server deployments,
-  use `http_graph_profiler` to benchmark LatticeDB HTTP vs Neo4j Bolt.
+³ In-memory applies to browser/WASM deployments (no network overhead)
+
+⁴ HTTP server uses Hyper with pipelining, TCP_NODELAY
 
 ## Benchmark Setup
 
@@ -158,9 +159,10 @@ POST /collections/{name}/points/scroll
 MATCH (n) RETURN n LIMIT 100
 ```
 
-- LatticeDB: **63 µs**
-- Neo4j: 3,543 µs
-- **56x faster**
+- LatticeDB In-Memory: **74 µs**
+- LatticeDB HTTP: **85 µs**
+- Neo4j Bolt: 1,147 µs
+- **13x faster** (HTTP vs Bolt)
 
 ### match_by_label
 
@@ -168,9 +170,10 @@ MATCH (n) RETURN n LIMIT 100
 MATCH (n:Person) RETURN n LIMIT 100
 ```
 
-- LatticeDB: **57 µs**
-- Neo4j: 3,689 µs
-- **65x faster**
+- LatticeDB In-Memory: **72 µs**
+- LatticeDB HTTP: **110 µs**
+- Neo4j Bolt: 816 µs
+- **7x faster** (HTTP vs Bolt)
 
 ### match_with_limit
 
@@ -178,9 +181,10 @@ MATCH (n:Person) RETURN n LIMIT 100
 MATCH (n:Person) RETURN n LIMIT 10
 ```
 
-- LatticeDB: **12 µs**
-- Neo4j: 610 µs
-- **51x faster**
+- LatticeDB In-Memory: **12 µs**
+- LatticeDB HTTP: **72 µs**
+- Neo4j Bolt: 596 µs
+- **8x faster** (HTTP vs Bolt)
 
 ### order_by
 
@@ -188,9 +192,10 @@ MATCH (n:Person) RETURN n LIMIT 10
 MATCH (n:Person) RETURN n.name ORDER BY n.name LIMIT 50
 ```
 
-- LatticeDB: **116 µs**
-- Neo4j: 953 µs
-- **8x faster**
+- LatticeDB In-Memory: **120 µs**
+- LatticeDB HTTP: **173 µs**
+- Neo4j Bolt: 889 µs
+- **5x faster** (HTTP vs Bolt)
 
 ### where_property
 
@@ -198,9 +203,10 @@ MATCH (n:Person) RETURN n.name ORDER BY n.name LIMIT 50
 MATCH (n:Person) WHERE n.age > 30 RETURN n
 ```
 
-- LatticeDB: **555 µs**
-- Neo4j: 2,538 µs
-- **5x faster**
+- LatticeDB In-Memory: **619 µs**
+- LatticeDB HTTP: **965 µs**
+- Neo4j Bolt: 3,136 µs
+- **3x faster** (HTTP vs Bolt)
 
 ## Why LatticeDB is Faster
 
