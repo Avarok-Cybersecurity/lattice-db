@@ -587,7 +587,7 @@ impl<S: LatticeStorage> WriteAheadLog<S> {
 
 // Note: StorageError -> LatticeError conversion is handled by #[from] in error.rs
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::storage::StorageResult;

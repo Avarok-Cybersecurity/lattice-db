@@ -211,7 +211,7 @@ pub mod recovery {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::storage::StorageResult;
@@ -233,7 +233,6 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[async_trait::async_trait]
     impl LatticeStorage for MockStorage {
         async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
@@ -282,7 +281,6 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_transaction_manager_log_upsert() {
         let storage = MockStorage::new();
@@ -295,7 +293,6 @@ mod tests {
         assert_eq!(txn.next_lsn(), 1);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_transaction_manager_log_delete() {
         let storage = MockStorage::new();
@@ -306,7 +303,6 @@ mod tests {
         assert_eq!(lsn, 0);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_transaction_manager_multiple_operations() {
         let storage = MockStorage::new();
