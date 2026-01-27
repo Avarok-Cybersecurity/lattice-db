@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 ///
 /// When a `MockStorage` created from this is dropped, the data persists
 /// in the Arc references — simulating a crash where storage survives.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SharedState {
     pub pages: Arc<RwLock<HashMap<u64, Vec<u8>>>>,
     pub meta: Arc<RwLock<HashMap<String, Vec<u8>>>>,

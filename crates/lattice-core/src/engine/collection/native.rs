@@ -651,24 +651,30 @@ where
             Ok(false) // Relation doesn't exist
         } else {
             // For edges without specific relation, find and log the first match
-            let mut pts = self.points.write_safe()?;
-            let point = pts
-                .get_mut(&from_id)
-                .ok_or(LatticeError::PointNotFound { id: from_id })?;
+            let removed_relation_id = {
+                let mut pts = self.points.write_safe()?;
+                let point = pts
+                    .get_mut(&from_id)
+                    .ok_or(LatticeError::PointNotFound { id: from_id })?;
 
-            if let Some(edges) = &mut point.outgoing_edges {
-                if let Some(idx) = edges.iter().position(|e| e.target_id == to_id) {
-                    let edge = edges.remove(idx);
-
-                    // Log the removal to WAL (apply already done above)
-                    if let Some(txn_arc) = self.txn_manager.clone() {
-                        let mut txn = txn_arc.lock().await;
-                        txn.log_remove_edge(from_id, to_id, edge.relation_id)
-                            .await?;
+                if let Some(edges) = &mut point.outgoing_edges {
+                    if let Some(idx) = edges.iter().position(|e| e.target_id == to_id) {
+                        let edge = edges.remove(idx);
+                        Some(edge.relation_id)
+                    } else {
+                        None
                     }
-
-                    return Ok(true);
+                } else {
+                    None
                 }
+            }; // pts dropped here before await
+
+            if let Some(rel_id) = removed_relation_id {
+                if let Some(txn_arc) = self.txn_manager.clone() {
+                    let mut txn = txn_arc.lock().await;
+                    txn.log_remove_edge(from_id, to_id, rel_id).await?;
+                }
+                return Ok(true);
             }
             Ok(false)
         }
