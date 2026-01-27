@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Stress and ordering tests for WAL ACID compliance
 //!
 //! Verifies correct final state after interleaved operations

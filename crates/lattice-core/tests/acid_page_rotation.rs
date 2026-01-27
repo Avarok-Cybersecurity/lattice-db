@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Page rotation edge case tests for WAL durability
 //!
 //! Verifies that crash during page boundary transitions and

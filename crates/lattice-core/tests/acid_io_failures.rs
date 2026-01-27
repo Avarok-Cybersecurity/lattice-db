@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! I/O failure injection tests for WAL durability
 //!
 //! Uses FailingStorage to inject I/O errors at precise points in the
@@ -55,8 +56,8 @@ async fn test_write_page_failure_preserves_committed() {
             "At least 5 committed entries must survive, got {}",
             entries.len()
         );
-        for i in 0..5 {
-            assert_eq!(entries[i].0, i as u64);
+        for (i, entry) in entries.iter().enumerate().take(5) {
+            assert_eq!(entry.0, i as u64);
         }
     }
 }

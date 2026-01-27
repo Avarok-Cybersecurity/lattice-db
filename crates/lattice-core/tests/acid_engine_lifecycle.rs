@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Full engine ACID lifecycle tests
 //!
 //! Tests upsert/delete/edge operations through the CollectionEngine

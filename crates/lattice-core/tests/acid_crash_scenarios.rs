@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Crash scenario tests for WAL atomicity
 //!
 //! Simulates crashes during multi-step operations to verify
@@ -49,8 +50,8 @@ async fn test_crash_during_batch_upsert() {
         );
 
         // First 25 must be present with correct LSNs
-        for i in 0..25 {
-            assert_eq!(entries[i].0, i as u64, "LSN mismatch at index {}", i);
+        for (i, entry) in entries.iter().enumerate().take(25) {
+            assert_eq!(entry.0, i as u64, "LSN mismatch at index {}", i);
         }
     }
 }

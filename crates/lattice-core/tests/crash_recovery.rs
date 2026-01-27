@@ -1,3 +1,4 @@
+#![cfg(not(target_arch = "wasm32"))]
 //! Crash recovery tests for WAL durability
 //!
 //! Simulates crash scenarios using MockStorage with shared Arc state.
