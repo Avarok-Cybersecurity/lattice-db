@@ -17,9 +17,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::Bound;
 
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
-
-/// Starting page ID for point storage (reserved for Phase 2)
-const PAGE_POINTS_START: u64 = 1_000_000;
+use super::PAGE_POINTS_START;
 
 /// Collection engine - manages a single collection (WASM implementation)
 ///
@@ -33,9 +31,8 @@ pub struct CollectionEngine {
     points: BTreeMap<PointId, Point>,
     /// Label index: label -> set of point IDs (for O(1) label lookups)
     label_index: HashMap<String, FxHashSet<PointId>>,
-    /// Next available page ID for storage (reserved for Phase 2)
-    #[allow(dead_code)]
-    next_page_id: u64,
+    /// Next available page ID for storage (reserved for Phase 2: point-level persistence)
+    _next_page_id: u64,
 }
 
 impl CollectionEngine {
@@ -51,7 +48,7 @@ impl CollectionEngine {
             points: BTreeMap::new(),
             // Pre-allocate for typical number of unique labels in a graph
             label_index: HashMap::with_capacity(64),
-            next_page_id: PAGE_POINTS_START,
+            _next_page_id: PAGE_POINTS_START,
         })
     }
 

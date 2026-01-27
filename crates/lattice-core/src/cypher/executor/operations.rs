@@ -254,8 +254,8 @@ impl QueryExecutor {
                     .filter(|path| path.depth >= min_hops as usize)
                     .collect();
 
-                // Check direction (simplified - assume outgoing matches)
-                // TODO: Proper direction handling
+                // Limitation: direction filtering assumes outgoing edges only.
+                // Incoming and bidirectional edge traversal not yet implemented.
 
                 // Optimization: fast paths for common cases
                 let paths_len = valid_paths.len();

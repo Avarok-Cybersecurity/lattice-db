@@ -13,7 +13,8 @@ use crate::dto::{
 };
 use crate::router::{json_response, AppState, InsertError};
 use lattice_core::{
-    CollectionConfig, CollectionEngine, Distance, HnswConfig, LatticeResponse, VectorConfig,
+    CollectionConfig, CollectionEngine, Distance, DurabilityMode, HnswConfig, LatticeResponse,
+    VectorConfig,
 };
 use std::collections::HashMap;
 use tracing::{info, warn};
@@ -199,12 +200,25 @@ pub fn create_collection(
         ));
     }
 
+    // Parse durability mode
+    let durability = match request.durability.as_deref() {
+        Some("durable") => DurabilityMode::Durable,
+        Some("ephemeral") | None => DurabilityMode::Ephemeral,
+        Some(other) => {
+            return LatticeResponse::bad_request(&format!(
+                "Unknown durability mode: '{}'. Use 'ephemeral' or 'durable'",
+                other
+            ));
+        }
+    };
+
     // Create collection config
     let config = CollectionConfig::new(
         name,
         VectorConfig::new(request.vectors.size, distance),
         hnsw_config,
-    );
+    )
+    .with_durability(durability);
 
     // Create collection engine
     let engine = match CollectionEngine::new(config) {
@@ -299,6 +313,10 @@ pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
             optimizer_config: OptimizersConfigResponse::default(),
             wal_config: None,
             quantization_config: None,
+            durability: Some(match config.durability {
+                DurabilityMode::Ephemeral => "ephemeral".to_string(),
+                DurabilityMode::Durable => "durable".to_string(),
+            }),
         },
         payload_schema: HashMap::new(),
     };
@@ -350,6 +368,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
 
         let response = create_collection(&state, "test", request);
@@ -374,6 +393,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
 
         // First create succeeds
@@ -403,6 +423,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         create_collection(&state, "test", request);
 
@@ -425,6 +446,7 @@ mod tests {
                 distance: "InvalidMetric".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
 
         let response = create_collection(&state, "test", request);
@@ -467,6 +489,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
 
         // Path traversal attempt

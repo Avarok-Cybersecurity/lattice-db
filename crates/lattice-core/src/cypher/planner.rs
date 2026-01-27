@@ -231,8 +231,13 @@ impl QueryPlanner {
             return Err(CypherError::syntax(0, 0, "Empty MATCH clause"));
         }
 
-        // For now, only support single pattern
-        // TODO: Support multiple patterns with Cartesian product
+        // Limitation: only single-pattern MATCH is supported.
+        // Multi-pattern MATCH (Cartesian product) requires cross-join planning.
+        if match_clause.patterns.len() > 1 {
+            return Err(CypherError::unsupported(
+                "Multiple MATCH patterns (Cartesian product) not yet supported",
+            ));
+        }
         let pattern = &match_clause.patterns[0];
         self.plan_pattern(pattern)
     }
@@ -243,9 +248,8 @@ impl QueryPlanner {
         input: LogicalOp,
         match_clause: &MatchClause,
     ) -> CypherResult<LogicalOp> {
-        // OPTIONAL MATCH is like MATCH but produces NULL for non-matches
-        // For simplicity, we'll implement it similarly to MATCH for now
-        // TODO: Implement proper left-outer-join semantics
+        // Limitation: OPTIONAL MATCH currently behaves like MATCH (inner join).
+        // Proper left-outer-join semantics (NULL rows for non-matches) not yet implemented.
 
         if match_clause.patterns.is_empty() {
             return Ok(input);
@@ -651,14 +655,14 @@ impl QueryPlanner {
         for mutation in mutations {
             plan = match mutation {
                 Mutation::Create(create) => {
-                    // Combine with existing plan
+                    // Limitation: CREATE after MATCH currently replaces the plan
+                    // rather than sequencing operations. Multi-clause mutations
+                    // with data dependencies may produce incorrect results.
                     let create_plan = self.plan_create(create)?;
-                    // TODO: Proper sequencing
                     create_plan
                 }
                 Mutation::Delete(delete) => self.plan_delete(delete, Some(plan))?,
                 Mutation::Set(_set) => {
-                    // TODO: Implement SET
                     return Err(CypherError::unsupported("SET clause"));
                 }
             };

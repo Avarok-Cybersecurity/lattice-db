@@ -33,11 +33,12 @@ pub struct HnswConfigRequest {
 
 /// Create collection request
 ///
-/// Qdrant-compatible format:
+/// Qdrant-compatible format with LatticeDB extensions:
 /// ```json
 /// {
 ///   "vectors": { "size": 128, "distance": "Cosine" },
-///   "hnsw_config": { "m": 16, "ef_construct": 200 }
+///   "hnsw_config": { "m": 16, "ef_construct": 200 },
+///   "durability": "durable"
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,12 @@ pub struct CreateCollectionRequest {
     /// HNSW index configuration
     #[serde(default)]
     pub hnsw_config: Option<HnswConfigRequest>,
+    /// Durability mode: "ephemeral" (default) or "durable" (ACID with WAL)
+    ///
+    /// - `ephemeral`: Fast in-memory mode, no persistence
+    /// - `durable`: ACID mode with WAL, crash recovery, fsync
+    #[serde(default)]
+    pub durability: Option<String>,
 }
 
 /// Single point for upsert

@@ -17,12 +17,41 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// Durability mode for LatticeDB collections
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DurabilityMode {
+    /// Fast in-memory mode (default) - no persistence
+    #[default]
+    Ephemeral,
+    /// ACID-compliant durable mode with WAL
+    Durable,
+}
+
+impl DurabilityMode {
+    /// Returns the API string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DurabilityMode::Ephemeral => "ephemeral",
+            DurabilityMode::Durable => "durable",
+        }
+    }
+
+    /// Display name for benchmark output
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            DurabilityMode::Ephemeral => "Ephemeral",
+            DurabilityMode::Durable => "ACID",
+        }
+    }
+}
+
 /// LatticeDB HTTP vector benchmark runner
 pub struct HttpVectorRunner {
     client: Client,
     base_url: String,
     collection_name: String,
     vector_dim: usize,
+    durability: DurabilityMode,
 }
 
 // === Request/Response DTOs ===
@@ -30,6 +59,8 @@ pub struct HttpVectorRunner {
 #[derive(Serialize)]
 struct CreateCollectionRequest {
     vectors: VectorConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durability: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -82,11 +113,26 @@ struct ApiResponse<T> {
 }
 
 impl HttpVectorRunner {
-    /// Create a new HTTP vector runner
+    /// Create a new HTTP vector runner with default ephemeral mode
     pub fn new(
         base_url: &str,
         collection_name: &str,
         vector_dim: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_durability(
+            base_url,
+            collection_name,
+            vector_dim,
+            DurabilityMode::Ephemeral,
+        )
+    }
+
+    /// Create a new HTTP vector runner with specified durability mode
+    pub fn with_durability(
+        base_url: &str,
+        collection_name: &str,
+        vector_dim: usize,
+        durability: DurabilityMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
 
@@ -95,10 +141,16 @@ impl HttpVectorRunner {
             base_url: base_url.to_string(),
             collection_name: collection_name.to_string(),
             vector_dim,
+            durability,
         })
     }
 
-    /// Create collection with specified vector config
+    /// Get the durability mode
+    pub fn durability(&self) -> DurabilityMode {
+        self.durability
+    }
+
+    /// Create collection with specified vector config and durability mode
     pub fn create_collection(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Delete existing collection (ignore errors)
         let _ = self
@@ -109,12 +161,13 @@ impl HttpVectorRunner {
             ))
             .send();
 
-        // Create new collection
+        // Create new collection with durability setting
         let body = CreateCollectionRequest {
             vectors: VectorConfig {
                 size: self.vector_dim,
                 distance: "Cosine".to_string(),
             },
+            durability: Some(self.durability.as_str().to_string()),
         };
 
         let resp = self
@@ -127,7 +180,8 @@ impl HttpVectorRunner {
             .send()?;
 
         if !resp.status().is_success() {
-            return Err(format!("Failed to create collection: {}", resp.status()).into());
+            let body = resp.text().unwrap_or_default();
+            return Err(format!("Failed to create collection: {}", body).into());
         }
 
         Ok(())

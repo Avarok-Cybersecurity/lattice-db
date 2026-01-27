@@ -42,11 +42,15 @@
 pub mod datasets;
 pub mod http_runner;
 pub mod http_vector_runner;
+pub mod lattice_durable_runner;
 pub mod lattice_runner;
 pub mod lattice_vector_runner;
 pub mod neo4j_runner;
 pub mod qdrant_runner;
 pub mod results;
+
+// Re-export DurabilityMode for benchmark use
+pub use http_vector_runner::DurabilityMode;
 
 use std::time::{Duration, Instant};
 

@@ -38,6 +38,9 @@ compact_str.workspace = true
 # Error handling
 thiserror.workspace = true
 
+# Fast xxHash32 checksum for WAL integrity (faster than CRC32)
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash32"] }
+
 # CRITICAL: This crate must NOT depend on:
 # - tokio (I/O runtime)
 # - std::fs (filesystem I/O)
@@ -52,9 +55,14 @@ rayon = "1.10"
 memmap2 = { version = "0.9", optional = true }
 # Fast RwLock for thread-safe property caching during parallel execution
 parking_lot = "0.12"
+# Async runtime for durable mode WAL operations (sync primitives + runtime for group commit)
+tokio = { workspace = true, features = ["sync", "rt"] }
+# Tracing for recovery logging
+tracing = { workspace = true }
 
 [dev-dependencies]
 rand.workspace = true
+lattice-test-harness.workspace = true
 
 # Native-only test dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

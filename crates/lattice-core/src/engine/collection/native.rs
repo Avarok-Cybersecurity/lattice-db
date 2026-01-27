@@ -4,38 +4,136 @@
 //! - Points are stored immediately in `points` storage
 //! - Index updates happen in background via `AsyncIndexer`
 //! - Search merges indexed results with brute-force on pending points
+//!
+//! ## Durability
+//!
+//! The engine supports two modes via generic type parameters:
+//! - **Ephemeral** (`CollectionEngine<NoStorage, NoStorage>`): Fast, in-memory only
+//! - **Durable** (`CollectionEngine<W, D>`): WAL-backed with crash recovery
 
 use crate::engine::async_indexer::{AsyncIndexerHandle, BackpressureSignal};
-use crate::error::{LatticeError, LatticeResult};
+use crate::error::{ConfigError, LatticeError, LatticeResult};
 use crate::index::hnsw::HnswIndex;
+use crate::storage::{LatticeStorage, StorageError, StorageResult};
 use crate::sync::{LockExt, MutexExt};
-use crate::types::collection::CollectionConfig;
+use crate::transaction::TransactionManager;
+use crate::types::collection::{CollectionConfig, DurabilityMode};
 use crate::types::point::{Edge, Point, PointId};
 use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, SearchResult};
+use crate::wal::{Lsn, WalEntry};
 use rayon::prelude::*;
 use rkyv::rancor::Error as RkyvError;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::marker::PhantomData;
 use std::ops::Bound;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
+use tokio::sync::Mutex as TokioMutex;
 
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 
-/// Starting page ID for point storage (reserved for Phase 2)
-const PAGE_POINTS_START: u64 = 1_000_000;
+/// Marker type for no storage (ephemeral mode)
+///
+/// Implements `LatticeStorage` to satisfy trait bounds. All methods return
+/// errors because ephemeral engines never use the transaction manager
+/// (it's always `None`). If a code path reaches these methods, it indicates
+/// a bug in engine construction — returning an error is safer than panicking.
+#[derive(Debug, Clone, Copy)]
+pub struct NoStorage;
+
+const NO_STORAGE_MSG: &str = "NoStorage: ephemeral mode has no storage backend";
+
+#[async_trait::async_trait]
+impl LatticeStorage for NoStorage {
+    async fn get_meta(&self, _key: &str) -> StorageResult<Option<Vec<u8>>> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn set_meta(&self, _key: &str, _value: &[u8]) -> StorageResult<()> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn delete_meta(&self, _key: &str) -> StorageResult<()> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn read_page(&self, _page_id: u64) -> StorageResult<Vec<u8>> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn write_page(&self, _page_id: u64, _data: &[u8]) -> StorageResult<()> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn page_exists(&self, _page_id: u64) -> StorageResult<bool> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn delete_page(&self, _page_id: u64) -> StorageResult<()> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+
+    async fn sync(&self) -> StorageResult<()> {
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
+    }
+}
+
+use super::PAGE_POINTS_START;
 
 /// Max pending points before blocking upsert to let indexer catch up
 /// Higher = faster upserts, slower search on pending buffer
 /// Lower = slower upserts (blocks more), faster search
 /// Set high enough that typical benchmark batches don't trigger blocking
-const PENDING_THRESHOLD: usize = 10000;
+const PENDING_THRESHOLD: usize = 10_000;
+
+/// Initial capacity for the label index HashMap. 64 covers typical collections
+/// with moderate label variety; the map resizes automatically if exceeded.
+const INITIAL_LABEL_CAPACITY: usize = 64;
+
+/// Maximum iterations for backpressure wait loop before proceeding anyway.
+/// At BACKPRESSURE_POLL_MS per iteration, this is a 5-second timeout.
+const BACKPRESSURE_MAX_ITERATIONS: u32 = 500;
+
+/// Polling interval (ms) for backpressure condvar wait.
+const BACKPRESSURE_POLL_MS: u64 = 10;
 
 /// Collection engine - manages a single collection (Native implementation)
 ///
 /// Thread-safe with Arc<RwLock<>> for concurrent reads.
 /// Uses async indexing for improved insert latency.
-pub struct CollectionEngine {
+///
+/// # Type Parameters
+///
+/// - `W`: WAL storage backend. Use `NoStorage` for ephemeral mode.
+/// - `D`: Data/checkpoint storage backend. Defaults to same as WAL.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // Ephemeral engine (fast, no persistence)
+/// let engine = CollectionEngine::new(config)?;
+///
+/// // Durable engine (WAL-backed with crash recovery)
+/// let engine = CollectionEngine::open_durable(config, wal_storage, data_storage).await?;
+/// ```
+pub struct CollectionEngine<W: LatticeStorage = NoStorage, D: LatticeStorage = W> {
     /// Collection configuration
     config: CollectionConfig,
     /// HNSW index for vector search
@@ -50,14 +148,31 @@ pub struct CollectionEngine {
     label_index: Arc<RwLock<HashMap<String, FxHashSet<PointId>>>>,
     /// Signal for backpressure coordination with async indexer
     backpressure_signal: BackpressureSignal,
-    /// Next available page ID for storage (reserved for Phase 2)
-    #[allow(dead_code)]
-    next_page_id: u64,
+    /// Next available page ID for storage (reserved for Phase 2: point-level persistence)
+    _next_page_id: u64,
+
+    // === Durability fields ===
+    /// Transaction manager for WAL (None in ephemeral mode)
+    txn_manager: Option<Arc<TokioMutex<TransactionManager<W>>>>,
+    /// Data storage for checkpoints (None in ephemeral mode, reserved for Phase 2)
+    _data_storage: Option<D>,
+    /// Phantom data for type parameters
+    _phantom: PhantomData<(W, D)>,
 }
 
-impl CollectionEngine {
-    /// Create a new collection engine
-    pub fn new(config: CollectionConfig) -> LatticeResult<Self> {
+/// Type aliases for common engine configurations
+pub type EphemeralEngine = CollectionEngine<NoStorage, NoStorage>;
+
+/// Durable engine with unified storage for WAL and data
+pub type DurableEngine<S> = CollectionEngine<S, S>;
+
+impl CollectionEngine<NoStorage, NoStorage> {
+    /// Create a new ephemeral collection engine (no durability)
+    ///
+    /// This is the fast path with no WAL overhead. Data is lost on restart.
+    pub fn new(mut config: CollectionConfig) -> LatticeResult<Self> {
+        // Force ephemeral mode for this constructor
+        config.durability = DurabilityMode::Ephemeral;
         config.validate()?;
 
         let index = Arc::new(RwLock::new(HnswIndex::new(
@@ -67,7 +182,7 @@ impl CollectionEngine {
         let points = Arc::new(RwLock::new(BTreeMap::new()));
         let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
         // Pre-allocate for typical number of unique labels in a graph
-        let label_index = Arc::new(RwLock::new(HashMap::with_capacity(64)));
+        let label_index = Arc::new(RwLock::new(HashMap::with_capacity(INITIAL_LABEL_CAPACITY)));
         let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
 
         // Spawn background indexer
@@ -86,10 +201,499 @@ impl CollectionEngine {
             indexer,
             label_index,
             backpressure_signal,
-            next_page_id: PAGE_POINTS_START,
+            _next_page_id: PAGE_POINTS_START,
+            txn_manager: None,
+            _data_storage: None,
+            _phantom: PhantomData,
         })
     }
 
+    // --- Public Mutation Methods (Sync, Ephemeral Only) ---
+
+    /// Upsert points into the collection (sync, ephemeral mode)
+    ///
+    /// Points are stored immediately and indexed asynchronously in background.
+    /// If pending buffer exceeds threshold, blocks until indexer catches up.
+    pub fn upsert_points(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+        self.apply_upsert_internal(points)
+    }
+
+    /// Delete points from the collection (sync, ephemeral mode)
+    ///
+    /// Returns the number of points actually deleted.
+    pub fn delete_points(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+        self.apply_delete_internal(ids)
+    }
+
+    /// Add a directed edge between two points (sync, ephemeral mode)
+    ///
+    /// Creates a relation if it doesn't exist. Edges are stored in the source point.
+    pub fn add_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: &str,
+        weight: f32,
+    ) -> LatticeResult<()> {
+        let relation_id = self.get_or_create_relation_id(relation);
+        let edge = Edge::new(to_id, weight, relation_id);
+        self.apply_add_edge_internal(from_id, edge)
+    }
+
+    /// Remove an edge between two points (sync, ephemeral mode)
+    ///
+    /// If `relation` is None, removes edges with any relation (first match only).
+    /// Returns true if an edge was removed.
+    pub fn remove_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: Option<&str>,
+    ) -> LatticeResult<bool> {
+        if let Some(rel) = relation {
+            if let Some(relation_id) = self.config.relation_id(rel) {
+                return self.apply_remove_edge_internal(from_id, to_id, relation_id);
+            }
+            Ok(false) // Relation doesn't exist
+        } else {
+            // Remove first matching edge regardless of relation
+            let mut pts = self.points.write_safe()?;
+            let point = pts
+                .get_mut(&from_id)
+                .ok_or(LatticeError::PointNotFound { id: from_id })?;
+
+            if let Some(edges) = &mut point.outgoing_edges {
+                let original_len = edges.len();
+                edges.retain(|e| e.target_id != to_id);
+                Ok(edges.len() < original_len)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+
+    /// Deserialize a collection from bytes (creates ephemeral engine)
+    ///
+    /// This always creates an ephemeral engine. For durable engines, use
+    /// `open_durable()` with the appropriate storage backends.
+    pub fn from_bytes(bytes: &[u8]) -> LatticeResult<Self> {
+        if bytes.len() < 8 {
+            return Err(LatticeError::Serialization {
+                message: "Invalid data: too short".to_string(),
+            });
+        }
+
+        // Read config length with overflow check
+        let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let config_end =
+            4usize
+                .checked_add(config_len)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: config length overflow".to_string(),
+                })?;
+
+        let config_end_plus_4 =
+            config_end
+                .checked_add(4)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: offset overflow".to_string(),
+                })?;
+
+        if bytes.len() < config_end_plus_4 {
+            return Err(LatticeError::Serialization {
+                message: "Invalid data: config truncated".to_string(),
+            });
+        }
+
+        // Deserialize config (JSON)
+        let config: CollectionConfig =
+            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
+                LatticeError::Serialization {
+                    message: e.to_string(),
+                }
+            })?;
+
+        // Read points length
+        let points_len = u32::from_le_bytes([
+            bytes[config_end],
+            bytes[config_end + 1],
+            bytes[config_end + 2],
+            bytes[config_end + 3],
+        ]) as usize;
+
+        // Calculate padding (same formula as serialization) with overflow checks
+        let header_size = 4usize
+            .checked_add(config_len)
+            .and_then(|v| v.checked_add(4))
+            .ok_or_else(|| LatticeError::Serialization {
+                message: "Invalid data: header size overflow".to_string(),
+            })?;
+        let padding = (16 - (header_size % 16)) % 16;
+        let points_start = config_end
+            .checked_add(4)
+            .and_then(|v| v.checked_add(padding))
+            .ok_or_else(|| LatticeError::Serialization {
+                message: "Invalid data: points start offset overflow".to_string(),
+            })?;
+
+        let required_len =
+            points_start
+                .checked_add(points_len)
+                .ok_or_else(|| LatticeError::Serialization {
+                    message: "Invalid data: total size overflow".to_string(),
+                })?;
+
+        if bytes.len() < required_len {
+            return Err(LatticeError::Serialization {
+                message: "Invalid data: points truncated".to_string(),
+            });
+        }
+
+        // Copy to aligned buffer for rkyv deserialization
+        let mut aligned_bytes = rkyv::util::AlignedVec::<16>::new();
+        aligned_bytes.extend_from_slice(&bytes[points_start..points_start + points_len]);
+
+        // Deserialize points with rkyv
+        let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
+            .map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
+            })?;
+
+        // Build ephemeral engine
+        let mut engine = Self::new(config)?;
+        engine.upsert_points(points_vec)?;
+
+        Ok(engine)
+    }
+}
+
+impl<W, D> CollectionEngine<W, D>
+where
+    W: LatticeStorage + Send + Sync + 'static,
+    D: LatticeStorage + Send + Sync + 'static,
+{
+    /// Create a durable collection engine with separate WAL and data storage
+    ///
+    /// # Arguments
+    ///
+    /// - `config`: Collection configuration (durability should be `Durable`)
+    /// - `wal_storage`: Storage backend for WAL entries (fast, append-heavy)
+    /// - `data_storage`: Storage backend for checkpoints/snapshots
+    ///
+    /// # Recovery
+    ///
+    /// On open, the engine replays the WAL from the last checkpoint to restore state.
+    pub async fn open_durable(
+        config: CollectionConfig,
+        wal_storage: W,
+        data_storage: D,
+    ) -> LatticeResult<Self> {
+        if config.durability != DurabilityMode::Durable {
+            return Err(LatticeError::Config(ConfigError::InvalidParameter {
+                name: "durability",
+                message: "Expected DurabilityMode::Durable for open_durable".to_string(),
+            }));
+        }
+
+        config.validate()?;
+
+        // Open transaction manager with WAL storage
+        let txn_manager = TransactionManager::open(wal_storage).await?;
+
+        // Create base engine
+        let index = Arc::new(RwLock::new(HnswIndex::new(
+            config.hnsw.clone(),
+            config.vectors.distance,
+        )));
+        let points = Arc::new(RwLock::new(BTreeMap::new()));
+        let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
+        let label_index = Arc::new(RwLock::new(HashMap::with_capacity(INITIAL_LABEL_CAPACITY)));
+        let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
+
+        let indexer = AsyncIndexerHandle::spawn(
+            Arc::clone(&index),
+            Arc::clone(&points),
+            Arc::clone(&pending_index),
+            Arc::clone(&backpressure_signal),
+        );
+
+        let txn_arc = Arc::new(TokioMutex::new(txn_manager));
+
+        let mut engine = Self {
+            config,
+            index,
+            points,
+            pending_index,
+            indexer,
+            label_index,
+            backpressure_signal,
+            _next_page_id: PAGE_POINTS_START,
+            txn_manager: Some(txn_arc),
+            _data_storage: Some(data_storage),
+            _phantom: PhantomData,
+        };
+
+        // Replay WAL to recover state
+        let replayed = engine.recover_from_wal().await?;
+        tracing::info!(replayed, "WAL recovery complete");
+
+        Ok(engine)
+    }
+
+    /// Replay WAL entries to restore state after crash
+    async fn recover_from_wal(&mut self) -> LatticeResult<usize> {
+        let txn = self
+            .txn_manager
+            .as_ref()
+            .expect("durable mode requires txn_manager");
+        let txn_guard = txn.lock().await;
+
+        let start_lsn = txn_guard.last_checkpoint_lsn();
+        let entries = txn_guard.read_entries_from(start_lsn).await?;
+        drop(txn_guard); // Release lock before mutating
+
+        // Collect aborted LSNs first
+        let aborted_lsns: std::collections::HashSet<Lsn> = entries
+            .iter()
+            .filter_map(|(_, entry)| match entry {
+                WalEntry::Abort { aborted_lsn } => Some(*aborted_lsn),
+                _ => None,
+            })
+            .collect();
+
+        let mut replayed = 0;
+        for (lsn, entry) in entries {
+            if aborted_lsns.contains(&lsn) {
+                continue;
+            }
+
+            match entry {
+                WalEntry::Upsert { points } => {
+                    self.apply_upsert_internal(points)?;
+                    replayed += 1;
+                }
+                WalEntry::Delete { ids } => {
+                    self.apply_delete_internal(&ids)?;
+                    replayed += 1;
+                }
+                WalEntry::AddEdge { from_id, edge } => {
+                    self.apply_add_edge_internal(from_id, edge)?;
+                    replayed += 1;
+                }
+                WalEntry::RemoveEdge {
+                    from_id,
+                    to_id,
+                    relation_id,
+                } => {
+                    self.apply_remove_edge_internal(from_id, to_id, relation_id)?;
+                    replayed += 1;
+                }
+                WalEntry::Checkpoint { .. } | WalEntry::Abort { .. } => { /* skip */ }
+            }
+        }
+
+        Ok(replayed)
+    }
+
+    // --- Public Mutation Methods (Async, Durable Mode) ---
+
+    /// Upsert points with WAL durability (async, durable mode)
+    ///
+    /// Logs to WAL first (for crash recovery), then applies to memory.
+    /// Lock is held through both phases for atomicity.
+    pub async fn upsert_points_async(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+        // Validate all points first
+        for point in &points {
+            if point.vector.len() != self.config.vectors.size {
+                return Err(LatticeError::DimensionMismatch {
+                    expected: self.config.vectors.size,
+                    actual: point.vector.len(),
+                });
+            }
+        }
+
+        if let Some(txn_arc) = self.txn_manager.clone() {
+            let mut txn = txn_arc.lock().await;
+            let lsn = txn.log_upsert(points.clone()).await?;
+            // Hold lock through apply for atomicity
+            match self.apply_upsert_internal(points) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let _ = txn.log_abort(lsn).await;
+                    return Err(e);
+                }
+            }
+        }
+
+        self.apply_upsert_internal(points)
+    }
+
+    /// Batch upsert multiple individual points with WAL durability (async, durable mode)
+    ///
+    /// More efficient than calling `upsert_points_async` multiple times because
+    /// it batches WAL entries and syncs once at the end.
+    ///
+    /// Each point is logged as a separate WAL entry for individual recovery.
+    pub async fn upsert_batch_async(
+        &mut self,
+        points_batch: Vec<Vec<Point>>,
+    ) -> LatticeResult<Vec<UpsertResult>> {
+        // Validate all points first
+        for points in &points_batch {
+            for point in points {
+                if point.vector.len() != self.config.vectors.size {
+                    return Err(LatticeError::DimensionMismatch {
+                        expected: self.config.vectors.size,
+                        actual: point.vector.len(),
+                    });
+                }
+            }
+        }
+
+        if let Some(txn_arc) = self.txn_manager.clone() {
+            let mut txn = txn_arc.lock().await;
+            // Log all operations to WAL without syncing
+            let mut lsns = Vec::with_capacity(points_batch.len());
+            for points in &points_batch {
+                lsns.push(txn.log_upsert_nosync(points.clone()).await?);
+            }
+            // Single sync at the end
+            txn.sync().await?;
+
+            // Apply all to in-memory state (lock held through apply)
+            let mut results = Vec::with_capacity(points_batch.len());
+            for points in points_batch {
+                results.push(self.apply_upsert_internal(points)?);
+            }
+            return Ok(results);
+        }
+
+        let mut results = Vec::with_capacity(points_batch.len());
+        for points in points_batch {
+            results.push(self.apply_upsert_internal(points)?);
+        }
+        Ok(results)
+    }
+
+    /// Delete points with WAL durability (async, durable mode)
+    ///
+    /// Returns the number of points actually deleted.
+    /// Lock is held through both phases for atomicity.
+    pub async fn delete_points_async(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+        if let Some(txn_arc) = self.txn_manager.clone() {
+            let mut txn = txn_arc.lock().await;
+            let lsn = txn.log_delete(ids.to_vec()).await?;
+            match self.apply_delete_internal(ids) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let _ = txn.log_abort(lsn).await;
+                    return Err(e);
+                }
+            }
+        }
+
+        self.apply_delete_internal(ids)
+    }
+
+    /// Add a directed edge with WAL durability (async, durable mode)
+    ///
+    /// Lock is held through both phases for atomicity.
+    pub async fn add_edge_async(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: &str,
+        weight: f32,
+    ) -> LatticeResult<()> {
+        let relation_id = self.get_or_create_relation_id(relation);
+        let edge = Edge::new(to_id, weight, relation_id);
+
+        if let Some(txn_arc) = self.txn_manager.clone() {
+            let mut txn = txn_arc.lock().await;
+            let lsn = txn.log_add_edge(from_id, edge.clone()).await?;
+            match self.apply_add_edge_internal(from_id, edge) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    let _ = txn.log_abort(lsn).await;
+                    return Err(e);
+                }
+            }
+        }
+
+        self.apply_add_edge_internal(from_id, edge)
+    }
+
+    /// Remove an edge with WAL durability (async, durable mode)
+    ///
+    /// Lock is held through both phases for atomicity.
+    pub async fn remove_edge_async(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: Option<&str>,
+    ) -> LatticeResult<bool> {
+        if let Some(rel) = relation {
+            if let Some(relation_id) = self.config.relation_id(rel) {
+                if let Some(txn_arc) = self.txn_manager.clone() {
+                    let mut txn = txn_arc.lock().await;
+                    let lsn = txn.log_remove_edge(from_id, to_id, relation_id).await?;
+                    match self.apply_remove_edge_internal(from_id, to_id, relation_id) {
+                        Ok(result) => return Ok(result),
+                        Err(e) => {
+                            let _ = txn.log_abort(lsn).await;
+                            return Err(e);
+                        }
+                    }
+                }
+
+                return self.apply_remove_edge_internal(from_id, to_id, relation_id);
+            }
+            Ok(false) // Relation doesn't exist
+        } else {
+            // For edges without specific relation, find and log the first match
+            let removed_relation_id = {
+                let mut pts = self.points.write_safe()?;
+                let point = pts
+                    .get_mut(&from_id)
+                    .ok_or(LatticeError::PointNotFound { id: from_id })?;
+
+                if let Some(edges) = &mut point.outgoing_edges {
+                    if let Some(idx) = edges.iter().position(|e| e.target_id == to_id) {
+                        let edge = edges.remove(idx);
+                        Some(edge.relation_id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }; // pts dropped here before await
+
+            if let Some(rel_id) = removed_relation_id {
+                if let Some(txn_arc) = self.txn_manager.clone() {
+                    let mut txn = txn_arc.lock().await;
+                    txn.log_remove_edge(from_id, to_id, rel_id).await?;
+                }
+                return Ok(true);
+            }
+            Ok(false)
+        }
+    }
+}
+
+impl<S> CollectionEngine<S, S>
+where
+    S: LatticeStorage + Clone + Send + Sync + 'static,
+{
+    /// Create a durable engine with unified storage for both WAL and data
+    ///
+    /// This is a convenience method when using the same storage backend for everything.
+    pub async fn open_durable_unified(config: CollectionConfig, storage: S) -> LatticeResult<Self> {
+        Self::open_durable(config, storage.clone(), storage).await
+    }
+}
+
+impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
     /// Get collection configuration
     pub fn config(&self) -> &CollectionConfig {
         &self.config
@@ -120,13 +724,13 @@ impl CollectionEngine {
         self.pending_index.read().map(|g| g.len()).unwrap_or(0)
     }
 
-    // --- Point Operations ---
+    // --- Point Operations (Internal) ---
 
-    /// Upsert points (insert or update)
+    /// Internal upsert without WAL logging (used for recovery and ephemeral mode)
     ///
     /// Points are stored immediately and indexed asynchronously in background.
     /// If pending buffer exceeds threshold, blocks until indexer catches up.
-    pub fn upsert_points(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+    fn apply_upsert_internal(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
         let mut inserted = 0;
         let mut updated = 0;
 
@@ -140,7 +744,11 @@ impl CollectionEngine {
             }
         }
 
-        // Check pending threshold - block if too many pending
+        // Check pending threshold - block if too many pending.
+        // Note: there is a benign TOCTOU race between the initial read and the
+        // while-loop re-check. The pending count can change after we drop the
+        // read lock, which may cause an unnecessary wait or skip. This is harmless:
+        // the condvar loop will re-verify the condition, and the timeout prevents hangs.
         {
             let pending = self.pending_index.read_safe()?;
             if pending.len() > PENDING_THRESHOLD {
@@ -150,7 +758,7 @@ impl CollectionEngine {
                 let (lock, cv) = &*self.backpressure_signal;
                 let mut guard = lock.lock_safe()?;
                 let mut wait_iterations = 0;
-                const MAX_WAIT_ITERATIONS: u32 = 500; // 5 seconds max wait (500 * 10ms)
+                const MAX_WAIT_ITERATIONS: u32 = BACKPRESSURE_MAX_ITERATIONS;
 
                 while self.pending_index.read_safe()?.len() > PENDING_THRESHOLD / 2 {
                     // Check if indexer has crashed before waiting
@@ -168,7 +776,10 @@ impl CollectionEngine {
 
                     // Wait with timeout to handle edge cases
                     let result = cv
-                        .wait_timeout(guard, std::time::Duration::from_millis(10))
+                        .wait_timeout(
+                            guard,
+                            std::time::Duration::from_millis(BACKPRESSURE_POLL_MS),
+                        )
                         .map_err(|e| LatticeError::Internal {
                             code: 50004,
                             message: format!("Condvar wait failed: {}", e),
@@ -221,34 +832,17 @@ impl CollectionEngine {
                     }
                 }
 
-                // Store point
-                pts.insert(point.id, point.clone());
+                // Store point (move, no clone — id is Copy)
+                let point_id = point.id;
+                pts.insert(point_id, point);
 
                 // Add to pending and queue for indexing
-                pending.insert(point.id);
-                self.indexer.queue_insert(point.id);
+                pending.insert(point_id);
+                self.indexer.queue_insert(point_id);
             }
         }
 
         Ok(UpsertResult { inserted, updated })
-    }
-
-    /// Extract labels from a point's _labels payload and add to label index
-    #[allow(dead_code)]
-    fn add_point_labels_to_index(
-        point: &Point,
-        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
-    ) {
-        if let Some(labels_bytes) = point.payload.get("_labels") {
-            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
-                for label in labels {
-                    label_idx
-                        .entry(label)
-                        .or_insert_with(FxHashSet::default)
-                        .insert(point.id);
-                }
-            }
-        }
     }
 
     /// Remove a point's labels from the label index
@@ -424,10 +1018,10 @@ impl CollectionEngine {
         Some(result)
     }
 
-    /// Delete points by IDs
+    /// Internal delete without WAL logging (used for recovery and ephemeral mode)
     ///
     /// Returns the number of points actually deleted.
-    pub fn delete_points(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+    fn apply_delete_internal(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
         let mut deleted = 0;
 
         let mut pts = self.points.write_safe()?;
@@ -676,41 +1270,31 @@ impl CollectionEngine {
         })
     }
 
-    // --- Graph Operations ---
+    // --- Graph Operations (Internal) ---
 
-    /// Add an edge between two points
-    pub fn add_edge(
-        &mut self,
-        from_id: PointId,
-        to_id: PointId,
-        relation: &str,
-        weight: f32,
-    ) -> LatticeResult<()> {
-        // Get or create relation ID first (before taking points lock)
-        let relation_id = self.get_or_create_relation_id(relation);
-
+    /// Internal add_edge without WAL logging (takes pre-created Edge)
+    fn apply_add_edge_internal(&mut self, from_id: PointId, edge: Edge) -> LatticeResult<()> {
         let mut pts = self.points.write_safe()?;
 
         // Validate both points exist
         if !pts.contains_key(&from_id) {
             return Err(LatticeError::PointNotFound { id: from_id });
         }
-        if !pts.contains_key(&to_id) {
-            return Err(LatticeError::PointNotFound { id: to_id });
+        if !pts.contains_key(&edge.target_id) {
+            return Err(LatticeError::PointNotFound { id: edge.target_id });
         }
 
-        // Add edge to source point (safe: we validated from_id exists above)
+        // Add edge to source point
         let point = pts
             .get_mut(&from_id)
             .ok_or(LatticeError::PointNotFound { id: from_id })?;
-        let edge = Edge::new(to_id, weight, relation_id);
 
         match &mut point.outgoing_edges {
             Some(edges) => {
                 // Check for duplicate
                 if !edges
                     .iter()
-                    .any(|e| e.target_id == to_id && e.relation_id == relation_id)
+                    .any(|e| e.target_id == edge.target_id && e.relation_id == edge.relation_id)
                 {
                     edges.push(edge);
                 }
@@ -723,12 +1307,12 @@ impl CollectionEngine {
         Ok(())
     }
 
-    /// Remove an edge between two points
-    pub fn remove_edge(
+    /// Internal remove_edge without WAL logging (by relation_id)
+    fn apply_remove_edge_internal(
         &mut self,
         from_id: PointId,
         to_id: PointId,
-        relation: Option<&str>,
+        relation_id: u16,
     ) -> LatticeResult<bool> {
         let mut pts = self.points.write_safe()?;
 
@@ -738,15 +1322,7 @@ impl CollectionEngine {
 
         let removed = if let Some(edges) = &mut point.outgoing_edges {
             let original_len = edges.len();
-
-            if let Some(rel) = relation {
-                if let Some(rel_id) = self.config.relation_id(rel) {
-                    edges.retain(|e| !(e.target_id == to_id && e.relation_id == rel_id));
-                }
-            } else {
-                edges.retain(|e| e.target_id != to_id);
-            }
-
+            edges.retain(|e| !(e.target_id == to_id && e.relation_id == relation_id));
             edges.len() < original_len
         } else {
             false
@@ -926,97 +1502,6 @@ impl CollectionEngine {
         result.extend_from_slice(&points_bytes);
 
         Ok(result)
-    }
-
-    /// Deserialize a collection from bytes
-    pub fn from_bytes(bytes: &[u8]) -> LatticeResult<Self> {
-        if bytes.len() < 8 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: too short".to_string(),
-            });
-        }
-
-        // Read config length with overflow check
-        let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let config_end =
-            4usize
-                .checked_add(config_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: config length overflow".to_string(),
-                })?;
-
-        let config_end_plus_4 =
-            config_end
-                .checked_add(4)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: offset overflow".to_string(),
-                })?;
-
-        if bytes.len() < config_end_plus_4 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: config truncated".to_string(),
-            });
-        }
-
-        // Deserialize config (JSON)
-        let config: CollectionConfig =
-            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
-                LatticeError::Serialization {
-                    message: e.to_string(),
-                }
-            })?;
-
-        // Read points length
-        let points_len = u32::from_le_bytes([
-            bytes[config_end],
-            bytes[config_end + 1],
-            bytes[config_end + 2],
-            bytes[config_end + 3],
-        ]) as usize;
-
-        // Calculate padding (same formula as serialization) with overflow checks
-        let header_size = 4usize
-            .checked_add(config_len)
-            .and_then(|v| v.checked_add(4))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: header size overflow".to_string(),
-            })?;
-        let padding = (16 - (header_size % 16)) % 16;
-        let points_start = config_end
-            .checked_add(4)
-            .and_then(|v| v.checked_add(padding))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: points start offset overflow".to_string(),
-            })?;
-
-        let required_len =
-            points_start
-                .checked_add(points_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: total size overflow".to_string(),
-                })?;
-
-        if bytes.len() < required_len {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: points truncated".to_string(),
-            });
-        }
-
-        // Copy to aligned buffer for rkyv deserialization
-        let mut aligned_bytes = rkyv::util::AlignedVec::<16>::new();
-        aligned_bytes.extend_from_slice(&bytes[points_start..points_start + points_len]);
-
-        // Deserialize points with rkyv
-        let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
-            .map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Build engine
-        let mut engine = Self::new(config)?;
-        engine.upsert_points(points_vec)?;
-
-        Ok(engine)
     }
 
     /// Wait for all pending indexing to complete

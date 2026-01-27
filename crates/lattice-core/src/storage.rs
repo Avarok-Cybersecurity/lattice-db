@@ -85,7 +85,7 @@ pub type StorageResult<T> = Result<T, StorageError>;
 /// index state, and other non-page data.
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
-pub trait LatticeStorage: Send + Sync {
+pub trait LatticeStorage: Send + Sync + 'static {
     /// Retrieve metadata by key
     async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>>;
     /// Store metadata
@@ -107,7 +107,7 @@ pub trait LatticeStorage: Send + Sync {
 /// WASM version of storage trait (no Send + Sync bounds)
 #[cfg(target_arch = "wasm32")]
 #[async_trait(?Send)]
-pub trait LatticeStorage {
+pub trait LatticeStorage: 'static {
     /// Retrieve metadata by key
     async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>>;
     /// Store metadata
