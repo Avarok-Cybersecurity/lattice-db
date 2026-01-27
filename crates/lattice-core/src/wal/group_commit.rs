@@ -13,10 +13,10 @@ use crate::error::{LatticeError, LatticeResult};
 use crate::storage::LatticeStorage;
 use crate::wal::WriteAheadLog;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
-use std::sync::Arc;
 
 /// Message types for group commit coordination
 enum GroupCommitMsg {
@@ -163,8 +163,8 @@ impl Drop for GroupCommitHandle {
 mod tests {
     use super::*;
     use crate::storage::StorageResult;
-    use crate::wal::WalEntry;
     use crate::types::point::Point;
+    use crate::wal::WalEntry;
     use std::collections::HashMap;
     use std::sync::RwLock;
 
@@ -212,10 +212,7 @@ mod tests {
         }
 
         async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {
-            self.pages
-                .write()
-                .unwrap()
-                .insert(page_id, data.to_vec());
+            self.pages.write().unwrap().insert(page_id, data.to_vec());
             Ok(())
         }
 
@@ -264,8 +261,10 @@ mod tests {
         let storage = MockStorage::new();
         let wal = Arc::new(TokioMutex::new(WriteAheadLog::open(storage).await.unwrap()));
 
-        let group_commit =
-            Arc::new(GroupCommitHandle::spawn(Arc::clone(&wal), Duration::from_millis(50)));
+        let group_commit = Arc::new(GroupCommitHandle::spawn(
+            Arc::clone(&wal),
+            Duration::from_millis(50),
+        ));
 
         // Spawn multiple tasks that request sync concurrently
         let mut handles = Vec::new();

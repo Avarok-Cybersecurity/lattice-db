@@ -67,7 +67,10 @@ impl<S: LatticeStorage> TransactionManager<S> {
 
     /// Log an add_edge operation and return the LSN
     pub async fn log_add_edge(&mut self, from_id: PointId, edge: Edge) -> LatticeResult<Lsn> {
-        let lsn = self.wal.append(&WalEntry::AddEdge { from_id, edge }).await?;
+        let lsn = self
+            .wal
+            .append(&WalEntry::AddEdge { from_id, edge })
+            .await?;
         self.wal.sync().await?;
         Ok(lsn)
     }
@@ -315,10 +318,7 @@ mod tests {
             .await
             .unwrap();
         let lsn2 = txn.log_delete(vec![1]).await.unwrap();
-        let lsn3 = txn
-            .log_add_edge(1, Edge::new(2, 1.0, 0))
-            .await
-            .unwrap();
+        let lsn3 = txn.log_add_edge(1, Edge::new(2, 1.0, 0)).await.unwrap();
 
         assert_eq!(lsn1, 0);
         assert_eq!(lsn2, 1);

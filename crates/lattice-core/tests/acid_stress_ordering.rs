@@ -89,11 +89,7 @@ async fn test_checkpoint_then_crash() {
 
         // Spot-check some points
         for id in [0, 49, 99, 100, 149] {
-            assert!(
-                engine.point_exists(id),
-                "Point {} should exist",
-                id
-            );
+            assert!(engine.point_exists(id), "Point {} should exist", id);
         }
     }
 }

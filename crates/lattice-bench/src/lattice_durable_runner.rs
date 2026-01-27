@@ -109,7 +109,10 @@ impl LatticeDurableRunner {
     // === Benchmark methods ===
 
     /// Benchmark single point upsert with WAL
-    pub async fn bench_upsert(&mut self, seed: u64) -> Result<Duration, Box<dyn std::error::Error>> {
+    pub async fn bench_upsert(
+        &mut self,
+        seed: u64,
+    ) -> Result<Duration, Box<dyn std::error::Error>> {
         let mut rng = StdRng::seed_from_u64(seed);
 
         let mut payload = HashMap::new();
@@ -293,12 +296,15 @@ mod tests {
             let iters = 100;
             let start = std::time::Instant::now();
             for i in 0..iters {
-                rt.block_on(async {
-                    runner.bench_upsert(42 + i as u64).await.unwrap()
-                });
+                rt.block_on(async { runner.bench_upsert(42 + i as u64).await.unwrap() });
             }
             let elapsed = start.elapsed();
-            println!("  {} upserts in {:?} (avg {:?})", iters, elapsed, elapsed / iters);
+            println!(
+                "  {} upserts in {:?} (avg {:?})",
+                iters,
+                elapsed,
+                elapsed / iters
+            );
         }
     }
 
@@ -332,7 +338,10 @@ mod tests {
             runner2.load_data(size, 42).await.unwrap();
 
             let start = std::time::Instant::now();
-            runner2.bench_upsert_batch(count as usize, 42).await.unwrap();
+            runner2
+                .bench_upsert_batch(count as usize, 42)
+                .await
+                .unwrap();
             let batch_time = start.elapsed();
             let batch_avg = batch_time / count;
             println!("  Batch:   {:?} total, {:?} avg", batch_time, batch_avg);
@@ -365,7 +374,10 @@ mod tests {
             }
             let ephemeral_time = start.elapsed();
             let ephemeral_avg = ephemeral_time / iters;
-            println!("  Ephemeral: {:?} total, {:?} avg", ephemeral_time, ephemeral_avg);
+            println!(
+                "  Ephemeral: {:?} total, {:?} avg",
+                ephemeral_time, ephemeral_avg
+            );
 
             // ACID
             let mut acid = rt.block_on(async {

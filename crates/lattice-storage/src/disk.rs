@@ -261,8 +261,10 @@ impl LatticeStorage for DiskStorage {
             if is_dirty {
                 let meta_content = {
                     let cache = self.meta_cache.read().unwrap();
-                    serde_json::to_string_pretty(&*cache).map_err(|e| StorageError::Serialization {
-                        message: format!("Failed to serialize metadata: {}", e),
+                    serde_json::to_string_pretty(&*cache).map_err(|e| {
+                        StorageError::Serialization {
+                            message: format!("Failed to serialize metadata: {}", e),
+                        }
                     })?
                 };
 
@@ -277,9 +279,12 @@ impl LatticeStorage for DiskStorage {
         }
 
         // Sync pages file if it exists
+        // Open with write access — Windows requires it for sync_all()
         let pages_path = self.pages_path();
         if pages_path.exists() {
-            let file = File::open(&pages_path)
+            let file = OpenOptions::new()
+                .write(true)
+                .open(&pages_path)
                 .await
                 .map_err(|e| StorageError::Io {
                     message: format!("Failed to open pages file for sync: {}", e),

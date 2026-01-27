@@ -9,10 +9,10 @@ use crate::error::LatticeResult;
 use crate::storage::LatticeStorage;
 use crate::wal::{Lsn, WriteAheadLog};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
-use std::sync::Arc;
 
 /// Reserved page range for checkpoints in data storage
 pub const CHECKPOINT_PAGE_START: u64 = 1_000_000;
@@ -122,12 +122,7 @@ impl<S: LatticeStorage + Send + Sync + 'static> CheckpointManager<S> {
             };
 
             if should_checkpoint {
-                if let Err(e) = Self::perform_checkpoint(
-                    &wal,
-                    &data_storage,
-                    &checkpoint_fn,
-                )
-                .await
+                if let Err(e) = Self::perform_checkpoint(&wal, &data_storage, &checkpoint_fn).await
                 {
                     tracing::error!(?e, "Background checkpoint failed");
                 }
@@ -158,7 +153,11 @@ impl<S: LatticeStorage + Send + Sync + 'static> CheckpointManager<S> {
             wal_guard.checkpoint(lsn).await?;
         }
 
-        tracing::info!(lsn, bytes = snapshot.len(), "Background checkpoint complete");
+        tracing::info!(
+            lsn,
+            bytes = snapshot.len(),
+            "Background checkpoint complete"
+        );
         Ok(())
     }
 
@@ -190,11 +189,11 @@ impl<S: LatticeStorage> Drop for CheckpointManager<S> {
 mod tests {
     use super::*;
     use crate::storage::StorageResult;
-    use crate::wal::WalEntry;
     use crate::types::point::Point;
+    use crate::wal::WalEntry;
     use std::collections::HashMap;
-    use std::sync::RwLock;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::RwLock;
 
     struct MockStorage {
         pages: Arc<RwLock<HashMap<u64, Vec<u8>>>>,
@@ -249,10 +248,7 @@ mod tests {
         }
 
         async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {
-            self.pages
-                .write()
-                .unwrap()
-                .insert(page_id, data.to_vec());
+            self.pages.write().unwrap().insert(page_id, data.to_vec());
             Ok(())
         }
 

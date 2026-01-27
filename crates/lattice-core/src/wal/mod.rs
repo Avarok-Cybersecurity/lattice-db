@@ -29,7 +29,9 @@ mod checkpoint_manager;
 pub use group_commit::GroupCommitHandle;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use checkpoint_manager::{CheckpointCallback, CheckpointConfig, CheckpointManager, CHECKPOINT_PAGE_START};
+pub use checkpoint_manager::{
+    CheckpointCallback, CheckpointConfig, CheckpointManager, CHECKPOINT_PAGE_START,
+};
 
 use crate::error::{LatticeError, LatticeResult};
 use crate::storage::LatticeStorage;
@@ -252,10 +254,11 @@ impl<S: LatticeStorage> WriteAheadLog<S> {
         let lsn = self.header.next_lsn;
 
         // Serialize entry with rkyv
-        let entry_bytes =
-            rkyv::to_bytes::<rkyv::rancor::Error>(entry).map_err(|e| LatticeError::Serialization {
+        let entry_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(entry).map_err(|e| {
+            LatticeError::Serialization {
                 message: format!("Failed to serialize WAL entry: {}", e),
-            })?;
+            }
+        })?;
 
         // Calculate xxHash32 checksum (faster than CRC32)
         let checksum = twox_hash::xxhash32::Hasher::oneshot(0, &entry_bytes);
@@ -399,9 +402,12 @@ impl<S: LatticeStorage> WriteAheadLog<S> {
 
         while offset + 8 <= page.len() {
             // Read length
-            let len =
-                u32::from_le_bytes([page[offset], page[offset + 1], page[offset + 2], page[offset + 3]])
-                    as usize;
+            let len = u32::from_le_bytes([
+                page[offset],
+                page[offset + 1],
+                page[offset + 2],
+                page[offset + 3],
+            ]) as usize;
             offset += 4;
 
             // Read checksum
@@ -439,11 +445,11 @@ impl<S: LatticeStorage> WriteAheadLog<S> {
             // Deserialize entry
             let entry = match rkyv::from_bytes::<WalEntry, rkyv::rancor::Error>(entry_bytes) {
                 Ok(entry) => entry,
-                Err(e) => {
+                Err(_e) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     tracing::error!(
                         lsn = *current_lsn,
-                        error = %e,
+                        error = %_e,
                         "Failed to deserialize WAL entry, skipping"
                     );
                     offset += len;
@@ -613,7 +619,10 @@ mod tests {
         }
 
         async fn set_meta(&self, key: &str, value: &[u8]) -> StorageResult<()> {
-            self.meta.write().unwrap().insert(key.to_string(), value.to_vec());
+            self.meta
+                .write()
+                .unwrap()
+                .insert(key.to_string(), value.to_vec());
             Ok(())
         }
 
@@ -623,7 +632,13 @@ mod tests {
         }
 
         async fn read_page(&self, page_id: u64) -> StorageResult<Vec<u8>> {
-            Ok(self.pages.read().unwrap().get(&page_id).cloned().unwrap_or_default())
+            Ok(self
+                .pages
+                .read()
+                .unwrap()
+                .get(&page_id)
+                .cloned()
+                .unwrap_or_default())
         }
 
         async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {
@@ -655,9 +670,22 @@ mod tests {
         let point1 = Point::new_vector(1, vec![0.1, 0.2, 0.3]);
         let point2 = Point::new_vector(2, vec![0.4, 0.5, 0.6]);
 
-        let lsn1 = wal.append(&WalEntry::Upsert { points: vec![point1.clone()] }).await.unwrap();
-        let lsn2 = wal.append(&WalEntry::Upsert { points: vec![point2.clone()] }).await.unwrap();
-        let lsn3 = wal.append(&WalEntry::Delete { ids: vec![1] }).await.unwrap();
+        let lsn1 = wal
+            .append(&WalEntry::Upsert {
+                points: vec![point1.clone()],
+            })
+            .await
+            .unwrap();
+        let lsn2 = wal
+            .append(&WalEntry::Upsert {
+                points: vec![point2.clone()],
+            })
+            .await
+            .unwrap();
+        let lsn3 = wal
+            .append(&WalEntry::Delete { ids: vec![1] })
+            .await
+            .unwrap();
 
         assert_eq!(lsn1, 0);
         assert_eq!(lsn2, 1);
@@ -693,9 +721,11 @@ mod tests {
         let mut wal = WriteAheadLog::open(storage).await.unwrap();
 
         // Append entry
-        wal.append(&WalEntry::Upsert { points: vec![Point::new_vector(1, vec![0.1])] })
-            .await
-            .unwrap();
+        wal.append(&WalEntry::Upsert {
+            points: vec![Point::new_vector(1, vec![0.1])],
+        })
+        .await
+        .unwrap();
         wal.sync().await.unwrap();
 
         // Checkpoint
@@ -715,14 +745,20 @@ mod tests {
             let mut wal = WriteAheadLog::open(MockStorage {
                 pages: storage.pages.clone(),
                 meta: storage.meta.clone(),
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
-            wal.append(&WalEntry::Upsert { points: vec![Point::new_vector(1, vec![0.1])] })
-                .await
-                .unwrap();
-            wal.append(&WalEntry::Upsert { points: vec![Point::new_vector(2, vec![0.2])] })
-                .await
-                .unwrap();
+            wal.append(&WalEntry::Upsert {
+                points: vec![Point::new_vector(1, vec![0.1])],
+            })
+            .await
+            .unwrap();
+            wal.append(&WalEntry::Upsert {
+                points: vec![Point::new_vector(2, vec![0.2])],
+            })
+            .await
+            .unwrap();
             wal.sync().await.unwrap();
         }
 
@@ -731,7 +767,9 @@ mod tests {
             let wal = WriteAheadLog::open(MockStorage {
                 pages: storage.pages.clone(),
                 meta: storage.meta.clone(),
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
             let entries = wal.read_from(0).await.unwrap();
             assert_eq!(entries.len(), 2);
@@ -745,7 +783,9 @@ mod tests {
         let mut wal: WriteAheadLog<MockStorage> = WriteAheadLog::open(MockStorage {
             pages: storage.pages.clone(),
             meta: storage.meta.clone(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         // Initial state: should be on page 0
         assert_eq!(wal.header.current_page_id, WAL_PAGE_START);
@@ -801,7 +841,9 @@ mod tests {
         let mut wal: WriteAheadLog<MockStorage> = WriteAheadLog::open(MockStorage {
             pages: storage.pages.clone(),
             meta: storage.meta.clone(),
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
 
         // Create entries that span multiple pages
         let large_vector: Vec<f32> = (0..10000).map(|i| i as f32).collect();

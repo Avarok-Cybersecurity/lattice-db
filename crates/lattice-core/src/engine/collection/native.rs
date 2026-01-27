@@ -47,35 +47,51 @@ const NO_STORAGE_MSG: &str = "NoStorage: ephemeral mode has no storage backend";
 #[async_trait::async_trait]
 impl LatticeStorage for NoStorage {
     async fn get_meta(&self, _key: &str) -> StorageResult<Option<Vec<u8>>> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn set_meta(&self, _key: &str, _value: &[u8]) -> StorageResult<()> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn delete_meta(&self, _key: &str) -> StorageResult<()> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn read_page(&self, _page_id: u64) -> StorageResult<Vec<u8>> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn write_page(&self, _page_id: u64, _data: &[u8]) -> StorageResult<()> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn page_exists(&self, _page_id: u64) -> StorageResult<bool> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn delete_page(&self, _page_id: u64) -> StorageResult<()> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 
     async fn sync(&self) -> StorageResult<()> {
-        Err(StorageError::Io { message: NO_STORAGE_MSG.into() })
+        Err(StorageError::Io {
+            message: NO_STORAGE_MSG.into(),
+        })
     }
 }
 
@@ -136,7 +152,6 @@ pub struct CollectionEngine<W: LatticeStorage = NoStorage, D: LatticeStorage = W
     _next_page_id: u64,
 
     // === Durability fields ===
-
     /// Transaction manager for WAL (None in ephemeral mode)
     txn_manager: Option<Arc<TokioMutex<TransactionManager<W>>>>,
     /// Data storage for checkpoints (None in ephemeral mode, reserved for Phase 2)
@@ -339,11 +354,9 @@ impl CollectionEngine<NoStorage, NoStorage> {
         aligned_bytes.extend_from_slice(&bytes[points_start..points_start + points_len]);
 
         // Deserialize points with rkyv
-        let points_vec: Vec<Point> =
-            rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes).map_err(|e| {
-                LatticeError::Serialization {
-                    message: e.to_string(),
-                }
+        let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
+            .map_err(|e| LatticeError::Serialization {
+                message: e.to_string(),
             })?;
 
         // Build ephemeral engine
@@ -757,7 +770,10 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
 
                     // Wait with timeout to handle edge cases
                     let result = cv
-                        .wait_timeout(guard, std::time::Duration::from_millis(BACKPRESSURE_POLL_MS))
+                        .wait_timeout(
+                            guard,
+                            std::time::Duration::from_millis(BACKPRESSURE_POLL_MS),
+                        )
                         .map_err(|e| LatticeError::Internal {
                             code: 50004,
                             message: format!("Condvar wait failed: {}", e),

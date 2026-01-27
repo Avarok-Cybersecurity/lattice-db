@@ -3,8 +3,8 @@
 //! Simulates crash scenarios using MockStorage with shared Arc state.
 //! Drop without close simulates a crash; reopen verifies recovery.
 
-use lattice_core::wal::{Lsn, WalEntry, WriteAheadLog};
 use lattice_core::types::point::Point;
+use lattice_core::wal::{Lsn, WalEntry, WriteAheadLog};
 use lattice_test_harness::SharedState;
 
 #[tokio::test]
@@ -106,7 +106,11 @@ async fn test_corrupted_entry_skipped() {
         let wal = WriteAheadLog::open(state.mock()).await.unwrap();
         let entries = wal.read_from(0).await.unwrap();
 
-        assert_eq!(entries.len(), 4, "Should recover 4 entries (1 corrupted, skipped)");
+        assert_eq!(
+            entries.len(),
+            4,
+            "Should recover 4 entries (1 corrupted, skipped)"
+        );
         assert_eq!(entries[0].0, 1);
         assert_eq!(entries[3].0, 4);
     }

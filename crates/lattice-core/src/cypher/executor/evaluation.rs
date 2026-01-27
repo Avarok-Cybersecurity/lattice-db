@@ -390,7 +390,6 @@ impl QueryExecutor {
         }
     }
 
-
     /// Get a property from a point
     ///
     /// # Security

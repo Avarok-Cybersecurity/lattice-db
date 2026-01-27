@@ -119,7 +119,12 @@ impl HttpVectorRunner {
         collection_name: &str,
         vector_dim: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_durability(base_url, collection_name, vector_dim, DurabilityMode::Ephemeral)
+        Self::with_durability(
+            base_url,
+            collection_name,
+            vector_dim,
+            DurabilityMode::Ephemeral,
+        )
     }
 
     /// Create a new HTTP vector runner with specified durability mode

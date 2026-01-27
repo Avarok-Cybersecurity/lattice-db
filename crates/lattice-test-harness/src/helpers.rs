@@ -10,7 +10,9 @@ const DEFAULT_DIM: usize = 4;
 
 /// Create a test point with a deterministic vector
 pub fn make_point(id: u64, dim: usize) -> Point {
-    let vector: Vec<f32> = (0..dim).map(|i| (id as f32 * 0.1) + (i as f32 * 0.01)).collect();
+    let vector: Vec<f32> = (0..dim)
+        .map(|i| (id as f32 * 0.1) + (i as f32 * 0.01))
+        .collect();
     Point::new_vector(id, vector)
 }
 

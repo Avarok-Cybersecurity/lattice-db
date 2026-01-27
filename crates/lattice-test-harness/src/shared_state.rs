@@ -46,7 +46,10 @@ impl LatticeStorage for MockStorage {
     }
 
     async fn set_meta(&self, key: &str, value: &[u8]) -> StorageResult<()> {
-        self.meta.write().unwrap().insert(key.to_string(), value.to_vec());
+        self.meta
+            .write()
+            .unwrap()
+            .insert(key.to_string(), value.to_vec());
         Ok(())
     }
 
@@ -56,7 +59,13 @@ impl LatticeStorage for MockStorage {
     }
 
     async fn read_page(&self, page_id: u64) -> StorageResult<Vec<u8>> {
-        Ok(self.pages.read().unwrap().get(&page_id).cloned().unwrap_or_default())
+        Ok(self
+            .pages
+            .read()
+            .unwrap()
+            .get(&page_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {

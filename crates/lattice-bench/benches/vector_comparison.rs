@@ -757,31 +757,21 @@ fn bench_inmem_acid_search(c: &mut Criterion) {
     for size in [1000, 5000].iter() {
         // Ephemeral mode
         let ephemeral = setup_inmem_ephemeral(*size);
-        group.bench_with_input(
-            BenchmarkId::new("Ephemeral", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(
-                        ephemeral
-                            .bench_search(10, SEED)
-                            .expect("Ephemeral search failed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Ephemeral", size), size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    ephemeral
+                        .bench_search(10, SEED)
+                        .expect("Ephemeral search failed"),
+                )
+            })
+        });
         drop(ephemeral);
 
         // ACID mode (reads are sync, no async needed)
         let durable = rt.block_on(setup_inmem_durable_async(*size));
         group.bench_with_input(BenchmarkId::new("ACID", size), size, |b, _| {
-            b.iter(|| {
-                black_box(
-                    durable
-                        .bench_search(10, SEED)
-                        .expect("ACID search failed"),
-                )
-            })
+            b.iter(|| black_box(durable.bench_search(10, SEED).expect("ACID search failed")))
         });
     }
 
@@ -800,31 +790,21 @@ fn bench_inmem_acid_retrieve(c: &mut Criterion) {
     for size in [1000, 5000].iter() {
         // Ephemeral mode
         let ephemeral = setup_inmem_ephemeral(*size);
-        group.bench_with_input(
-            BenchmarkId::new("Ephemeral", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(
-                        ephemeral
-                            .bench_retrieve(&ids)
-                            .expect("Ephemeral retrieve failed"),
-                    )
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Ephemeral", size), size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    ephemeral
+                        .bench_retrieve(&ids)
+                        .expect("Ephemeral retrieve failed"),
+                )
+            })
+        });
         drop(ephemeral);
 
         // ACID mode (reads are sync)
         let durable = rt.block_on(setup_inmem_durable_async(*size));
         group.bench_with_input(BenchmarkId::new("ACID", size), size, |b, _| {
-            b.iter(|| {
-                black_box(
-                    durable
-                        .bench_retrieve(&ids)
-                        .expect("ACID retrieve failed"),
-                )
-            })
+            b.iter(|| black_box(durable.bench_retrieve(&ids).expect("ACID retrieve failed")))
         });
     }
 
@@ -841,23 +821,21 @@ fn bench_inmem_acid_scroll(c: &mut Criterion) {
     for size in [1000, 5000].iter() {
         // Ephemeral mode
         let ephemeral = setup_inmem_ephemeral(*size);
-        group.bench_with_input(
-            BenchmarkId::new("Ephemeral", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(ephemeral.bench_scroll(100).expect("Ephemeral scroll failed"))
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Ephemeral", size), size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    ephemeral
+                        .bench_scroll(100)
+                        .expect("Ephemeral scroll failed"),
+                )
+            })
+        });
         drop(ephemeral);
 
         // ACID mode (reads are sync)
         let durable = rt.block_on(setup_inmem_durable_async(*size));
         group.bench_with_input(BenchmarkId::new("ACID", size), size, |b, _| {
-            b.iter(|| {
-                black_box(durable.bench_scroll(100).expect("ACID scroll failed"))
-            })
+            b.iter(|| black_box(durable.bench_scroll(100).expect("ACID scroll failed")))
         });
     }
 
@@ -874,4 +852,9 @@ criterion_group!(
     bench_inmem_acid_scroll
 );
 
-criterion_main!(inmemory_benches, http_benches, acid_benches, inmem_acid_benches);
+criterion_main!(
+    inmemory_benches,
+    http_benches,
+    acid_benches,
+    inmem_acid_benches
+);

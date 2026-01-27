@@ -13,7 +13,10 @@ const DIM: usize = 4;
 async fn open_engine_with_edges(
     state: &SharedState,
 ) -> lattice_core::LatticeResult<
-    lattice_core::CollectionEngine<lattice_test_harness::MockStorage, lattice_test_harness::MockStorage>,
+    lattice_core::CollectionEngine<
+        lattice_test_harness::MockStorage,
+        lattice_test_harness::MockStorage,
+    >,
 > {
     let config = make_config("test_acid", DIM).with_relation("related_to", 1);
     CollectionEngineBuilder::new(config)
@@ -59,20 +62,12 @@ async fn test_upsert_delete_recover() {
 
         // Deleted points should be gone
         for id in 0..20 {
-            assert!(
-                !engine.point_exists(id),
-                "Point {} should be deleted",
-                id
-            );
+            assert!(!engine.point_exists(id), "Point {} should be deleted", id);
         }
 
         // Remaining points should exist
         for id in 20..100 {
-            assert!(
-                engine.point_exists(id),
-                "Point {} should exist",
-                id
-            );
+            assert!(engine.point_exists(id), "Point {} should exist", id);
         }
 
         assert_eq!(engine.point_count(), 80, "80 points should remain");
@@ -90,7 +85,11 @@ async fn test_edges_survive_crash() {
 
         // Create two points
         engine
-            .upsert_points_async(vec![make_point(1, DIM), make_point(2, DIM), make_point(3, DIM)])
+            .upsert_points_async(vec![
+                make_point(1, DIM),
+                make_point(2, DIM),
+                make_point(3, DIM),
+            ])
             .await
             .unwrap();
 
@@ -171,10 +170,7 @@ async fn test_abort_prevents_phantom_data() {
     {
         let engine = open_engine(&state).await.unwrap();
 
-        assert!(
-            engine.point_exists(1),
-            "Non-aborted point should exist"
-        );
+        assert!(engine.point_exists(1), "Non-aborted point should exist");
         assert!(
             !engine.point_exists(999),
             "Aborted point must NOT exist (phantom data)"
