@@ -45,6 +45,7 @@
 | [💡 Use Cases](#-use-cases) | RAG, knowledge graphs, AI assistants |
 | [🚀 Quick Start](#-quick-start) | Installation & first steps |
 | [🏗️ Architecture](#️-architecture) | SBIO pattern & crate structure |
+| [🛡️ ACID Durability](#️-acid-durability) | WAL, crash recovery, storage modes |
 | [⚙️ Optimizations](#️-optimizations) | 8 state-of-the-art techniques |
 | [📚 API Reference](#-api-reference) | REST endpoints |
 | [🗺️ Roadmap](#️-roadmap) | What's next |
@@ -526,6 +527,71 @@ lattice-db/
 │  └─────────────┘    └─────────────┘    └─────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🛡️ ACID Durability
+
+LatticeDB supports **durable, crash-safe storage** via a Write-Ahead Log (WAL) and pluggable storage backends. Data integrity is not optional — it is built into the engine.
+
+### Storage Modes
+
+| Mode | Backend | Durability | Use Case |
+|------|---------|------------|----------|
+| **Ephemeral** | In-memory only | None (process lifetime) | Browser/WASM, testing, caches |
+| **Durable** | `DiskStorage` + WAL | Full ACID | Server deployments, persistent data |
+
+### Write-Ahead Log (WAL)
+
+Every mutation is written to the WAL **before** it is applied to the main store. On crash or restart, the WAL replays uncommitted entries to restore consistent state.
+
+```
+ Client Write
+      │
+      ▼
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Append to  │────►│  Apply to   │────►│   fsync()   │
+│  WAL page   │     │  in-memory  │     │   storage   │
+└─────────────┘     └─────────────┘     └─────────────┘
+      │
+      ▼ (on restart)
+┌─────────────┐
+│  Replay WAL │
+│  entries    │
+└─────────────┘
+```
+
+**Crash safety guarantee:** if a write is acknowledged, it survives process crashes. If a crash occurs mid-write, recovery replays from the last known-good WAL state — orphaned page data is unreachable and overwritten on next rotation.
+
+### What We Test
+
+LatticeDB includes a dedicated ACID test suite (`lattice-test-harness` + integration tests) covering:
+
+| Test Category | What It Verifies |
+|---------------|------------------|
+| **Crash recovery** | Data survives simulated process crashes at every WAL phase |
+| **Page rotation** | WAL rotates pages without data loss under concurrent writes |
+| **I/O failures** | Storage errors propagate correctly, never corrupt state |
+| **Engine lifecycle** | Open → write → close → reopen → read back intact |
+| **Stress ordering** | Concurrent upserts maintain consistency under contention |
+
+```bash
+# Run the full ACID test suite
+cargo test --workspace -- acid
+```
+
+### Enabling Durable Mode
+
+```rust
+use lattice_storage::DiskStorage;
+
+let storage = DiskStorage::with_defaults("/var/lib/lattice/my_collection".into());
+storage.init().await?;
+
+// Pass storage to the engine — WAL is enabled automatically
+```
+
+For browser deployments, LatticeDB runs in ephemeral mode (IndexedDB/OPFS persistence is handled separately by the WASM layer).
 
 ---
 

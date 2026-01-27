@@ -4,7 +4,6 @@ use crate::engine::collection::CollectionEngine;
 use crate::sync::SyncCell;
 use crate::types::point::Point;
 use crate::types::value::CypherValue;
-use bumpalo::Bump;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -94,10 +93,6 @@ pub struct ExecutionContext<'a> {
     label_registry: SyncCell<LabelRegistry>,
     /// Cache for computed label bitmaps using FxHashMap for fast integer hashing
     label_bitmap_cache: SyncCell<FxHashMap<u64, u64>>,
-    /// Query-scoped arena allocator for temporary allocations
-    /// Reduces allocator pressure by reusing memory within a query
-    #[allow(dead_code)]
-    arena: Bump,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -111,7 +106,6 @@ impl<'a> ExecutionContext<'a> {
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
             label_bitmap_cache: SyncCell::new(FxHashMap::default()),
-            arena: Bump::with_capacity(64 * 1024), // 64KB initial capacity
         }
     }
 
@@ -128,7 +122,6 @@ impl<'a> ExecutionContext<'a> {
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
             label_bitmap_cache: SyncCell::new(FxHashMap::default()),
-            arena: Bump::with_capacity(64 * 1024), // 64KB initial capacity
         }
     }
 

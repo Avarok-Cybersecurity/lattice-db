@@ -179,7 +179,10 @@ impl LayerManager {
         self.max_layer = 0;
 
         for (id, node) in &self.nodes {
-            if node.max_layer > self.max_layer || self.entry_point.is_none() {
+            let dominated = node.max_layer > self.max_layer
+                || (node.max_layer == self.max_layer
+                    && self.entry_point.map_or(true, |ep| *id < ep));
+            if dominated {
                 self.entry_point = Some(*id);
                 self.max_layer = node.max_layer;
             }

@@ -9,6 +9,38 @@ use crate::error::ConfigError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Durability mode for a collection
+///
+/// Controls whether the collection provides ACID guarantees through WAL
+/// (Write-Ahead Logging) or runs in fast ephemeral mode.
+///
+/// # Trade-offs
+///
+/// | Mode | Upsert Latency | Crash Safety | Use Case |
+/// |------|----------------|--------------|----------|
+/// | Ephemeral | ~1 µs | None | RAG, caches, demos |
+/// | Durable | ~100-500 µs | Full | User data, production |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DurabilityMode {
+    /// Fast in-memory mode (default)
+    ///
+    /// - No WAL logging
+    /// - No crash recovery
+    /// - Data lost on process restart
+    /// - Maximum performance (~1 µs upsert)
+    #[default]
+    Ephemeral,
+
+    /// ACID-compliant durable mode
+    ///
+    /// - Write-ahead logging before mutations
+    /// - Crash recovery via WAL replay
+    /// - Data persists across restarts
+    /// - Higher latency (~100-500 µs upsert due to fsync)
+    Durable,
+}
+
 /// Distance metric for vector similarity
 ///
 /// Determines how similarity between vectors is calculated.
@@ -189,16 +221,24 @@ pub struct CollectionConfig {
     /// The u16 IDs are used in Edge.relation_id for compact storage.
     #[serde(default)]
     pub relations: HashMap<String, u16>,
+
+    /// Durability mode (ephemeral or durable)
+    ///
+    /// - `Ephemeral`: Fast in-memory mode, no persistence (default)
+    /// - `Durable`: ACID mode with WAL, crash recovery, fsync
+    #[serde(default)]
+    pub durability: DurabilityMode,
 }
 
 impl CollectionConfig {
-    /// Create a new collection configuration
+    /// Create a new collection configuration (ephemeral by default)
     pub fn new(name: impl Into<String>, vectors: VectorConfig, hnsw: HnswConfig) -> Self {
         Self {
             name: name.into(),
             vectors,
             hnsw,
             relations: HashMap::new(),
+            durability: DurabilityMode::default(),
         }
     }
 
@@ -206,6 +246,17 @@ impl CollectionConfig {
     pub fn with_relation(mut self, name: impl Into<String>, id: u16) -> Self {
         self.relations.insert(name.into(), id);
         self
+    }
+
+    /// Set durability mode
+    pub fn with_durability(mut self, durability: DurabilityMode) -> Self {
+        self.durability = durability;
+        self
+    }
+
+    /// Check if collection is in durable mode
+    pub fn is_durable(&self) -> bool {
+        self.durability == DurabilityMode::Durable
     }
 
     /// Validate the entire configuration

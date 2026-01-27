@@ -389,6 +389,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         let response = create_collection(&state, "test", request);
         assert_eq!(response.status, 200);
@@ -439,6 +440,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         create_collection(&state, "test", request);
 
@@ -462,6 +464,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         create_collection(&state, "test", request);
         {
@@ -508,6 +511,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         create_collection(&state, "test", request.clone());
         {

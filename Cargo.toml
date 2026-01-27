@@ -5,6 +5,7 @@ members = [
     "crates/lattice-storage",
     "crates/lattice-server",
     "crates/lattice-bench",
+    "crates/lattice-test-harness",
 ]
 
 [workspace.package]
@@ -77,6 +78,7 @@ utoipa-swagger-ui = { version = "8", features = ["axum"] }
 lattice-core = { path = "crates/lattice-core" }
 lattice-storage = { path = "crates/lattice-storage", default-features = false }
 lattice-server = { path = "crates/lattice-server" }
+lattice-test-harness = { path = "crates/lattice-test-harness" }
 
 # Optimized release profile for maximum performance
 [profile.release]

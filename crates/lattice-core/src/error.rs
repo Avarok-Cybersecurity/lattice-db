@@ -42,6 +42,9 @@ pub enum LatticeError {
     #[error("Serialization error: {message}")]
     Serialization { message: String },
 
+    #[error("Invalid operation: {message}")]
+    InvalidOperation { message: String },
+
     /// Internal error - lock poisoning, invariant violations, thread failures
     ///
     /// These errors indicate bugs or system failures, not user errors.

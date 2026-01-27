@@ -43,8 +43,10 @@ pub mod index;
 pub mod parallel;
 pub mod storage;
 pub mod sync;
+pub mod transaction;
 pub mod transport;
 pub mod types;
+pub mod wal;
 
 // Re-export commonly used types
 pub use engine::collection::{CollectionEngine, EdgeInfo, TraversalResult, UpsertResult};
@@ -53,7 +55,7 @@ pub use index::hnsw::HnswIndex;
 pub use index::quantization::QuantizedVector;
 pub use storage::{LatticeStorage, Page, StorageError, StorageResult};
 pub use transport::{LatticeRequest, LatticeResponse, LatticeTransport};
-pub use types::collection::{CollectionConfig, Distance, HnswConfig, VectorConfig};
+pub use types::collection::{CollectionConfig, Distance, DurabilityMode, HnswConfig, VectorConfig};
 pub use types::point::{Edge, Point, PointId, Vector};
 pub use types::query::{ScrollQuery, ScrollResult, SearchQuery, SearchResult};
 pub use types::value::CypherValue;

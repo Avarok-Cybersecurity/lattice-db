@@ -9,6 +9,7 @@ description = "Benchmarks comparing LatticeDB Cypher implementation against Neo4
 [dependencies]
 # LatticeDB
 lattice-core = { path = "../lattice-core" }
+lattice-storage = { path = "../lattice-storage" }
 
 # Neo4j driver
 neo4rs = "0.8"

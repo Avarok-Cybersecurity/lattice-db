@@ -182,7 +182,7 @@ pub struct PayloadIndexInfo {
     pub points: u64,
 }
 
-/// Collection configuration in response format (Qdrant-compatible)
+/// Collection configuration in response format (Qdrant-compatible with LatticeDB extensions)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CollectionConfigResponse {
@@ -193,6 +193,9 @@ pub struct CollectionConfigResponse {
     pub wal_config: Option<WalConfigResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quantization_config: Option<serde_json::Value>,
+    /// Durability mode: "ephemeral" or "durable" (LatticeDB extension)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub durability: Option<String>,
 }
 
 /// Collection parameters in response

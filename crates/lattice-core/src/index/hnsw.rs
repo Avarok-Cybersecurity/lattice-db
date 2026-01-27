@@ -480,6 +480,11 @@ impl HnswIndex {
             // Prevent infinite loops on pathological graphs
             iterations += 1;
             if iterations > Self::MAX_GREEDY_ITERATIONS {
+                #[cfg(not(target_arch = "wasm32"))]
+                tracing::warn!(
+                    "greedy search hit iteration cap ({}) — possible graph pathology",
+                    Self::MAX_GREEDY_ITERATIONS
+                );
                 break;
             }
 
@@ -525,6 +530,11 @@ impl HnswIndex {
             // Prevent infinite loops on pathological graphs
             iterations += 1;
             if iterations > Self::MAX_GREEDY_ITERATIONS {
+                #[cfg(not(target_arch = "wasm32"))]
+                tracing::warn!(
+                    "greedy search hit iteration cap ({}) — possible graph pathology",
+                    Self::MAX_GREEDY_ITERATIONS
+                );
                 break;
             }
 
@@ -996,7 +1006,7 @@ impl HnswIndex {
             })
             .collect();
 
-        reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        reranked.sort_by(|a, b| cmp_f32(a.1, b.1));
 
         reranked
             .into_iter()

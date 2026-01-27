@@ -1,0 +1,28 @@
+{
+  "hash": "6a63f4ca",
+  "configHash": "5c2dccf3",
+  "lockfileHash": "a77db5a0",
+  "browserHash": "de65a044",
+  "optimized": {
+    "marked": {
+      "src": "../../node_modules/marked/lib/marked.esm.js",
+      "file": "marked.js",
+      "fileHash": "eb5c0ccb",
+      "needsInterop": false
+    },
+    "lattice-db": {
+      "src": "../../node_modules/lattice-db/dist/lattice-db.esm.js",
+      "file": "lattice-db.js",
+      "fileHash": "f66476dc",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "lattice_server-Q6DPRQB4": {
+      "file": "lattice_server-Q6DPRQB4.js"
+    },
+    "chunk-V6TY7KAL": {
+      "file": "chunk-V6TY7KAL.js"
+    }
+  }
+}

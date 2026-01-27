@@ -752,6 +752,7 @@ mod tests {
                 distance: "Cosine".to_string(),
             },
             hnsw_config: None,
+            durability: None,
         };
         create_collection(state, "test", request);
 
