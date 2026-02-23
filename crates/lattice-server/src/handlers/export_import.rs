@@ -3,6 +3,8 @@
 //! Provides binary import/export using rkyv serialization.
 
 use crate::dto::{ApiResponse, ImportMode, ImportResult};
+#[cfg(feature = "native")]
+use crate::engine_wrapper::AnyEngine;
 use crate::router::{json_response, AppState, InsertError};
 use lattice_core::{CollectionEngine, LatticeResponse};
 use std::collections::HashMap;
@@ -17,13 +19,13 @@ const FORMAT_VERSION: &str = "1";
 /// Export a collection as binary data
 ///
 /// Returns the serialized collection using rkyv format.
-pub fn export_collection(state: &AppState, name: &str) -> LatticeResponse {
+pub async fn export_collection(state: &AppState, name: &str) -> LatticeResponse {
     let handle = match state.get_collection(name) {
         Some(h) => h,
         None => return LatticeResponse::not_found(&format!("Collection '{}' not found", name)),
     };
 
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Serialize the collection
     let bytes = match engine.to_bytes() {
@@ -68,7 +70,7 @@ pub fn export_collection(state: &AppState, name: &str) -> LatticeResponse {
 /// - `create`: Create new collection, fail if exists
 /// - `replace`: Drop existing collection and create new
 /// - `merge`: Merge points into existing collection (skip duplicates)
-pub fn import_collection(
+pub async fn import_collection(
     state: &AppState,
     name: &str,
     mode: ImportMode,
@@ -89,14 +91,14 @@ pub fn import_collection(
     }
 
     match mode {
-        ImportMode::Create => import_create(state, name, &data),
-        ImportMode::Replace => import_replace(state, name, &data),
-        ImportMode::Merge => import_merge(state, name, &data),
+        ImportMode::Create => import_create(state, name, &data).await,
+        ImportMode::Replace => import_replace(state, name, &data).await,
+        ImportMode::Merge => import_merge(state, name, &data).await,
     }
 }
 
 /// Import in create mode: fail if collection exists
-fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
+async fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
     // Check if collection already exists
     if state.get_collection(name).is_some() {
         return LatticeResponse::error(
@@ -108,8 +110,8 @@ fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
         );
     }
 
-    // Deserialize the collection
-    let engine = match CollectionEngine::from_bytes(data) {
+    // Deserialize the collection (always creates ephemeral engine)
+    let raw_engine = match CollectionEngine::from_bytes(data) {
         Ok(e) => e,
         Err(e) => {
             warn!(collection = name, error = %e, "Import deserialization failed");
@@ -117,8 +119,14 @@ fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
         }
     };
 
-    let point_count = engine.point_count();
-    let dimension = engine.config().vectors.size;
+    let point_count = raw_engine.point_count();
+    let dimension = raw_engine.config().vectors.size;
+
+    // Wrap in AnyEngine for native, pass directly for WASM
+    #[cfg(feature = "native")]
+    let engine = AnyEngine::from_ephemeral(raw_engine);
+    #[cfg(not(feature = "native"))]
+    let engine = raw_engine;
 
     // Insert the collection
     if let Err(e) = state.insert_collection(name.to_string(), engine) {
@@ -148,12 +156,12 @@ fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
 }
 
 /// Import in replace mode: drop existing and create new
-fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
+async fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
     // Remove existing collection if present
     let _ = state.remove_collection(name);
 
-    // Deserialize the collection
-    let engine = match CollectionEngine::from_bytes(data) {
+    // Deserialize the collection (always creates ephemeral engine)
+    let raw_engine = match CollectionEngine::from_bytes(data) {
         Ok(e) => e,
         Err(e) => {
             warn!(collection = name, error = %e, "Import deserialization failed");
@@ -161,8 +169,13 @@ fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse 
         }
     };
 
-    let point_count = engine.point_count();
-    let dimension = engine.config().vectors.size;
+    let point_count = raw_engine.point_count();
+    let dimension = raw_engine.config().vectors.size;
+
+    #[cfg(feature = "native")]
+    let engine = AnyEngine::from_ephemeral(raw_engine);
+    #[cfg(not(feature = "native"))]
+    let engine = raw_engine;
 
     // Insert the collection
     if let Err(e) = state.insert_collection(name.to_string(), engine) {
@@ -196,7 +209,7 @@ fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse 
 }
 
 /// Import in merge mode: add new points to existing collection
-fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
+async fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
     // Get existing collection
     let handle = match state.get_collection(name) {
         Some(h) => h,
@@ -221,7 +234,7 @@ fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
 
     // Get existing dimension for validation
     let existing_dimension = {
-        let engine = handle.read();
+        let engine = handle.read().await;
         engine.config().vectors.size
     };
 
@@ -255,7 +268,7 @@ fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
 
     // Merge points
     {
-        let mut engine = handle.write();
+        let mut engine = handle.write().await;
         for maybe_point in import_points {
             let point = match maybe_point {
                 Some(p) => p,
@@ -275,8 +288,8 @@ fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
             if exists {
                 points_skipped += 1;
             } else {
-                // Insert new point
-                if engine.upsert_points(vec![point]).is_ok() {
+                // Insert new point (async for durable, sync for ephemeral)
+                if engine.upsert_points_async(vec![point]).await.is_ok() {
                     points_imported += 1;
                 } else {
                     points_skipped += 1;
@@ -337,11 +350,23 @@ mod tests {
     use crate::dto::CreateCollectionRequest;
     use crate::dto::VectorParams;
     use crate::handlers::collections::create_collection;
+    use crate::handlers::points::upsert_points;
+    use crate::dto::{PointStruct, UpsertPointsRequest};
     use crate::router::new_app_state;
-    use lattice_core::Point;
 
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    // Async test macro for both native (tokio) and WASM (wasm_bindgen_test)
+    macro_rules! async_test {
+        ($name:ident, $body:expr) => {
+            #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+            async fn $name() {
+                $body
+            }
+        };
+    }
 
     #[test]
     fn test_parse_import_mode() {
@@ -371,15 +396,13 @@ mod tests {
         assert!(parse_import_mode("mode=invalid").is_err());
     }
 
-    #[test]
-    fn test_export_not_found() {
+    async_test!(test_export_not_found, {
         let state = new_app_state();
-        let response = export_collection(&state, "nonexistent");
+        let response = export_collection(&state, "nonexistent").await;
         assert_eq!(response.status, 404);
-    }
+    });
 
-    #[test]
-    fn test_export_import_roundtrip() {
+    async_test!(test_export_import_roundtrip, {
         let state = new_app_state();
 
         // Create collection
@@ -391,19 +414,21 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        let response = create_collection(&state, "test", request);
+        let response = create_collection(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
-        // Add a point
-        {
-            let handle = state.get_collection("test").unwrap();
-            let mut engine = handle.write();
-            let point = Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4]);
-            engine.upsert_points(vec![point]).unwrap();
-        }
+        // Add a point via handler
+        let upsert_req = UpsertPointsRequest {
+            points: vec![PointStruct {
+                id: 1,
+                vector: vec![0.1, 0.2, 0.3, 0.4],
+                payload: None,
+            }],
+        };
+        upsert_points(&state, "test", upsert_req).await;
 
         // Export
-        let response = export_collection(&state, "test");
+        let response = export_collection(&state, "test").await;
         assert_eq!(response.status, 200);
         assert_eq!(
             response.headers.get("Content-Type").unwrap(),
@@ -419,18 +444,17 @@ mod tests {
 
         // Import to new collection (create mode)
         let response =
-            import_collection(&state, "test2", ImportMode::Create, exported_data.clone());
+            import_collection(&state, "test2", ImportMode::Create, exported_data.clone()).await;
         assert_eq!(response.status, 200);
 
         // Verify imported collection
         let handle = state.get_collection("test2").unwrap();
-        let engine = handle.read();
+        let engine = handle.read().await;
         assert_eq!(engine.point_count(), 1);
         assert!(engine.get_point(1).unwrap().is_some());
-    }
+    });
 
-    #[test]
-    fn test_import_create_conflict() {
+    async_test!(test_import_create_conflict, {
         let state = new_app_state();
 
         // Create collection
@@ -442,19 +466,19 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(&state, "test", request);
+        create_collection(&state, "test", request).await;
 
         // Export
-        let response = export_collection(&state, "test");
+        let response = export_collection(&state, "test").await;
         let exported_data = response.body;
 
         // Try to import with create mode (should fail - already exists)
-        let response = import_collection(&state, "test", ImportMode::Create, exported_data);
+        let response =
+            import_collection(&state, "test", ImportMode::Create, exported_data).await;
         assert_eq!(response.status, 409);
-    }
+    });
 
-    #[test]
-    fn test_import_replace() {
+    async_test!(test_import_replace, {
         let state = new_app_state();
 
         // Create collection with 1 point
@@ -466,42 +490,46 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(&state, "test", request);
-        {
-            let handle = state.get_collection("test").unwrap();
-            let mut engine = handle.write();
-            engine
-                .upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])])
-                .unwrap();
-        }
+        create_collection(&state, "test", request).await;
+
+        // Add point via handler
+        let upsert_req = UpsertPointsRequest {
+            points: vec![PointStruct {
+                id: 1,
+                vector: vec![0.1, 0.2, 0.3, 0.4],
+                payload: None,
+            }],
+        };
+        upsert_points(&state, "test", upsert_req).await;
 
         // Export
-        let response = export_collection(&state, "test");
+        let response = export_collection(&state, "test").await;
         let exported_data = response.body;
 
-        // Add another point to the collection
-        {
-            let handle = state.get_collection("test").unwrap();
-            let mut engine = handle.write();
-            engine
-                .upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])])
-                .unwrap();
-        }
+        // Add another point
+        let upsert_req = UpsertPointsRequest {
+            points: vec![PointStruct {
+                id: 2,
+                vector: vec![0.5, 0.6, 0.7, 0.8],
+                payload: None,
+            }],
+        };
+        upsert_points(&state, "test", upsert_req).await;
 
         // Import with replace mode (should reset to 1 point)
-        let response = import_collection(&state, "test", ImportMode::Replace, exported_data);
+        let response =
+            import_collection(&state, "test", ImportMode::Replace, exported_data).await;
         assert_eq!(response.status, 200);
 
         // Verify replaced collection has only 1 point
         let handle = state.get_collection("test").unwrap();
-        let engine = handle.read();
+        let engine = handle.read().await;
         assert_eq!(engine.point_count(), 1);
         assert!(engine.get_point(1).unwrap().is_some());
         assert!(engine.get_point(2).unwrap().is_none());
-    }
+    });
 
-    #[test]
-    fn test_import_merge() {
+    async_test!(test_import_merge, {
         let state = new_app_state();
 
         // Create collection with 1 point (id=1)
@@ -513,34 +541,43 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(&state, "test", request.clone());
-        {
-            let handle = state.get_collection("test").unwrap();
-            let mut engine = handle.write();
-            engine
-                .upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])])
-                .unwrap();
-        }
+        create_collection(&state, "test", request.clone()).await;
+
+        let upsert_req = UpsertPointsRequest {
+            points: vec![PointStruct {
+                id: 1,
+                vector: vec![0.1, 0.2, 0.3, 0.4],
+                payload: None,
+            }],
+        };
+        upsert_points(&state, "test", upsert_req).await;
 
         // Create another collection with 2 points (id=1, id=2)
-        create_collection(&state, "source", request);
-        {
-            let handle = state.get_collection("source").unwrap();
-            let mut engine = handle.write();
-            engine
-                .upsert_points(vec![Point::new_vector(1, vec![0.9, 0.9, 0.9, 0.9])])
-                .unwrap();
-            engine
-                .upsert_points(vec![Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8])])
-                .unwrap();
-        }
+        create_collection(&state, "source", request).await;
+
+        let upsert_req = UpsertPointsRequest {
+            points: vec![
+                PointStruct {
+                    id: 1,
+                    vector: vec![0.9, 0.9, 0.9, 0.9],
+                    payload: None,
+                },
+                PointStruct {
+                    id: 2,
+                    vector: vec![0.5, 0.6, 0.7, 0.8],
+                    payload: None,
+                },
+            ],
+        };
+        upsert_points(&state, "source", upsert_req).await;
 
         // Export source
-        let response = export_collection(&state, "source");
+        let response = export_collection(&state, "source").await;
         let exported_data = response.body;
 
         // Import with merge mode (should add id=2, skip id=1)
-        let response = import_collection(&state, "test", ImportMode::Merge, exported_data);
+        let response =
+            import_collection(&state, "test", ImportMode::Merge, exported_data).await;
         assert_eq!(response.status, 200);
 
         let body: ApiResponse<ImportResult> = serde_json::from_slice(&response.body).unwrap();
@@ -550,27 +587,26 @@ mod tests {
 
         // Verify merged collection
         let handle = state.get_collection("test").unwrap();
-        let engine = handle.read();
+        let engine = handle.read().await;
         assert_eq!(engine.point_count(), 2);
         // Original point should be preserved (not overwritten)
         let point1 = engine.get_point(1).unwrap().unwrap();
         assert_eq!(point1.vector[0], 0.1);
-    }
+    });
 
-    #[test]
-    fn test_import_merge_not_found() {
+    async_test!(test_import_merge_not_found, {
         let state = new_app_state();
         let response =
-            import_collection(&state, "nonexistent", ImportMode::Merge, vec![0, 0, 0, 0]);
+            import_collection(&state, "nonexistent", ImportMode::Merge, vec![0, 0, 0, 0]).await;
         assert_eq!(response.status, 404);
-    }
+    });
 
-    #[test]
-    fn test_import_invalid_data() {
+    async_test!(test_import_invalid_data, {
         let state = new_app_state();
 
         // Too small
-        let response = import_collection(&state, "test", ImportMode::Create, vec![1, 2]);
+        let response =
+            import_collection(&state, "test", ImportMode::Create, vec![1, 2]).await;
         assert_eq!(response.status, 400);
-    }
+    });
 }

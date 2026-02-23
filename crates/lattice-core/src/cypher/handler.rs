@@ -8,7 +8,7 @@ use crate::cypher::error::CypherResult;
 use crate::cypher::executor::{ExecutionContext, QueryExecutor, QueryResult};
 use crate::cypher::parser::CypherParser;
 use crate::cypher::planner::{LogicalOp, QueryPlanner};
-use crate::engine::collection::CollectionEngine;
+use crate::engine::EngineOps;
 use crate::types::value::CypherValue;
 use std::collections::HashMap;
 
@@ -27,7 +27,7 @@ pub trait CypherHandler: Send + Sync {
     fn execute(
         &self,
         plan: &LogicalOp,
-        collection: &mut CollectionEngine,
+        collection: &mut dyn EngineOps,
         parameters: HashMap<String, CypherValue>,
     ) -> CypherResult<QueryResult>;
 
@@ -35,7 +35,7 @@ pub trait CypherHandler: Send + Sync {
     fn query(
         &self,
         query: &str,
-        collection: &mut CollectionEngine,
+        collection: &mut dyn EngineOps,
         parameters: HashMap<String, CypherValue>,
     ) -> CypherResult<QueryResult> {
         let stmt = self.parse(query)?;
@@ -285,7 +285,7 @@ impl CypherHandler for DefaultCypherHandler {
     fn execute(
         &self,
         plan: &LogicalOp,
-        collection: &mut CollectionEngine,
+        collection: &mut dyn EngineOps,
         parameters: HashMap<String, CypherValue>,
     ) -> CypherResult<QueryResult> {
         let mut ctx = ExecutionContext::with_parameters(collection, parameters);
@@ -296,6 +296,7 @@ impl CypherHandler for DefaultCypherHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::collection::CollectionEngine;
     use crate::types::collection::{CollectionConfig, Distance, HnswConfig, VectorConfig};
 
     #[cfg(target_arch = "wasm32")]

@@ -7,17 +7,28 @@ use crate::dto::{
     DeletePointsRequest, GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest,
     TraverseRequest, UpsertPointsRequest,
 };
+#[cfg(feature = "native")]
+use crate::engine_wrapper::AnyEngine;
 use crate::handlers::{collections, export_import, points, search};
-use lattice_core::{CollectionEngine, LatticeRequest, LatticeResponse};
+use lattice_core::{LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, instrument, warn};
 
 /// Application state shared across all requests
 pub type AppState = Arc<AppStateInner>;
 
-/// Per-collection engine wrapped in its own lock for fine-grained concurrency
-pub type CollectionHandle = Arc<RwLock<CollectionEngine>>;
+/// Per-collection engine wrapped in its own lock for fine-grained concurrency.
+///
+/// Uses `tokio::sync::RwLock` so the lock can be held across `.await` points
+/// (required for durable engines that perform async WAL writes).
+#[cfg(feature = "native")]
+pub type CollectionHandle = Arc<tokio::sync::RwLock<AnyEngine>>;
+
+/// WASM variant: no durable storage, uses parking_lot for sync access
+#[cfg(not(feature = "native"))]
+pub type CollectionHandle = Arc<parking_lot::RwLock<lattice_core::CollectionEngine>>;
 
 /// Error returned when inserting a collection fails
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +52,8 @@ pub struct ServerConfig {
     pub max_search_batch_size: usize,
     /// Maximum number of collections (prevents unbounded memory growth)
     pub max_collections: usize,
+    /// Optional data directory for durable collections (None = ephemeral only)
+    pub data_dir: Option<PathBuf>,
 }
 
 impl ServerConfig {
@@ -58,7 +71,14 @@ impl ServerConfig {
             max_get_batch_size: 10_000,
             max_search_batch_size: 100,
             max_collections: 1_000,
+            data_dir: None,
         }
+    }
+
+    /// Set the data directory for durable collections
+    pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
+        self.data_dir = Some(dir);
+        self
     }
 
     /// Create config with no limits (for testing only)
@@ -70,6 +90,7 @@ impl ServerConfig {
             max_get_batch_size: usize::MAX,
             max_search_batch_size: usize::MAX,
             max_collections: usize::MAX,
+            data_dir: None,
         }
     }
 }
@@ -119,10 +140,11 @@ impl AppStateInner {
     /// - `Ok(())` if collection was inserted successfully
     /// - `Err(InsertError::AlreadyExists)` if collection already exists
     /// - `Err(InsertError::AtCapacity)` if max_collections limit reached
+    #[cfg(feature = "native")]
     pub fn insert_collection(
         &self,
         name: String,
-        engine: CollectionEngine,
+        engine: AnyEngine,
     ) -> Result<(), InsertError> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
@@ -132,7 +154,25 @@ impl AppStateInner {
         if collections.len() >= self.config.max_collections {
             return Err(InsertError::AtCapacity(self.config.max_collections));
         }
-        collections.insert(name, Arc::new(RwLock::new(engine)));
+        collections.insert(name, Arc::new(tokio::sync::RwLock::new(engine)));
+        Ok(())
+    }
+
+    /// Insert a new collection (WASM variant)
+    #[cfg(not(feature = "native"))]
+    pub fn insert_collection(
+        &self,
+        name: String,
+        engine: lattice_core::CollectionEngine,
+    ) -> Result<(), InsertError> {
+        let mut collections = self.collections.write();
+        if collections.contains_key(&name) {
+            return Err(InsertError::AlreadyExists);
+        }
+        if collections.len() >= self.config.max_collections {
+            return Err(InsertError::AtCapacity(self.config.max_collections));
+        }
+        collections.insert(name, Arc::new(parking_lot::RwLock::new(engine)));
         Ok(())
     }
 
@@ -148,9 +188,14 @@ impl Default for AppStateInner {
     }
 }
 
-/// Create new shared application state
+/// Create new shared application state with production defaults
 pub fn new_app_state() -> AppState {
     Arc::new(AppStateInner::new())
+}
+
+/// Create new shared application state with custom config
+pub fn new_app_state_with_config(config: ServerConfig) -> AppState {
+    Arc::new(AppStateInner::with_config(config))
 }
 
 /// Route a request to the appropriate handler
@@ -205,13 +250,13 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // PUT /collections/{name} - Create collection
         ("PUT", ["collections", name]) => {
             match parse_body::<CreateCollectionRequest>(&mut request.body) {
-                Ok(req) => collections::create_collection(&state, name, req),
+                Ok(req) => collections::create_collection(&state, name, req).await,
                 Err(e) => e,
             }
         }
 
         // GET /collections/{name} - Get collection info
-        ("GET", ["collections", name]) => collections::get_collection(&state, name),
+        ("GET", ["collections", name]) => collections::get_collection(&state, name).await,
 
         // DELETE /collections/{name} - Delete collection
         ("DELETE", ["collections", name]) => collections::delete_collection(&state, name),
@@ -219,13 +264,16 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // === Import/Export ===
 
         // GET /collections/{name}/export - Export collection as binary
-        ("GET", ["collections", name, "export"]) => export_import::export_collection(&state, name),
+        ("GET", ["collections", name, "export"]) => {
+            export_import::export_collection(&state, name).await
+        }
 
         // POST /collections/{name}/import?mode={create|replace|merge} - Import collection
         ("POST", ["collections", name, "import"]) => {
             match export_import::parse_import_mode(query) {
                 Ok(mode) => {
                     export_import::import_collection(&state, name, mode, request.body.clone())
+                        .await
                 }
                 Err(e) => e,
             }
@@ -236,7 +284,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // PUT /collections/{name}/points - Upsert points
         ("PUT", ["collections", name, "points"]) => {
             match parse_body::<UpsertPointsRequest>(&mut request.body) {
-                Ok(req) => points::upsert_points(&state, name, req),
+                Ok(req) => points::upsert_points(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -244,7 +292,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/search - Search (legacy)
         ("POST", ["collections", name, "points", "search"]) => {
             match parse_body::<SearchRequest>(&mut request.body) {
-                Ok(req) => search::search_points(&state, name, req),
+                Ok(req) => search::search_points(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -252,7 +300,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/search/batch - Batch search
         ("POST", ["collections", name, "points", "search", "batch"]) => {
             match parse_body::<BatchSearchRequest>(&mut request.body) {
-                Ok(req) => search::search_batch(&state, name, req),
+                Ok(req) => search::search_batch(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -260,7 +308,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/query - Query (Qdrant v1.16+)
         ("POST", ["collections", name, "points", "query"]) => {
             match parse_body::<QueryRequest>(&mut request.body) {
-                Ok(req) => search::query_points(&state, name, req.into()),
+                Ok(req) => search::query_points(&state, name, req.into()).await,
                 Err(e) => e,
             }
         }
@@ -268,7 +316,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/scroll - Scroll
         ("POST", ["collections", name, "points", "scroll"]) => {
             match parse_body::<ScrollRequest>(&mut request.body) {
-                Ok(req) => search::scroll_points(&state, name, req),
+                Ok(req) => search::scroll_points(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -276,7 +324,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points - Get points by IDs
         ("POST", ["collections", name, "points"]) => {
             match parse_body::<GetPointsRequest>(&mut request.body) {
-                Ok(req) => points::get_points(&state, name, req),
+                Ok(req) => points::get_points(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -284,7 +332,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/delete - Delete points
         ("POST", ["collections", name, "points", "delete"]) => {
             match parse_body::<DeletePointsRequest>(&mut request.body) {
-                Ok(req) => points::delete_points(&state, name, req),
+                Ok(req) => points::delete_points(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -294,7 +342,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/graph/edges - Add edge
         ("POST", ["collections", name, "graph", "edges"]) => {
             match parse_body::<AddEdgeRequest>(&mut request.body) {
-                Ok(req) => points::add_edge(&state, name, req),
+                Ok(req) => points::add_edge(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -302,7 +350,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/graph/traverse - Traverse graph
         ("POST", ["collections", name, "graph", "traverse"]) => {
             match parse_body::<TraverseRequest>(&mut request.body) {
-                Ok(req) => search::traverse_graph(&state, name, req),
+                Ok(req) => search::traverse_graph(&state, name, req).await,
                 Err(e) => e,
             }
         }
@@ -310,7 +358,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/graph/query - Execute Cypher query
         ("POST", ["collections", name, "graph", "query"]) => {
             match parse_body::<CypherQueryRequest>(&mut request.body) {
-                Ok(req) => search::cypher_query(&state, name, req),
+                Ok(req) => search::cypher_query(&state, name, req).await,
                 Err(e) => e,
             }
         }

@@ -1533,3 +1533,101 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
         Ok(())
     }
 }
+
+impl<W: LatticeStorage, D: LatticeStorage> crate::engine::EngineOps for CollectionEngine<W, D> {
+    fn get_point(&self, id: PointId) -> LatticeResult<Option<Point>> {
+        self.get_point(id)
+    }
+
+    fn point_ids(&self) -> LatticeResult<Vec<PointId>> {
+        self.point_ids()
+    }
+
+    fn point_ids_by_label(&self, label: &str) -> LatticeResult<Vec<PointId>> {
+        self.point_ids_by_label(label)
+    }
+
+    fn get_points(&self, ids: &[PointId]) -> LatticeResult<Vec<Option<Point>>> {
+        self.get_points(ids)
+    }
+
+    fn vector_dim(&self) -> usize {
+        self.vector_dim()
+    }
+
+    fn get_edges(&self, point_id: PointId) -> LatticeResult<Vec<EdgeInfo>> {
+        self.get_edges(point_id)
+    }
+
+    fn delete_points(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+        self.apply_delete_internal(ids)
+    }
+
+    fn batch_extract_properties(
+        &self,
+        ids: &[PointId],
+        properties: &[&str],
+    ) -> LatticeResult<Vec<Vec<Option<Vec<u8>>>>> {
+        self.batch_extract_properties(ids, properties)
+    }
+
+    fn batch_extract_i64_property(
+        &self,
+        ids: &[PointId],
+        property: &str,
+    ) -> LatticeResult<Vec<i64>> {
+        self.batch_extract_i64_property(ids, property)
+    }
+
+    fn traverse(
+        &self,
+        start_id: PointId,
+        max_depth: usize,
+        relations: Option<&[&str]>,
+    ) -> LatticeResult<TraversalResult> {
+        self.traverse(start_id, max_depth, relations)
+    }
+
+    fn upsert_points(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+        self.apply_upsert_internal(points)
+    }
+
+    fn add_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: &str,
+        weight: f32,
+    ) -> LatticeResult<()> {
+        let relation_id = self.get_or_create_relation_id(relation);
+        let edge = Edge::new(to_id, weight, relation_id);
+        self.apply_add_edge_internal(from_id, edge)
+    }
+
+    fn remove_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: Option<&str>,
+    ) -> LatticeResult<bool> {
+        if let Some(rel) = relation {
+            if let Some(relation_id) = self.config.relation_id(rel) {
+                return self.apply_remove_edge_internal(from_id, to_id, relation_id);
+            }
+            Ok(false)
+        } else {
+            let mut pts = self.points.write_safe()?;
+            let point = pts
+                .get_mut(&from_id)
+                .ok_or(LatticeError::PointNotFound { id: from_id })?;
+
+            if let Some(edges) = &mut point.outgoing_edges {
+                let original_len = edges.len();
+                edges.retain(|e| e.target_id != to_id);
+                Ok(edges.len() < original_len)
+            } else {
+                Ok(false)
+            }
+        }
+    }
+}

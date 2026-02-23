@@ -6,6 +6,7 @@
 //! # Environment Variables
 //!
 //! - `RUST_LOG` - Log level (default: info)
+//! - `LATTICE_DATA_DIR` - Data directory for durable collections (enables persistence)
 //! - `LATTICE_RATE_LIMIT` - Enable rate limiting (any value)
 //! - `LATTICE_API_KEYS` - Comma-separated API keys for authentication
 //! - `LATTICE_BEARER_TOKENS` - Comma-separated Bearer tokens for authentication
@@ -14,17 +15,106 @@
 
 use lattice_server::{
     auth::{AuthConfig, Authenticator},
+    engine_wrapper::AnyEngine,
     hyper_transport::HyperTransport,
     rate_limit::RateLimitConfig,
-    router::{new_app_state, route},
+    router::{new_app_state_with_config, route, AppState, ServerConfig},
     LatticeTransport,
 };
 use std::env;
-use tracing::info;
+use std::path::{Path, PathBuf};
+use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[cfg(feature = "tls")]
 use lattice_server::{hyper_transport::HyperTlsTransport, tls::TlsConfig};
+
+/// Scan data_dir for subdirectories containing config.json and open durable engines.
+///
+/// Each collection is stored as:
+/// ```text
+/// data_dir/{collection_name}/
+/// ├── config.json
+/// ├── wal/   (WAL storage)
+/// └── data/  (data storage)
+/// ```
+///
+/// Returns the number of collections successfully loaded.
+/// Logs warnings for collections that fail to load (does not abort startup).
+async fn load_collections_from_disk(data_dir: &Path, state: &AppState) -> usize {
+    let mut entries = match tokio::fs::read_dir(data_dir).await {
+        Ok(e) => e,
+        Err(e) => {
+            error!(path = %data_dir.display(), error = %e, "Failed to read data directory");
+            return 0;
+        }
+    };
+
+    let mut loaded = 0usize;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+
+        // Skip non-directories
+        let is_dir = entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => {
+                warn!(path = %path.display(), "Skipping directory with non-UTF8 name");
+                continue;
+            }
+        };
+
+        let config_path = path.join("config.json");
+        if !config_path.exists() {
+            warn!(collection = %name, "Skipping directory without config.json");
+            continue;
+        }
+
+        // Read and parse collection config
+        let config_bytes = match tokio::fs::read(&config_path).await {
+            Ok(b) => b,
+            Err(e) => {
+                error!(collection = %name, error = %e, "Failed to read config.json");
+                continue;
+            }
+        };
+
+        let config: lattice_core::CollectionConfig = match serde_json::from_slice(&config_bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                error!(collection = %name, error = %e, "Failed to parse config.json");
+                continue;
+            }
+        };
+
+        // Open durable engine (replays WAL for crash recovery)
+        let wal_storage = lattice_storage::DiskStorage::new(path.join("wal"), 4096);
+        let data_storage = lattice_storage::DiskStorage::new(path.join("data"), 4096);
+
+        let engine = match AnyEngine::open_durable(config, wal_storage, data_storage).await {
+            Ok(e) => e,
+            Err(e) => {
+                error!(collection = %name, error = %e, "Failed to open durable engine");
+                continue;
+            }
+        };
+
+        let point_count = engine.point_count();
+        if let Err(e) = state.insert_collection(name.clone(), engine) {
+            error!(collection = %name, error = ?e, "Failed to insert recovered collection");
+            continue;
+        }
+
+        info!(collection = %name, points = point_count, "Recovered collection from disk");
+        loaded += 1;
+    }
+
+    loaded
+}
 
 #[tokio::main]
 async fn main() {
@@ -43,6 +133,9 @@ async fn main() {
         .nth(1)
         .unwrap_or_else(|| "0.0.0.0:6334".to_string());
 
+    // Parse data directory (PCND: explicit opt-in via env var)
+    let data_dir: Option<PathBuf> = env::var("LATTICE_DATA_DIR").ok().map(PathBuf::from);
+
     println!("╔═══════════════════════════════════════════╗");
     println!("║           LatticeDB Server v0.1           ║");
     println!("║   Vector + Graph Database in Rust/WASM   ║");
@@ -51,8 +144,31 @@ async fn main() {
 
     info!(address = %addr, "Starting LatticeDB server");
 
+    // Build server config
+    let mut config = ServerConfig::production();
+    if let Some(ref dir) = data_dir {
+        config = config.with_data_dir(dir.clone());
+        info!(data_dir = %dir.display(), "Durable mode enabled");
+    } else {
+        info!("Ephemeral mode (no LATTICE_DATA_DIR set)");
+    }
+
     // Create shared application state
-    let state = new_app_state();
+    let state = new_app_state_with_config(config);
+
+    // Load existing collections from disk (WAL replay for crash recovery)
+    if let Some(ref dir) = data_dir {
+        // Ensure data directory exists
+        if let Err(e) = tokio::fs::create_dir_all(dir).await {
+            eprintln!("Failed to create data directory {}: {}", dir.display(), e);
+            std::process::exit(1);
+        }
+
+        let loaded = load_collections_from_disk(dir, &state).await;
+        if loaded > 0 {
+            info!(count = loaded, "Collections recovered from disk");
+        }
+    }
 
     // Load optional authentication config from env
     let authenticator = AuthConfig::from_env().map(|config| {

@@ -40,7 +40,7 @@ use std::time::Instant;
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn search_points(
+pub async fn search_points(
     state: &AppState,
     collection_name: &str,
     request: SearchRequest,
@@ -79,7 +79,7 @@ pub fn search_points(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -122,7 +122,7 @@ pub fn search_points(
 /// Batch search for multiple queries (parallel processing)
 ///
 /// More efficient than calling search multiple times.
-pub fn search_batch(
+pub async fn search_batch(
     state: &AppState,
     collection_name: &str,
     request: BatchSearchRequest,
@@ -169,7 +169,7 @@ pub fn search_batch(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Convert SearchRequest DTOs to SearchQuery
     let queries: Vec<SearchQuery> = request
@@ -224,7 +224,7 @@ pub fn search_batch(
 /// Query points (Qdrant v1.16+ unified search endpoint)
 ///
 /// This is the newer unified search endpoint. It wraps results in a QueryResponse.
-pub fn query_points(
+pub async fn query_points(
     state: &AppState,
     collection_name: &str,
     request: SearchRequest,
@@ -260,7 +260,7 @@ pub fn query_points(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Build search query
     let mut query = SearchQuery::new(request.vector, request.limit);
@@ -317,7 +317,7 @@ pub fn query_points(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn scroll_points(
+pub async fn scroll_points(
     state: &AppState,
     collection_name: &str,
     request: ScrollRequest,
@@ -343,7 +343,7 @@ pub fn scroll_points(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Build scroll query
     let mut query = ScrollQuery::new(request.limit);
@@ -395,7 +395,7 @@ pub fn scroll_points(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn traverse_graph(
+pub async fn traverse_graph(
     state: &AppState,
     collection_name: &str,
     request: TraverseRequest,
@@ -442,7 +442,7 @@ pub fn traverse_graph(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     // Convert relation strings to references for the API
     let relations: Option<Vec<&str>> = request
@@ -499,7 +499,7 @@ pub fn traverse_graph(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn cypher_query(
+pub async fn cypher_query(
     state: &AppState,
     collection_name: &str,
     request: CypherQueryRequest,
@@ -533,7 +533,7 @@ pub fn cypher_query(
             ))
         }
     };
-    let mut engine = handle.write();
+    let mut engine = handle.write().await;
 
     // Create the Cypher handler
     let handler = DefaultCypherHandler::new();
@@ -549,7 +549,7 @@ pub fn cypher_query(
     let start = Instant::now();
 
     // Execute the query
-    match handler.query(&request.query, &mut engine, parameters) {
+    match handler.query(&request.query, &mut *engine, parameters) {
         Ok(result) => {
             let execution_time_ms = start.elapsed().as_millis() as u64;
 
@@ -744,7 +744,18 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
-    fn setup_collection_with_points(state: &AppState) {
+    // Async test macro for both native (tokio) and WASM (wasm_bindgen_test)
+    macro_rules! async_test {
+        ($name:ident, $body:expr) => {
+            #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+            async fn $name() {
+                $body
+            }
+        };
+    }
+
+    async fn setup_collection_with_points(state: &AppState) {
         // Create collection
         let request = CreateCollectionRequest {
             vectors: VectorParams {
@@ -754,7 +765,7 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(state, "test", request);
+        create_collection(state, "test", request).await;
 
         // Insert points
         let request = UpsertPointsRequest {
@@ -766,13 +777,12 @@ mod tests {
                 })
                 .collect(),
         };
-        upsert_points(state, "test", request);
+        upsert_points(state, "test", request).await;
     }
 
-    #[test]
-    fn test_search() {
+    async_test!(test_search, {
         let state = new_app_state();
-        setup_collection_with_points(&state);
+        setup_collection_with_points(&state).await;
 
         let request = SearchRequest {
             vector: vec![0.1, 0.05, 0.5, 0.5],
@@ -783,7 +793,7 @@ mod tests {
             score_threshold: None,
         };
 
-        let response = search_points(&state, "test", request);
+        let response = search_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         let body: ApiResponse<Vec<ScoredPoint>> = serde_json::from_slice(&response.body).unwrap();
@@ -794,12 +804,11 @@ mod tests {
         for i in 1..results.len() {
             assert!(results[i - 1].score <= results[i].score);
         }
-    }
+    });
 
-    #[test]
-    fn test_search_with_ef() {
+    async_test!(test_search_with_ef, {
         let state = new_app_state();
-        setup_collection_with_points(&state);
+        setup_collection_with_points(&state).await;
 
         let request = SearchRequest {
             vector: vec![0.1, 0.05, 0.5, 0.5],
@@ -810,14 +819,13 @@ mod tests {
             score_threshold: None,
         };
 
-        let response = search_points(&state, "test", request);
+        let response = search_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
-    }
+    });
 
-    #[test]
-    fn test_scroll() {
+    async_test!(test_scroll, {
         let state = new_app_state();
-        setup_collection_with_points(&state);
+        setup_collection_with_points(&state).await;
 
         // First page
         let request = ScrollRequest {
@@ -827,7 +835,7 @@ mod tests {
             with_vector: false,
         };
 
-        let response = scroll_points(&state, "test", request);
+        let response = scroll_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         let body: ApiResponse<ScrollResult> = serde_json::from_slice(&response.body).unwrap();
@@ -843,14 +851,13 @@ mod tests {
             with_vector: false,
         };
 
-        let response = scroll_points(&state, "test", request);
+        let response = scroll_points(&state, "test", request).await;
         let body: ApiResponse<ScrollResult> = serde_json::from_slice(&response.body).unwrap();
         let result = body.result.unwrap();
         assert_eq!(result.points.len(), 10);
-    }
+    });
 
-    #[test]
-    fn test_collection_not_found() {
+    async_test!(test_collection_not_found, {
         let state = new_app_state();
 
         let request = SearchRequest {
@@ -862,7 +869,7 @@ mod tests {
             score_threshold: None,
         };
 
-        let response = search_points(&state, "nonexistent", request);
+        let response = search_points(&state, "nonexistent", request).await;
         assert_eq!(response.status, 404);
-    }
+    });
 }

@@ -31,7 +31,7 @@ use tracing::{info, warn};
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn upsert_points(
+pub async fn upsert_points(
     state: &AppState,
     collection_name: &str,
     request: UpsertPointsRequest,
@@ -55,7 +55,7 @@ pub fn upsert_points(
             ))
         }
     };
-    let mut engine = handle.write();
+    let mut engine = handle.write().await;
 
     // Validate vector dimensions match collection (crash/DoS protection)
     let expected_dim = engine.config().vectors.size;
@@ -127,9 +127,9 @@ pub fn upsert_points(
         points.push(point);
     }
 
-    // Upsert into engine
+    // Upsert into engine (async for durable, sync for ephemeral)
     let point_count = points.len();
-    match engine.upsert_points(points) {
+    match engine.upsert_points_async(points).await {
         Ok(_) => {
             info!(
                 collection = collection_name,
@@ -167,7 +167,7 @@ pub fn upsert_points(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn get_points(
+pub async fn get_points(
     state: &AppState,
     collection_name: &str,
     request: GetPointsRequest,
@@ -191,7 +191,7 @@ pub fn get_points(
             ))
         }
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     let results = match engine.get_points(&request.ids) {
         Ok(r) => r,
@@ -260,7 +260,7 @@ pub fn get_points(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn delete_points(
+pub async fn delete_points(
     state: &AppState,
     collection_name: &str,
     request: DeletePointsRequest,
@@ -284,10 +284,10 @@ pub fn delete_points(
             ))
         }
     };
-    let mut engine = handle.write();
+    let mut engine = handle.write().await;
 
     let point_count = request.points.len();
-    let _deleted = engine.delete_points(&request.points);
+    let _deleted = engine.delete_points_async(&request.points).await;
 
     info!(
         collection = collection_name,
@@ -316,7 +316,7 @@ pub fn delete_points(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn add_edge(
+pub async fn add_edge(
     state: &AppState,
     collection_name: &str,
     request: AddEdgeRequest,
@@ -362,14 +362,17 @@ pub fn add_edge(
             ))
         }
     };
-    let mut engine = handle.write();
+    let mut engine = handle.write().await;
 
-    match engine.add_edge(
-        request.from_id,
-        request.to_id,
-        &request.relation,
-        request.weight,
-    ) {
+    match engine
+        .add_edge_async(
+            request.from_id,
+            request.to_id,
+            &request.relation,
+            request.weight,
+        )
+        .await
+    {
         Ok(_) => json_response(&ApiResponse::ok(AddEdgeResult {
             status: "created".to_string(),
         })),
@@ -395,7 +398,18 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
-    fn setup_collection(state: &AppState) {
+    // Async test macro for both native (tokio) and WASM (wasm_bindgen_test)
+    macro_rules! async_test {
+        ($name:ident, $body:expr) => {
+            #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+            async fn $name() {
+                $body
+            }
+        };
+    }
+
+    async fn setup_collection(state: &AppState) {
         let request = CreateCollectionRequest {
             vectors: VectorParams {
                 size: 4,
@@ -404,13 +418,12 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(state, "test", request);
+        create_collection(state, "test", request).await;
     }
 
-    #[test]
-    fn test_upsert_and_get_points() {
+    async_test!(test_upsert_and_get_points, {
         let state = new_app_state();
-        setup_collection(&state);
+        setup_collection(&state).await;
 
         // Upsert
         let request = UpsertPointsRequest {
@@ -428,7 +441,7 @@ mod tests {
             ],
         };
 
-        let response = upsert_points(&state, "test", request);
+        let response = upsert_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         // Get
@@ -438,17 +451,16 @@ mod tests {
             with_vector: true,
         };
 
-        let response = get_points(&state, "test", request);
+        let response = get_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         let body: ApiResponse<Vec<PointRecord>> = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body.result.unwrap().len(), 2);
-    }
+    });
 
-    #[test]
-    fn test_delete_points() {
+    async_test!(test_delete_points, {
         let state = new_app_state();
-        setup_collection(&state);
+        setup_collection(&state).await;
 
         // Upsert
         let request = UpsertPointsRequest {
@@ -458,11 +470,11 @@ mod tests {
                 payload: None,
             }],
         };
-        upsert_points(&state, "test", request);
+        upsert_points(&state, "test", request).await;
 
         // Delete
         let request = DeletePointsRequest { points: vec![1] };
-        let response = delete_points(&state, "test", request);
+        let response = delete_points(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         // Verify gone
@@ -471,15 +483,14 @@ mod tests {
             with_payload: false,
             with_vector: false,
         };
-        let response = get_points(&state, "test", request);
+        let response = get_points(&state, "test", request).await;
         let body: ApiResponse<Vec<PointRecord>> = serde_json::from_slice(&response.body).unwrap();
         assert!(body.result.unwrap().is_empty());
-    }
+    });
 
-    #[test]
-    fn test_add_edge() {
+    async_test!(test_add_edge, {
         let state = new_app_state();
-        setup_collection(&state);
+        setup_collection(&state).await;
 
         // Upsert two points
         let request = UpsertPointsRequest {
@@ -496,7 +507,7 @@ mod tests {
                 },
             ],
         };
-        upsert_points(&state, "test", request);
+        upsert_points(&state, "test", request).await;
 
         // Add edge
         let request = AddEdgeRequest {
@@ -506,12 +517,11 @@ mod tests {
             weight: 0.9,
         };
 
-        let response = add_edge(&state, "test", request);
+        let response = add_edge(&state, "test", request).await;
         assert_eq!(response.status, 200);
-    }
+    });
 
-    #[test]
-    fn test_collection_not_found() {
+    async_test!(test_collection_not_found, {
         let state = new_app_state();
 
         let request = GetPointsRequest {
@@ -520,7 +530,7 @@ mod tests {
             with_vector: false,
         };
 
-        let response = get_points(&state, "nonexistent", request);
+        let response = get_points(&state, "nonexistent", request).await;
         assert_eq!(response.status, 404);
-    }
+    });
 }

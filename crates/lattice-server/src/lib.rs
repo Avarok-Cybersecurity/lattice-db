@@ -38,6 +38,8 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 pub mod auth;
 pub mod dto;
+#[cfg(feature = "native")]
+pub mod engine_wrapper;
 pub mod handlers;
 pub mod rate_limit;
 pub mod router;

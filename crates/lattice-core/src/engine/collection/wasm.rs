@@ -719,3 +719,84 @@ impl CollectionEngine {
         Ok(engine)
     }
 }
+
+impl crate::engine::EngineOps for CollectionEngine {
+    fn get_point(&self, id: PointId) -> LatticeResult<Option<Point>> {
+        self.get_point(id)
+    }
+
+    fn point_ids(&self) -> LatticeResult<Vec<PointId>> {
+        self.point_ids()
+    }
+
+    fn point_ids_by_label(&self, label: &str) -> LatticeResult<Vec<PointId>> {
+        self.point_ids_by_label(label)
+    }
+
+    fn get_points(&self, ids: &[PointId]) -> LatticeResult<Vec<Option<Point>>> {
+        self.get_points(ids)
+    }
+
+    fn vector_dim(&self) -> usize {
+        self.vector_dim()
+    }
+
+    fn get_edges(&self, point_id: PointId) -> LatticeResult<Vec<EdgeInfo>> {
+        self.get_edges(point_id)
+    }
+
+    fn delete_points(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+        CollectionEngine::delete_points(self, ids)
+    }
+
+    fn batch_extract_properties(
+        &self,
+        ids: &[PointId],
+        properties: &[&str],
+    ) -> LatticeResult<Vec<Vec<Option<Vec<u8>>>>> {
+        self.batch_extract_properties(ids, properties)
+    }
+
+    fn batch_extract_i64_property(
+        &self,
+        ids: &[PointId],
+        property: &str,
+    ) -> LatticeResult<Vec<i64>> {
+        self.batch_extract_i64_property(ids, property)
+    }
+
+    fn traverse(
+        &self,
+        start_id: PointId,
+        max_depth: usize,
+        relations: Option<&[&str]>,
+    ) -> LatticeResult<crate::engine::collection::TraversalResult> {
+        self.traverse(start_id, max_depth, relations)
+    }
+
+    fn upsert_points(
+        &mut self,
+        points: Vec<Point>,
+    ) -> LatticeResult<crate::engine::collection::UpsertResult> {
+        CollectionEngine::upsert_points(self, points)
+    }
+
+    fn add_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: &str,
+        weight: f32,
+    ) -> LatticeResult<()> {
+        CollectionEngine::add_edge(self, from_id, to_id, relation, weight)
+    }
+
+    fn remove_edge(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: Option<&str>,
+    ) -> LatticeResult<bool> {
+        CollectionEngine::remove_edge(self, from_id, to_id, relation)
+    }
+}
