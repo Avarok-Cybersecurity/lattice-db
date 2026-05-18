@@ -165,18 +165,21 @@ impl LatticeStorage for DiskStorage {
                 message: format!("Failed to seek to page: {}", e),
             })?;
 
-        // Read page — expect exactly page_size bytes for a valid page
-        let mut buffer = vec![0u8; self.page_size];
-        let bytes_read = file.read(&mut buffer).await.map_err(|e| StorageError::Io {
-            message: format!("Failed to read page: {}", e),
-        })?;
-
-        if bytes_read < self.page_size {
-            // Short read indicates a truncated or corrupted page file.
-            // Return the partial data rather than silently padding with zeros,
-            // so callers (e.g. WAL recovery) can detect and handle corruption.
-            buffer.truncate(bytes_read);
+        // Read all available bytes from this page's offset to end of file.
+        // Pages may exceed page_size (e.g. WAL page grows with appended entries).
+        let available = (file_len - offset) as usize;
+        let mut buffer = vec![0u8; available];
+        let mut total_read = 0;
+        while total_read < available {
+            let n = file.read(&mut buffer[total_read..]).await.map_err(|e| StorageError::Io {
+                message: format!("Failed to read page: {}", e),
+            })?;
+            if n == 0 {
+                break;
+            }
+            total_read += n;
         }
+        buffer.truncate(total_read);
 
         Ok(buffer)
     }
@@ -212,7 +215,7 @@ impl LatticeStorage for DiskStorage {
             padded.resize(self.page_size, 0);
         }
 
-        file.write_all(&padded[..self.page_size])
+        file.write_all(&padded)
             .await
             .map_err(|e| StorageError::Io {
                 message: format!("Failed to write page: {}", e),
