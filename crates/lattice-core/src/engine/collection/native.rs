@@ -807,13 +807,23 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
             let mut pending = self.pending_index.write_safe()?;
             let mut label_idx = self.label_index.write_safe()?;
 
-            for (point, labels) in points_with_labels {
+            for (mut point, labels) in points_with_labels {
                 let is_update = pts.contains_key(&point.id);
 
                 if is_update {
                     // For updates, remove old labels from label index
                     if let Some(old_point) = pts.get(&point.id) {
                         Self::remove_point_labels_from_index(old_point, &mut label_idx);
+                        // Edge preservation: an upsert that does not specify
+                        // outgoing edges updates the point's STATE (vector +
+                        // payload) only — it carries the existing graph edges
+                        // forward instead of dropping them. An upsert that DOES
+                        // specify edges (Some) replaces them wholesale. Without
+                        // this, any state-only re-upsert silently erased the
+                        // node's edges (edges are stored on the source point).
+                        if point.outgoing_edges.is_none() {
+                            point.outgoing_edges = old_point.outgoing_edges.clone();
+                        }
                     }
                     // Delete from HNSW index first (sync to ensure consistency)
                     self.indexer.queue_delete(point.id);

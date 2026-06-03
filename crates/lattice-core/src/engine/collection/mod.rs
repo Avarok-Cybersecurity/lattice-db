@@ -279,6 +279,32 @@ mod tests {
     }
 
     #[test]
+    fn test_upsert_preserves_edges() {
+        // A state-only re-upsert (no edges specified) must keep the point's
+        // existing graph edges rather than wiping them. Edges are owned by
+        // add_edge/remove_edge; upsert writes vector + payload only.
+        let mut engine = CollectionEngine::new(test_config()).unwrap();
+
+        engine
+            .upsert_points(vec![
+                Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4]),
+                Point::new_vector(2, vec![0.5, 0.6, 0.7, 0.8]),
+            ])
+            .unwrap();
+        engine.add_edge(1, 2, "similar_to", 0.9).unwrap();
+
+        // Re-upsert point 1 with a changed vector and no edges.
+        engine
+            .upsert_points(vec![Point::new_vector(1, vec![0.9, 0.8, 0.7, 0.6])])
+            .unwrap();
+
+        let edges = engine.get_edges(1).unwrap();
+        assert_eq!(edges.len(), 1, "state-only re-upsert wiped the edge");
+        assert_eq!(edges[0].target_id, 2);
+        assert_eq!(edges[0].weight, 0.9);
+    }
+
+    #[test]
     fn test_traverse() {
         let mut engine = CollectionEngine::new(test_config()).unwrap();
 

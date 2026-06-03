@@ -86,7 +86,7 @@ impl CollectionEngine {
         let mut inserted = 0;
         let mut updated = 0;
 
-        for point in points {
+        for mut point in points {
             // Validate vector dimension
             if point.vector.len() != self.config.vectors.size {
                 return Err(LatticeError::DimensionMismatch {
@@ -102,6 +102,12 @@ impl CollectionEngine {
                 // Remove old labels from label index
                 if let Some(old_point) = self.points.get(&point.id) {
                     Self::remove_point_labels_from_index(old_point, &mut self.label_index);
+                    // Edge preservation: a no-edges upsert updates point STATE
+                    // only and keeps existing edges; Some(edges) replaces them.
+                    // (Edges live on the source point — see native.rs.)
+                    if point.outgoing_edges.is_none() {
+                        point.outgoing_edges = old_point.outgoing_edges.clone();
+                    }
                 }
                 // Remove old entry from HNSW index
                 self.index.delete(point.id);
