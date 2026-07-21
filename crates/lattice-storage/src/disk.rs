@@ -360,14 +360,26 @@ impl LatticeStorage for DiskStorage {
 mod tests {
     use super::*;
     use std::env::temp_dir;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Unique per call: cargo runs tests in parallel and the system clock can
+    // hand out identical timestamps, so an atomic counter (plus the pid)
+    // guarantees each test gets its own directory and they never race on
+    // creation/cleanup of a shared path.
     fn temp_storage_path() -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        temp_dir().join(format!("lattice-test-{}", timestamp))
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        temp_dir().join(format!(
+            "lattice-test-{}-{}-{}",
+            std::process::id(),
+            timestamp,
+            unique
+        ))
     }
 
     #[tokio::test]
