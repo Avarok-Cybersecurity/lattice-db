@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -46,16 +46,20 @@ function collectSources(): DocSource[] {
     sources.push({ path: file, label: relative(REPO_ROOT, file) });
   }
 
-  const readmes = [
-    'crates/lattice-server/README.md',
-    'packages/lattice-db-js/wasm/README.md',
-    'crates/lattice-core/README.md'
-  ];
+  // Committed crate READMEs only. (The generated wasm-pack README is a build
+  // artifact and is not present in all CI checkouts, so it is not a source.)
+  const readmes = ['crates/lattice-server/README.md', 'crates/lattice-core/README.md'];
   for (const rel of readmes) {
     sources.push({ path: join(REPO_ROOT, rel), label: rel });
   }
 
-  return sources;
+  // Skip any source that is absent so a missing optional file never fails the
+  // docs build; warn so it is visible in logs.
+  return sources.filter(src => {
+    if (existsSync(src.path)) return true;
+    console.warn(`  (skipping missing source: ${src.label})`);
+    return false;
+  });
 }
 
 // Derive a category from the source's directory (book/src/<category>/...),
