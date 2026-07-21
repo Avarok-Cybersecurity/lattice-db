@@ -4,7 +4,7 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1';
 
 // Free-tier models on OpenRouter — the demo runs at zero cost.
 const DEFAULT_EMBEDDING_MODEL = 'nvidia/llama-nemotron-embed-vl-1b-v2:free';
-const DEFAULT_CHAT_MODEL = 'openai/gpt-oss-20b:free';
+const DEFAULT_CHAT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
 export async function getEmbedding(
   text: string,

@@ -83,7 +83,7 @@ console.log(sources);   // Retrieved documents with scores
 Both defaults are **free** OpenRouter models, so the demo runs at zero cost:
 
 - **Embeddings**: `nvidia/llama-nemotron-embed-vl-1b-v2:free` (2048 dimensions)
-- **Chat**: `openai/gpt-oss-20b:free`
+- **Chat**: `nvidia/nemotron-3-ultra-550b-a55b:free`
 
 The vector dimension is derived automatically from the embedding model's
 output, so swapping models does not require any code changes.
