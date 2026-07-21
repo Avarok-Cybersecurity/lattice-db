@@ -781,3 +781,224 @@ button.icon-btn:hover {
     margin-left: 0;
   }
 }
+
+/* ============================================================
+   Guided setup: stepped sidebar + knowledge-source chooser
+   ============================================================ */
+.steps {
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  padding: 1.1rem 1.5rem;
+  border-bottom: 1px solid #222;
+  transition: opacity 0.25s ease;
+}
+
+.step.is-locked {
+  opacity: 0.45;
+}
+
+.step.is-locked .step-body {
+  pointer-events: none;
+}
+
+.step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.step-badge {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #888;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: all 0.25s ease;
+}
+
+.step.is-active .step-badge,
+.step.is-done .step-badge {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-color: transparent;
+  color: #fff;
+}
+
+.step-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-titles h3 {
+  font-size: 0.95rem;
+  color: #f0f0f0;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.step-sub {
+  color: #666;
+  font-size: 0.78rem;
+  margin-top: 0.1rem;
+}
+
+.step-check {
+  flex: 0 0 auto;
+  color: #4ade80;
+  opacity: 0;
+  font-size: 1rem;
+  transition: opacity 0.25s ease;
+}
+
+.step.is-done .step-check {
+  opacity: 1;
+}
+
+.step.is-done .step-check::before {
+  content: '\2713';
+}
+
+.step-body {
+  margin-top: 0.9rem;
+}
+
+/* Connected badge (step 1 completed state) */
+.connected-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: #cfcfcf;
+  background: rgba(74, 222, 128, 0.08);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+}
+
+.pulse-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
+.connected-text {
+  flex: 1;
+}
+
+.link-btn {
+  width: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #667eea;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+  filter: brightness(1.15);
+}
+
+/* Knowledge-source chooser cards */
+.source-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: 0.85rem 0.8rem;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  text-align: left;
+  transition: all 0.18s ease;
+  width: 100%;
+}
+
+.source-card:hover:not(:disabled) {
+  border-color: #3a3a55;
+  background: #1a1a22;
+  transform: translateY(-1px);
+}
+
+.source-card.is-selected {
+  border-color: #667eea;
+  background: linear-gradient(160deg, rgba(102, 126, 234, 0.14), rgba(118, 75, 162, 0.10));
+  box-shadow: 0 0 0 1px rgba(102, 126, 234, 0.5), 0 6px 18px -8px rgba(102, 126, 234, 0.6);
+}
+
+.source-icon {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.source-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+
+.source-desc {
+  font-size: 0.72rem;
+  color: #777;
+  line-height: 1.25;
+}
+
+.source-panel {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel-note {
+  font-size: 0.78rem;
+  color: #888;
+  line-height: 1.4;
+}
+
+/* Knowledge base status row */
+.kb-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.9rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid #222;
+  font-size: 0.82rem;
+  color: #999;
+}
+
+.kb-count strong {
+  color: #667eea;
+  font-weight: 700;
+}
+
+/* Ensure the `hidden` attribute always wins over component display rules. */
+[hidden] {
+  display: none !important;
+}

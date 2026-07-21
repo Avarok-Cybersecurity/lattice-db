@@ -31,46 +31,90 @@
         <p class="subtitle">Documentation Assistant</p>
       </div>
 
-      <section class="sidebar-section">
-        <h3>Setup</h3>
-        <div class="form-group">
-          <label for="api-key">OpenRouter API Key</label>
-          <input type="password" id="api-key" placeholder="sk-or-v1-...">
-          <button id="init-btn" class="primary full-width">Initialize</button>
-          <small>Get a free key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> &middot; uses 100% free models</small>
-        </div>
-      </section>
-
-      <section class="sidebar-section">
-        <h3>Knowledge Base</h3>
-        <p class="doc-count">
-          Documents: <span id="doc-count">0</span>
-          <button id="manage-docs-btn" class="icon-btn" disabled title="Manage documents">Manage</button>
-        </p>
-
-        <button id="load-docs" class="primary full-width" disabled>Load LatticeDB Docs</button>
-
-        <div class="divider">add from URL</div>
-        <div class="form-group">
-          <div class="input-row">
-            <input type="url" id="url-input" placeholder="https://example.com/page" disabled>
-            <button id="add-url" class="secondary" disabled>Add</button>
+      <div class="steps">
+        <!-- Step 1: Connect -->
+        <section class="step is-active" id="step-connect">
+          <div class="step-head">
+            <span class="step-badge">1</span>
+            <div class="step-titles">
+              <h3>Connect</h3>
+              <p class="step-sub">Add your free OpenRouter key</p>
+            </div>
+            <span class="step-check" aria-hidden="true"></span>
           </div>
-        </div>
+          <div class="step-body">
+            <div class="form-group" id="connect-form">
+              <input type="password" id="api-key" placeholder="sk-or-v1-…" autocomplete="off">
+              <button id="init-btn" class="primary full-width">Connect</button>
+              <small>Get a free key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> &middot; 100% free models</small>
+            </div>
+            <div class="connected-badge" id="connected-badge" hidden>
+              <span class="pulse-dot"></span>
+              <span class="connected-text">Connected &middot; free models ready</span>
+              <button class="link-btn" id="change-key" type="button">change</button>
+            </div>
+          </div>
+        </section>
 
-        <div class="divider">upload files</div>
-        <div class="form-group">
-          <input type="file" id="file-input" accept=".txt,.md,.json,.csv" multiple hidden>
-          <button id="upload-btn" class="secondary full-width" disabled>Upload Files</button>
-          <small>.txt, .md, .json, .csv (max 1MB)</small>
-        </div>
+        <!-- Step 2: Choose knowledge source -->
+        <section class="step is-locked" id="step-knowledge">
+          <div class="step-head">
+            <span class="step-badge">2</span>
+            <div class="step-titles">
+              <h3>Choose knowledge</h3>
+              <p class="step-sub">What should the assistant know?</p>
+            </div>
+          </div>
+          <div class="step-body">
+            <div class="source-cards">
+              <button class="source-card" id="source-docs" data-source="docs" type="button" disabled>
+                <span class="source-icon">📚</span>
+                <span class="source-name">LatticeDB Docs</span>
+                <span class="source-desc">Chat with our official documentation</span>
+              </button>
+              <button class="source-card" id="source-byo" data-source="byo" type="button" disabled>
+                <span class="source-icon">📄</span>
+                <span class="source-name">Your Documents</span>
+                <span class="source-desc">Add your own via URL, file, or text</span>
+              </button>
+            </div>
 
-        <div class="divider">or type manually</div>
-        <div class="form-group">
-          <textarea id="doc-text" rows="2" placeholder="Enter text..." disabled></textarea>
-          <button id="add-doc" class="secondary full-width" disabled>Add Document</button>
-        </div>
-      </section>
+            <!-- Panel: our docs -->
+            <div class="source-panel" id="docs-panel" hidden>
+              <p class="panel-note">Loads the full LatticeDB book &mdash; APIs, vector search, graph &amp; Cypher, architecture, and performance.</p>
+              <button id="load-docs" class="primary full-width">Load LatticeDB Docs</button>
+            </div>
+
+            <!-- Panel: bring your own -->
+            <div class="source-panel" id="byo-panel" hidden>
+              <div class="form-group">
+                <label for="url-input">From a URL</label>
+                <div class="input-row">
+                  <input type="url" id="url-input" placeholder="https://example.com/page">
+                  <button id="add-url" class="secondary">Add</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Upload files</label>
+                <input type="file" id="file-input" accept=".txt,.md,.json,.csv" multiple hidden>
+                <button id="upload-btn" class="secondary full-width">Choose files…</button>
+                <small>.txt, .md, .json, .csv (max 1MB)</small>
+              </div>
+              <div class="form-group">
+                <label for="doc-text">Paste text</label>
+                <textarea id="doc-text" rows="2" placeholder="Enter text…"></textarea>
+                <button id="add-doc" class="secondary full-width">Add Document</button>
+              </div>
+            </div>
+
+            <!-- Knowledge base status -->
+            <div class="kb-status" id="kb-status" hidden>
+              <span class="kb-count"><strong id="doc-count">0</strong> <span id="doc-noun">documents</span> ready</span>
+              <button id="manage-docs-btn" class="link-btn" type="button">manage</button>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <div class="sidebar-footer">
         <a href="https://github.com/Avarok-Cybersecurity/lattice-db" target="_blank">GitHub</a>
@@ -103,11 +147,11 @@
       <section id="welcome-section" class="welcome-section">
         <div class="welcome-content">
           <h2>LatticeDB Documentation Chat</h2>
-          <p>An AI assistant for learning the LatticeDB API. Powered by LatticeDB running in YOUR browser &mdash; and 100% free AI models (NVIDIA Nemotron embeddings + Nemotron 3 Ultra chat) via OpenRouter.</p>
+          <p>An AI assistant powered by LatticeDB running in YOUR browser &mdash; with 100% free AI models (NVIDIA Nemotron embeddings, reranker &amp; chat) via OpenRouter.</p>
           <ol>
-            <li>Enter your free OpenRouter API key and click <strong>Initialize</strong></li>
-            <li>Click <strong>Load LatticeDB Docs</strong> to load the documentation</li>
-            <li>Ask questions like "How do I search for vectors?"</li>
+            <li><strong>Connect</strong> with your free OpenRouter key</li>
+            <li>Pick a <strong>knowledge source</strong> &mdash; our docs or your own</li>
+            <li>Ask away, e.g. <em>"How do I search for vectors?"</em></li>
           </ol>
         </div>
       </section>

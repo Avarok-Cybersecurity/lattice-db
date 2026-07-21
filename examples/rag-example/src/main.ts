@@ -102,16 +102,44 @@ function removeLoadingBubble(): void {
   }
 }
 
-function enableControls(): void {
-  getElement<HTMLButtonElement>('load-docs').disabled = false;
-  getElement<HTMLButtonElement>('add-url').disabled = false;
-  getElement<HTMLButtonElement>('upload-btn').disabled = false;
-  getElement<HTMLButtonElement>('add-doc').disabled = false;
+// Step 1 completed: collapse the connect form, unlock the knowledge step.
+function onConnected(): void {
+  const stepConnect = getElement<HTMLElement>('step-connect');
+  stepConnect.classList.remove('is-active');
+  stepConnect.classList.add('is-done');
+  getElement<HTMLElement>('connect-form').hidden = true;
+  getElement<HTMLElement>('connected-badge').hidden = false;
+
+  const stepKnowledge = getElement<HTMLElement>('step-knowledge');
+  stepKnowledge.classList.remove('is-locked');
+  stepKnowledge.classList.add('is-active');
+  getElement<HTMLButtonElement>('source-docs').disabled = false;
+  getElement<HTMLButtonElement>('source-byo').disabled = false;
+
   getElement<HTMLButtonElement>('send-btn').disabled = false;
-  getElement<HTMLButtonElement>('manage-docs-btn').disabled = false;
   getElement<HTMLInputElement>('message-input').disabled = false;
-  getElement<HTMLInputElement>('url-input').disabled = false;
-  getElement<HTMLTextAreaElement>('doc-text').disabled = false;
+}
+
+// Select a knowledge source and reveal its panel.
+function selectSource(source: 'docs' | 'byo'): void {
+  const isDocs = source === 'docs';
+  getElement<HTMLButtonElement>('source-docs').classList.toggle('is-selected', isDocs);
+  getElement<HTMLButtonElement>('source-byo').classList.toggle('is-selected', !isDocs);
+  getElement<HTMLElement>('docs-panel').hidden = !isDocs;
+  getElement<HTMLElement>('byo-panel').hidden = isDocs;
+}
+
+// Return to step 1 to edit the API key.
+function changeKey(): void {
+  const stepConnect = getElement<HTMLElement>('step-connect');
+  stepConnect.classList.add('is-active');
+  stepConnect.classList.remove('is-done');
+  getElement<HTMLElement>('connect-form').hidden = false;
+  getElement<HTMLElement>('connected-badge').hidden = true;
+  const initBtn = getElement<HTMLButtonElement>('init-btn');
+  initBtn.disabled = false;
+  initBtn.textContent = 'Connect';
+  getElement<HTMLInputElement>('api-key').focus();
 }
 
 async function initializeEngine(): Promise<void> {
@@ -124,7 +152,7 @@ async function initializeEngine(): Promise<void> {
 
   const initBtn = getElement<HTMLButtonElement>('init-btn');
   initBtn.disabled = true;
-  initBtn.textContent = 'Initializing...';
+  initBtn.textContent = 'Connecting…';
 
   getElement<HTMLElement>('chat-section').style.display = 'flex';
   getElement<HTMLElement>('welcome-section').style.display = 'none';
@@ -135,17 +163,16 @@ async function initializeEngine(): Promise<void> {
     await engine.init();
 
     removeLoadingBubble();
-    setStatus('LatticeDB initialized!');
-    initBtn.textContent = 'Initialized';
-    enableControls();
+    setStatus('Connected — free models ready');
+    onConnected();
     localStorage.setItem('openrouter-api-key', apiKey);
 
-    addMessageToChat('assistant', 'Welcome! Click **Load LatticeDB Docs** to load the API documentation, then ask me anything about LatticeDB. We will do so using LatticeDB itself, running **inside** your **own** browser!');
+    addMessageToChat('assistant', 'Connected! Now pick a **knowledge source** on the left — load the **LatticeDB Docs**, or add **your own documents** — then ask me anything. LatticeDB runs **inside your own browser** via WebAssembly.');
   } catch (error) {
     removeLoadingBubble();
-    setStatus(`Initialization failed: ${error}`, true);
+    setStatus(`Connection failed: ${error}`, true);
     initBtn.disabled = false;
-    initBtn.textContent = 'Initialize';
+    initBtn.textContent = 'Connect';
     getElement<HTMLElement>('chat-section').style.display = 'none';
     getElement<HTMLElement>('welcome-section').style.display = 'flex';
   }
@@ -182,6 +209,7 @@ async function loadLatticeDBDocsHandler(): Promise<void> {
 
     removeLoadingBubble();
     setStatus(`Loaded ${chunks.length} sections from ${sourceCount} sources`);
+    loadBtn.textContent = '✓ Documentation loaded';
     updateDocCount();
 
     addMessageToChat('assistant', `I've loaded ${chunks.length} documentation sections from ${sourceCount} sources — the full LatticeDB book (getting started, REST/TypeScript/Rust APIs, vector search, graph/Cypher, architecture, performance) plus crate READMEs. Ask me anything about collections, points, vector search, graph traversal, HNSW, quantization, and more!`);
@@ -350,6 +378,9 @@ function clearChat(): void {
 function updateDocCount(): void {
   const count = engine?.getDocumentCount() ?? 0;
   getElement<HTMLSpanElement>('doc-count').textContent = count.toString();
+  getElement<HTMLSpanElement>('doc-noun').textContent = count === 1 ? 'document' : 'documents';
+  // Reveal the knowledge-base status row once documents exist.
+  getElement<HTMLElement>('kb-status').hidden = count === 0;
 }
 
 // Document Manager Modal
@@ -421,6 +452,9 @@ function clearAllDocuments(): void {
 
 function setupEventListeners(): void {
   getElement<HTMLButtonElement>('init-btn').addEventListener('click', initializeEngine);
+  getElement<HTMLButtonElement>('change-key').addEventListener('click', changeKey);
+  getElement<HTMLButtonElement>('source-docs').addEventListener('click', () => selectSource('docs'));
+  getElement<HTMLButtonElement>('source-byo').addEventListener('click', () => selectSource('byo'));
   getElement<HTMLButtonElement>('load-docs').addEventListener('click', loadLatticeDBDocsHandler);
   getElement<HTMLButtonElement>('add-url').addEventListener('click', addFromUrl);
   getElement<HTMLButtonElement>('upload-btn').addEventListener('click', uploadFiles);
