@@ -1,6 +1,6 @@
 //! Execution context and label registry for query execution
 
-use crate::engine::collection::CollectionEngine;
+use crate::engine::EngineOps;
 use crate::sync::SyncCell;
 use crate::types::point::Point;
 use crate::types::value::CypherValue;
@@ -73,8 +73,8 @@ impl LabelRegistry {
 /// Uses SyncCell for caches to enable parallel execution on native platforms.
 /// SyncCell is RwLock on native (thread-safe) and RefCell on WASM (single-threaded).
 pub struct ExecutionContext<'a> {
-    /// The collection to execute against
-    pub collection: &'a mut CollectionEngine,
+    /// The collection to execute against (any storage backend via dynamic dispatch)
+    pub collection: &'a mut dyn EngineOps,
     /// Query parameters
     pub parameters: HashMap<String, CypherValue>,
     /// Variable name → column index mapping for proper variable binding
@@ -97,7 +97,7 @@ pub struct ExecutionContext<'a> {
 
 impl<'a> ExecutionContext<'a> {
     /// Create a new execution context
-    pub fn new(collection: &'a mut CollectionEngine) -> Self {
+    pub fn new(collection: &'a mut dyn EngineOps) -> Self {
         Self {
             collection,
             parameters: HashMap::new(),
@@ -111,7 +111,7 @@ impl<'a> ExecutionContext<'a> {
 
     /// Create a context with parameters
     pub fn with_parameters(
-        collection: &'a mut CollectionEngine,
+        collection: &'a mut dyn EngineOps,
         parameters: HashMap<String, CypherValue>,
     ) -> Self {
         Self {

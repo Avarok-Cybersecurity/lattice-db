@@ -7,14 +7,15 @@ use crate::dto::{
     CollectionParamsResponse, CollectionStatus, CollectionsResponse, CreateCollectionRequest,
     HnswConfigResponse, OptimizersConfigResponse, OptimizersStatus, VectorParamsResponse,
 };
+#[cfg(feature = "native")]
+use crate::engine_wrapper::AnyEngine;
 #[cfg(feature = "openapi")]
 use crate::dto::{
     ApiResponseBoolResult, ApiResponseCollectionInfo, ApiResponseCollectionsResponse,
 };
 use crate::router::{json_response, AppState, InsertError};
 use lattice_core::{
-    CollectionConfig, CollectionEngine, Distance, DurabilityMode, HnswConfig, LatticeResponse,
-    VectorConfig,
+    CollectionConfig, Distance, DurabilityMode, HnswConfig, LatticeResponse, VectorConfig,
 };
 use std::collections::HashMap;
 use tracing::{info, warn};
@@ -95,7 +96,7 @@ pub fn list_collections(state: &AppState) -> LatticeResponse {
         (status = 400, description = "Invalid request")
     )
 ))]
-pub fn create_collection(
+pub async fn create_collection(
     state: &AppState,
     name: &str,
     request: CreateCollectionRequest,
@@ -220,8 +221,77 @@ pub fn create_collection(
     )
     .with_durability(durability);
 
-    // Create collection engine
-    let engine = match CollectionEngine::new(config) {
+    // Create engine: durable if data_dir is set and durability=durable, else ephemeral
+    #[cfg(feature = "native")]
+    let engine = {
+        if durability == DurabilityMode::Durable {
+            if let Some(ref data_dir) = state.config.data_dir {
+                let col_dir = data_dir.join(name);
+                let wal_dir = col_dir.join("wal");
+                let data_sub = col_dir.join("data");
+
+                // Create directories
+                if let Err(e) = tokio::fs::create_dir_all(&wal_dir).await {
+                    return LatticeResponse::internal_error(&format!(
+                        "Failed to create WAL directory: {}",
+                        e
+                    ));
+                }
+                if let Err(e) = tokio::fs::create_dir_all(&data_sub).await {
+                    return LatticeResponse::internal_error(&format!(
+                        "Failed to create data directory: {}",
+                        e
+                    ));
+                }
+
+                // Save config.json for restart discovery
+                let config_json = match serde_json::to_vec_pretty(&config) {
+                    Ok(j) => j,
+                    Err(e) => {
+                        return LatticeResponse::internal_error(&format!(
+                            "Failed to serialize config: {}",
+                            e
+                        ))
+                    }
+                };
+                if let Err(e) = tokio::fs::write(col_dir.join("config.json"), &config_json).await {
+                    return LatticeResponse::internal_error(&format!(
+                        "Failed to write config: {}",
+                        e
+                    ));
+                }
+
+                let wal_storage = lattice_storage::DiskStorage::new(wal_dir, 4096);
+                let data_storage = lattice_storage::DiskStorage::new(data_sub, 4096);
+
+                match AnyEngine::open_durable(config, wal_storage, data_storage).await {
+                    Ok(e) => e,
+                    Err(e) => {
+                        return LatticeResponse::internal_error(&format!(
+                            "Failed to open durable engine: {}",
+                            e
+                        ))
+                    }
+                }
+            } else {
+                // No data_dir configured; fall back to ephemeral
+                match AnyEngine::new_ephemeral(config) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        return LatticeResponse::bad_request(&format!("Invalid config: {}", e))
+                    }
+                }
+            }
+        } else {
+            match AnyEngine::new_ephemeral(config) {
+                Ok(e) => e,
+                Err(e) => return LatticeResponse::bad_request(&format!("Invalid config: {}", e)),
+            }
+        }
+    };
+
+    #[cfg(not(feature = "native"))]
+    let engine = match lattice_core::CollectionEngine::new(config) {
         Ok(e) => e,
         Err(e) => return LatticeResponse::bad_request(&format!("Invalid config: {}", e)),
     };
@@ -271,12 +341,12 @@ pub fn create_collection(
         (status = 404, description = "Collection not found")
     )
 ))]
-pub fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
+pub async fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
     let handle = match state.get_collection(name) {
         Some(h) => h,
         None => return LatticeResponse::not_found(&format!("Collection '{}' not found", name)),
     };
-    let engine = handle.read();
+    let engine = handle.read().await;
 
     let config = engine.config();
     let point_count = engine.point_count() as u64;
@@ -357,8 +427,18 @@ mod tests {
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
-    #[test]
-    fn test_create_and_list_collection() {
+    // Async test macro for both native (tokio) and WASM (wasm_bindgen_test)
+    macro_rules! async_test {
+        ($name:ident, $body:expr) => {
+            #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+            #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+            async fn $name() {
+                $body
+            }
+        };
+    }
+
+    async_test!(test_create_and_list_collection, {
         let state = new_app_state();
 
         // Create
@@ -371,7 +451,7 @@ mod tests {
             durability: None,
         };
 
-        let response = create_collection(&state, "test", request);
+        let response = create_collection(&state, "test", request).await;
         assert_eq!(response.status, 200);
 
         // List
@@ -381,10 +461,9 @@ mod tests {
         let body: ApiResponse<CollectionsResponse> =
             serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body.result.unwrap().collections.len(), 1);
-    }
+    });
 
-    #[test]
-    fn test_create_duplicate_collection() {
+    async_test!(test_create_duplicate_collection, {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
@@ -397,23 +476,21 @@ mod tests {
         };
 
         // First create succeeds
-        let response = create_collection(&state, "test", request.clone());
+        let response = create_collection(&state, "test", request.clone()).await;
         assert_eq!(response.status, 200);
 
         // Second create fails
-        let response = create_collection(&state, "test", request);
+        let response = create_collection(&state, "test", request).await;
         assert_eq!(response.status, 400);
-    }
+    });
 
-    #[test]
-    fn test_get_collection_not_found() {
+    async_test!(test_get_collection_not_found, {
         let state = new_app_state();
-        let response = get_collection(&state, "nonexistent");
+        let response = get_collection(&state, "nonexistent").await;
         assert_eq!(response.status, 404);
-    }
+    });
 
-    #[test]
-    fn test_delete_collection() {
+    async_test!(test_delete_collection, {
         let state = new_app_state();
 
         // Create
@@ -425,19 +502,18 @@ mod tests {
             hnsw_config: None,
             durability: None,
         };
-        create_collection(&state, "test", request);
+        create_collection(&state, "test", request).await;
 
         // Delete
         let response = delete_collection(&state, "test");
         assert_eq!(response.status, 200);
 
         // Verify gone
-        let response = get_collection(&state, "test");
+        let response = get_collection(&state, "test").await;
         assert_eq!(response.status, 404);
-    }
+    });
 
-    #[test]
-    fn test_invalid_distance() {
+    async_test!(test_invalid_distance, {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
@@ -449,9 +525,9 @@ mod tests {
             durability: None,
         };
 
-        let response = create_collection(&state, "test", request);
+        let response = create_collection(&state, "test", request).await;
         assert_eq!(response.status, 400);
-    }
+    });
 
     #[test]
     fn test_collection_name_validation() {
@@ -479,8 +555,7 @@ mod tests {
         assert!(validate_collection_name("test\0name").is_err());
     }
 
-    #[test]
-    fn test_create_collection_with_invalid_name() {
+    async_test!(test_create_collection_with_invalid_name, {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
@@ -493,11 +568,11 @@ mod tests {
         };
 
         // Path traversal attempt
-        let response = create_collection(&state, "../etc/passwd", request.clone());
+        let response = create_collection(&state, "../etc/passwd", request.clone()).await;
         assert_eq!(response.status, 400);
 
         // Empty name
-        let response = create_collection(&state, "", request);
+        let response = create_collection(&state, "", request).await;
         assert_eq!(response.status, 400);
-    }
+    });
 }

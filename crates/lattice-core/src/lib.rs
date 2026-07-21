@@ -50,6 +50,7 @@ pub mod wal;
 
 // Re-export commonly used types
 pub use engine::collection::{CollectionEngine, EdgeInfo, TraversalResult, UpsertResult};
+pub use engine::EngineOps;
 pub use error::{ConfigError, IndexError, LatticeError, LatticeResult};
 pub use index::hnsw::HnswIndex;
 pub use index::quantization::QuantizedVector;

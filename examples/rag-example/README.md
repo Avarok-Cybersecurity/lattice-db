@@ -44,7 +44,7 @@ LatticeDB's vector search capabilities with OpenRouter for LLM inference.
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────┐
 │   User Input    │ ──▶ │  OpenRouter API  │ ──▶ │  Embedding  │
-└─────────────────┘     │  (embed text)    │     │  [1536 dim] │
+└─────────────────┘     │  (embed text)    │     │  [2048 dim] │
                         └──────────────────┘     └──────┬──────┘
                                                         │
                                                         ▼
@@ -80,8 +80,13 @@ console.log(sources);   // Retrieved documents with scores
 
 ## Models Used
 
-- **Embeddings**: `openai/text-embedding-3-small` (1536 dimensions)
-- **Chat**: `openai/gpt-4o-mini` (cost-effective)
+Both defaults are **free** OpenRouter models, so the demo runs at zero cost:
+
+- **Embeddings**: `nvidia/llama-nemotron-embed-vl-1b-v2:free` (2048 dimensions)
+- **Chat**: `openai/gpt-oss-20b:free`
+
+The vector dimension is derived automatically from the embedding model's
+output, so swapping models does not require any code changes.
 
 You can customize models when initializing the RAGEngine:
 

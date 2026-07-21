@@ -2,8 +2,9 @@ import type { Message, EmbeddingResponse, ChatCompletionResponse } from './types
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1';
 
-const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
-const DEFAULT_CHAT_MODEL = 'openai/gpt-4o-mini';
+// Free-tier models on OpenRouter — the demo runs at zero cost.
+const DEFAULT_EMBEDDING_MODEL = 'nvidia/llama-nemotron-embed-vl-1b-v2:free';
+const DEFAULT_CHAT_MODEL = 'openai/gpt-oss-20b:free';
 
 export async function getEmbedding(
   text: string,
