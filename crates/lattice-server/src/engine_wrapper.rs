@@ -98,10 +98,7 @@ impl AnyEngine {
         }
     }
 
-    pub fn search_batch(
-        &self,
-        queries: Vec<SearchQuery>,
-    ) -> LatticeResult<Vec<Vec<SearchResult>>> {
+    pub fn search_batch(&self, queries: Vec<SearchQuery>) -> LatticeResult<Vec<Vec<SearchResult>>> {
         match self {
             Self::Ephemeral(e) => e.search_batch(queries),
             Self::Durable(e) => e.search_batch(queries),
@@ -176,20 +173,14 @@ impl AnyEngine {
 // ---------------------------------------------------------------------------
 
 impl AnyEngine {
-    pub async fn upsert_points_async(
-        &mut self,
-        points: Vec<Point>,
-    ) -> LatticeResult<UpsertResult> {
+    pub async fn upsert_points_async(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
         match self {
             Self::Ephemeral(e) => e.upsert_points(points),
             Self::Durable(e) => e.upsert_points_async(points).await,
         }
     }
 
-    pub async fn delete_points_async(
-        &mut self,
-        ids: &[PointId],
-    ) -> LatticeResult<usize> {
+    pub async fn delete_points_async(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
         match self {
             Self::Ephemeral(e) => e.delete_points(ids),
             Self::Durable(e) => e.delete_points_async(ids).await,

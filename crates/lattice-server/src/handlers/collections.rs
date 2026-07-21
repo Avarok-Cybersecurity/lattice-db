@@ -7,12 +7,12 @@ use crate::dto::{
     CollectionParamsResponse, CollectionStatus, CollectionsResponse, CreateCollectionRequest,
     HnswConfigResponse, OptimizersConfigResponse, OptimizersStatus, VectorParamsResponse,
 };
-#[cfg(feature = "native")]
-use crate::engine_wrapper::AnyEngine;
 #[cfg(feature = "openapi")]
 use crate::dto::{
     ApiResponseBoolResult, ApiResponseCollectionInfo, ApiResponseCollectionsResponse,
 };
+#[cfg(feature = "native")]
+use crate::engine_wrapper::AnyEngine;
 use crate::router::{json_response, AppState, InsertError};
 use lattice_core::{
     CollectionConfig, Distance, DurabilityMode, HnswConfig, LatticeResponse, VectorConfig,

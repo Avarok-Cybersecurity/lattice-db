@@ -349,9 +349,9 @@ mod tests {
     use super::*;
     use crate::dto::CreateCollectionRequest;
     use crate::dto::VectorParams;
+    use crate::dto::{PointStruct, UpsertPointsRequest};
     use crate::handlers::collections::create_collection;
     use crate::handlers::points::upsert_points;
-    use crate::dto::{PointStruct, UpsertPointsRequest};
     use crate::router::new_app_state;
 
     #[cfg(target_arch = "wasm32")]
@@ -473,8 +473,7 @@ mod tests {
         let exported_data = response.body;
 
         // Try to import with create mode (should fail - already exists)
-        let response =
-            import_collection(&state, "test", ImportMode::Create, exported_data).await;
+        let response = import_collection(&state, "test", ImportMode::Create, exported_data).await;
         assert_eq!(response.status, 409);
     });
 
@@ -517,8 +516,7 @@ mod tests {
         upsert_points(&state, "test", upsert_req).await;
 
         // Import with replace mode (should reset to 1 point)
-        let response =
-            import_collection(&state, "test", ImportMode::Replace, exported_data).await;
+        let response = import_collection(&state, "test", ImportMode::Replace, exported_data).await;
         assert_eq!(response.status, 200);
 
         // Verify replaced collection has only 1 point
@@ -576,8 +574,7 @@ mod tests {
         let exported_data = response.body;
 
         // Import with merge mode (should add id=2, skip id=1)
-        let response =
-            import_collection(&state, "test", ImportMode::Merge, exported_data).await;
+        let response = import_collection(&state, "test", ImportMode::Merge, exported_data).await;
         assert_eq!(response.status, 200);
 
         let body: ApiResponse<ImportResult> = serde_json::from_slice(&response.body).unwrap();
@@ -605,8 +602,7 @@ mod tests {
         let state = new_app_state();
 
         // Too small
-        let response =
-            import_collection(&state, "test", ImportMode::Create, vec![1, 2]).await;
+        let response = import_collection(&state, "test", ImportMode::Create, vec![1, 2]).await;
         assert_eq!(response.status, 400);
     });
 }

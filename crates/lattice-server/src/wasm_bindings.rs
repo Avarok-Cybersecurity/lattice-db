@@ -72,7 +72,7 @@ impl LatticeDB {
         let request: CreateCollectionRequest = serde_wasm_bindgen::from_value(config)
             .map_err(|e| JsValue::from_str(&format!("Invalid config: {}", e)))?;
 
-        let response = collections::create_collection(&self.state, name, request);
+        let response = block_on(collections::create_collection(&self.state, name, request));
         response_to_js(response)
     }
 
@@ -95,7 +95,7 @@ impl LatticeDB {
     /// Collection info object
     #[wasm_bindgen(js_name = getCollection)]
     pub fn get_collection(&self, name: &str) -> Result<JsValue, JsValue> {
-        let response = collections::get_collection(&self.state, name);
+        let response = block_on(collections::get_collection(&self.state, name));
         response_to_js(response)
     }
 
@@ -137,7 +137,7 @@ impl LatticeDB {
             points: points.into_iter().map(|p| p.into()).collect(),
         };
 
-        let response = points::upsert_points(&self.state, collection, request);
+        let response = block_on(points::upsert_points(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -165,7 +165,7 @@ impl LatticeDB {
             with_vector: with_vector.unwrap_or(false),
         };
 
-        let response = points::get_points(&self.state, collection, request);
+        let response = block_on(points::get_points(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -180,7 +180,7 @@ impl LatticeDB {
     #[wasm_bindgen(js_name = deletePoints)]
     pub fn delete_points(&mut self, collection: &str, ids: Vec<u64>) -> Result<JsValue, JsValue> {
         let request = DeletePointsRequest { points: ids };
-        let response = points::delete_points(&self.state, collection, request);
+        let response = block_on(points::delete_points(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -220,7 +220,7 @@ impl LatticeDB {
             score_threshold: opts.score_threshold,
         };
 
-        let response = search::search_points(&self.state, collection, request);
+        let response = block_on(search::search_points(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -248,7 +248,7 @@ impl LatticeDB {
             with_vector: opts.with_vector.unwrap_or(false),
         };
 
-        let response = search::scroll_points(&self.state, collection, request);
+        let response = block_on(search::scroll_points(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -278,7 +278,7 @@ impl LatticeDB {
             weight: weight.unwrap_or(1.0),
         };
 
-        let response = points::add_edge(&self.state, collection, request);
+        let response = block_on(points::add_edge(&self.state, collection, request));
         if response.status == 200 {
             Ok(())
         } else {
@@ -310,7 +310,7 @@ impl LatticeDB {
             relations,
         };
 
-        let response = search::traverse_graph(&self.state, collection, request);
+        let response = block_on(search::traverse_graph(&self.state, collection, request));
         response_to_js(response)
     }
 
@@ -342,7 +342,7 @@ impl LatticeDB {
             parameters: params,
         };
 
-        let response = search::cypher_query(&self.state, collection, request);
+        let response = block_on(search::cypher_query(&self.state, collection, request));
         response_to_js(response)
     }
 }
@@ -389,6 +389,39 @@ struct ScrollOptions {
     offset: Option<u64>,
     with_payload: Option<bool>,
     with_vector: Option<bool>,
+}
+
+/// Synchronously drive an immediately-ready future to completion.
+///
+/// The WASM engine is always ephemeral and its collection locks are always
+/// uncontended (single-threaded browser runtime), so every handler future is
+/// `Ready` on the first poll. This lets the synchronous `wasm_bindgen` methods
+/// call the shared async handlers without pulling in an async runtime.
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    fn raw_waker() -> RawWaker {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            raw_waker()
+        }
+        RawWaker::new(
+            std::ptr::null(),
+            &RawWakerVTable::new(clone, no_op, no_op, no_op),
+        )
+    }
+
+    let waker = unsafe { Waker::from_raw(raw_waker()) };
+    let mut cx = Context::from_waker(&waker);
+    let mut future = Box::pin(future);
+    match future.as_mut().poll(&mut cx) {
+        Poll::Ready(value) => value,
+        Poll::Pending => {
+            unreachable!(
+                "WASM handler future was not immediately ready (no async I/O in the browser)"
+            )
+        }
+    }
 }
 
 /// Convert LatticeResponse to JsValue

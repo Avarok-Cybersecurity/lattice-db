@@ -171,9 +171,12 @@ impl LatticeStorage for DiskStorage {
         let mut buffer = vec![0u8; available];
         let mut total_read = 0;
         while total_read < available {
-            let n = file.read(&mut buffer[total_read..]).await.map_err(|e| StorageError::Io {
-                message: format!("Failed to read page: {}", e),
-            })?;
+            let n = file
+                .read(&mut buffer[total_read..])
+                .await
+                .map_err(|e| StorageError::Io {
+                    message: format!("Failed to read page: {}", e),
+                })?;
             if n == 0 {
                 break;
             }

@@ -55,7 +55,11 @@ async fn load_collections_from_disk(data_dir: &Path, state: &AppState) -> usize 
         let path = entry.path();
 
         // Skip non-directories
-        let is_dir = entry.file_type().await.map(|ft| ft.is_dir()).unwrap_or(false);
+        let is_dir = entry
+            .file_type()
+            .await
+            .map(|ft| ft.is_dir())
+            .unwrap_or(false);
         if !is_dir {
             continue;
         }

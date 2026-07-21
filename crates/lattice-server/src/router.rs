@@ -26,9 +26,12 @@ pub type AppState = Arc<AppStateInner>;
 #[cfg(feature = "native")]
 pub type CollectionHandle = Arc<tokio::sync::RwLock<AnyEngine>>;
 
-/// WASM variant: no durable storage, uses parking_lot for sync access
+/// WASM variant: no durable storage, but still uses `tokio::sync::RwLock` so the
+/// handler code (`handle.read().await` / `handle.write().await`) is identical
+/// across native and WASM. The lock is always uncontended in the single-threaded
+/// browser runtime, so acquisitions resolve immediately.
 #[cfg(not(feature = "native"))]
-pub type CollectionHandle = Arc<parking_lot::RwLock<lattice_core::CollectionEngine>>;
+pub type CollectionHandle = Arc<tokio::sync::RwLock<lattice_core::CollectionEngine>>;
 
 /// Error returned when inserting a collection fails
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,11 +144,7 @@ impl AppStateInner {
     /// - `Err(InsertError::AlreadyExists)` if collection already exists
     /// - `Err(InsertError::AtCapacity)` if max_collections limit reached
     #[cfg(feature = "native")]
-    pub fn insert_collection(
-        &self,
-        name: String,
-        engine: AnyEngine,
-    ) -> Result<(), InsertError> {
+    pub fn insert_collection(&self, name: String, engine: AnyEngine) -> Result<(), InsertError> {
         let mut collections = self.collections.write();
         if collections.contains_key(&name) {
             return Err(InsertError::AlreadyExists);
@@ -172,7 +171,7 @@ impl AppStateInner {
         if collections.len() >= self.config.max_collections {
             return Err(InsertError::AtCapacity(self.config.max_collections));
         }
-        collections.insert(name, Arc::new(parking_lot::RwLock::new(engine)));
+        collections.insert(name, Arc::new(tokio::sync::RwLock::new(engine)));
         Ok(())
     }
 
@@ -272,8 +271,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         ("POST", ["collections", name, "import"]) => {
             match export_import::parse_import_mode(query) {
                 Ok(mode) => {
-                    export_import::import_collection(&state, name, mode, request.body.clone())
-                        .await
+                    export_import::import_collection(&state, name, mode, request.body.clone()).await
                 }
                 Err(e) => e,
             }

@@ -726,6 +726,41 @@ impl CollectionEngine {
     }
 }
 
+// Async mutation shims.
+//
+// WASM has no durable storage, so these delegate to the synchronous
+// implementations and complete immediately. They exist purely so the server
+// handlers can call one async API (`*_async`) across both native (durable) and
+// WASM (ephemeral) builds without target-specific branches.
+impl CollectionEngine {
+    pub async fn upsert_points_async(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+        self.upsert_points(points)
+    }
+
+    pub async fn delete_points_async(&mut self, ids: &[PointId]) -> LatticeResult<usize> {
+        self.delete_points(ids)
+    }
+
+    pub async fn add_edge_async(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: &str,
+        weight: f32,
+    ) -> LatticeResult<()> {
+        self.add_edge(from_id, to_id, relation, weight)
+    }
+
+    pub async fn remove_edge_async(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation: Option<&str>,
+    ) -> LatticeResult<bool> {
+        self.remove_edge(from_id, to_id, relation)
+    }
+}
+
 impl crate::engine::EngineOps for CollectionEngine {
     fn get_point(&self, id: PointId) -> LatticeResult<Option<Point>> {
         self.get_point(id)

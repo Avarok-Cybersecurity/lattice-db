@@ -187,6 +187,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -194,8 +196,12 @@ jobs:
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --locked
 
+      # Use the llvm engine (avoids ptrace instrumentation false-positives on
+      # deterministic in-memory tests) and a generous timeout. The lattice-bench
+      # crate holds long-running ACID stress tests that are not meaningful for
+      # coverage and blow past tarpaulin's per-test timeout, so exclude it.
       - name: Generate coverage
-        run: cargo tarpaulin --workspace --out Xml --skip-clean
+        run: cargo tarpaulin --workspace --exclude lattice-bench --engine llvm --timeout 300 --out Xml --skip-clean
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
