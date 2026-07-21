@@ -80,13 +80,23 @@ console.log(sources);   // Retrieved documents with scores
 
 ## Models Used
 
-Both defaults are **free** OpenRouter models, so the demo runs at zero cost:
+All three defaults are **free** OpenRouter models, so the demo runs at zero cost:
 
 - **Embeddings**: `nvidia/llama-nemotron-embed-vl-1b-v2:free` (2048 dimensions)
+- **Reranker**: `nvidia/llama-nemotron-rerank-vl-1b-v2:free`
 - **Chat**: `nvidia/nemotron-3-ultra-550b-a55b:free`
 
-The vector dimension is derived automatically from the embedding model's
-output, so swapping models does not require any code changes.
+Retrieval is a two-stage pipeline: cosine search over-fetches candidates
+(`topK × 4`), then the cross-encoder reranker reorders them and keeps the top
+`topK` — noticeably more precise than embeddings alone. The vector dimension is
+derived automatically from the embedding model's output, so swapping models
+does not require any code changes.
+
+The **Load LatticeDB Docs** button ingests the entire `book/src` documentation
+(getting started, REST/TypeScript/Rust APIs, vector, graph, architecture,
+performance) plus the crate/package READMEs — run `npm run generate-docs` to
+rebuild the bundled manifest. Documents are embedded in batches to stay well
+within free-tier rate limits.
 
 You can customize models when initializing the RAGEngine:
 
@@ -94,6 +104,7 @@ You can customize models when initializing the RAGEngine:
 const engine = new RAGEngine({
   apiKey: 'sk-or-v1-...',
   embeddingModel: 'openai/text-embedding-3-large',
+  rerankModel: 'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
   chatModel: 'anthropic/claude-3-haiku'
 });
 ```

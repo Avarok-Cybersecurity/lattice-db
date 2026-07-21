@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, writeFileSync, readdirSync } from 'fs';
+import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, '../../..');
 
 interface DocChunk {
   id: string;
@@ -10,9 +11,59 @@ interface DocChunk {
   content: string;
   metadata: {
     category: string;
+    source: string;
     method?: string;
     path?: string;
   };
+}
+
+interface DocSource {
+  path: string;
+  label: string;
+}
+
+// Recursively collect every markdown file under a directory.
+function walkMarkdown(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...walkMarkdown(full));
+    } else if (entry.name.endsWith('.md')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+// The full documentation corpus bundled into the assistant's knowledge base:
+// every mdBook chapter plus the API-bearing crate/package READMEs.
+function collectSources(): DocSource[] {
+  const sources: DocSource[] = [];
+
+  for (const file of walkMarkdown(join(REPO_ROOT, 'book/src'))) {
+    if (file.endsWith('SUMMARY.md')) continue; // table of contents, not content
+    sources.push({ path: file, label: relative(REPO_ROOT, file) });
+  }
+
+  const readmes = [
+    'crates/lattice-server/README.md',
+    'packages/lattice-db-js/wasm/README.md',
+    'crates/lattice-core/README.md'
+  ];
+  for (const rel of readmes) {
+    sources.push({ path: join(REPO_ROOT, rel), label: rel });
+  }
+
+  return sources;
+}
+
+// Derive a category from the source's directory (book/src/<category>/...),
+// falling back to a heading heuristic for top-level READMEs.
+function categoryFor(sourceLabel: string, h2: string): string {
+  const match = sourceLabel.match(/book\/src\/([^/]+)\//);
+  if (match) return match[1];
+  return h2.toLowerCase().includes('graph') ? 'graph' : 'api';
 }
 
 interface DocsManifest {
@@ -37,9 +88,10 @@ function extractApiMetadata(content: string): { method?: string; path?: string }
   return {};
 }
 
-function parseMarkdownSections(markdown: string): DocChunk[] {
+function parseMarkdownSections(markdown: string, sourceLabel: string): DocChunk[] {
   const chunks: DocChunk[] = [];
   const lines = markdown.split('\n');
+  const sourceSlug = slugify(sourceLabel);
 
   let currentH2 = '';
   let currentH3 = '';
@@ -63,11 +115,13 @@ function parseMarkdownSections(markdown: string): DocChunk[] {
     const apiMeta = extractApiMetadata(content);
 
     chunks.push({
-      id: `${id}-${chunkIndex}`,
+      // Prefix with the source slug so ids stay unique across all files.
+      id: `${sourceSlug}-${id}-${chunkIndex}`,
       section,
       content,
       metadata: {
-        category: currentH2.toLowerCase().includes('graph') ? 'graph' : 'api',
+        category: categoryFor(sourceLabel, currentH2),
+        source: sourceLabel,
         ...apiMeta
       }
     });
@@ -96,33 +150,38 @@ function parseMarkdownSections(markdown: string): DocChunk[] {
 }
 
 function main() {
-  const readmePath = join(__dirname, '../../../crates/lattice-server/README.md');
   const outputPath = join(__dirname, '../public/docs/lattice-docs.json');
+  const sources = collectSources();
 
-  console.log('Reading README.md...');
-  const readme = readFileSync(readmePath, 'utf-8');
-
-  console.log('Parsing markdown sections...');
-  const chunks = parseMarkdownSections(readme);
+  console.log(`Ingesting ${sources.length} documentation sources...`);
+  const chunks: DocChunk[] = [];
+  for (const src of sources) {
+    const md = readFileSync(src.path, 'utf-8');
+    const parsed = parseMarkdownSections(md, src.label);
+    chunks.push(...parsed);
+    console.log(`  ${src.label}: ${parsed.length} chunks`);
+  }
 
   const manifest: DocsManifest = {
-    version: '1.0.0',
+    version: '2.0.0',
     generated_at: new Date().toISOString(),
-    source: 'crates/lattice-server/README.md',
+    source: `${sources.length} files (book/src chapters + crate/package READMEs)`,
     chunks
   };
 
-  console.log(`Generated ${chunks.length} chunks`);
+  console.log(`\nGenerated ${chunks.length} chunks from ${sources.length} sources`);
 
   writeFileSync(outputPath, JSON.stringify(manifest, null, 2));
   console.log(`Written to ${outputPath}`);
 
-  // Print summary
-  const sections = new Set(chunks.map(c => c.section.split(' > ')[0]));
-  console.log('\nSections:');
-  for (const section of sections) {
-    const count = chunks.filter(c => c.section.startsWith(section)).length;
-    console.log(`  - ${section}: ${count} chunks`);
+  // Print per-category summary.
+  const categories = new Map<string, number>();
+  for (const c of chunks) {
+    categories.set(c.metadata.category, (categories.get(c.metadata.category) ?? 0) + 1);
+  }
+  console.log('\nChunks by category:');
+  for (const [category, count] of [...categories].sort()) {
+    console.log(`  - ${category}: ${count}`);
   }
 }
 

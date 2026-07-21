@@ -164,19 +164,27 @@ async function loadLatticeDBDocsHandler(): Promise<void> {
   try {
     const chunks = await loadLatticeDBDocs();
 
-    for (const chunk of chunks) {
-      await engine.addDocument(
-        { id: Math.floor(Date.now() + Math.random() * 1000), text: chunk.content, metadata: chunk.metadata },
-        'docs',
-        chunk.section
-      );
-    }
+    const docs = chunks.map((chunk, index) => ({
+      id: index,
+      text: chunk.content,
+      metadata: { ...chunk.metadata, section: chunk.section }
+    }));
+    const sections = chunks.map(c => c.section);
+
+    await engine.addDocuments(
+      docs,
+      'docs',
+      doc => sections[doc.id],
+      (done, total) => setStatus(`Embedding documentation… ${done}/${total}`)
+    );
+
+    const sourceCount = new Set(chunks.map(c => c.metadata.source)).size;
 
     removeLoadingBubble();
-    setStatus(`Loaded ${chunks.length} documentation sections`);
+    setStatus(`Loaded ${chunks.length} sections from ${sourceCount} sources`);
     updateDocCount();
 
-    addMessageToChat('assistant', `I've loaded ${chunks.length} documentation sections covering the LatticeDB API. You can now ask me about collections, points, vector search, graph operations, and more!`);
+    addMessageToChat('assistant', `I've loaded ${chunks.length} documentation sections from ${sourceCount} sources — the full LatticeDB book (getting started, REST/TypeScript/Rust APIs, vector search, graph/Cypher, architecture, performance) plus crate READMEs. Ask me anything about collections, points, vector search, graph traversal, HNSW, quantization, and more!`);
   } catch (error) {
     removeLoadingBubble();
     setStatus(`Failed to load docs: ${error}`, true);

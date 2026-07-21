@@ -45,11 +45,23 @@ export interface ChatCompletionResponse {
   };
 }
 
+export interface RerankResponse {
+  results: Array<{
+    index: number;
+    relevance_score: number;
+  }>;
+  model: string;
+}
+
 export interface RAGConfig {
   apiKey: string;
   embeddingModel?: string;
   chatModel?: string;
+  rerankModel?: string;
   topK?: number;
+  // Number of vector-search candidates fed to the reranker before it narrows
+  // to topK. Defaults to topK * a fixed multiplier (see rag.ts).
+  rerankCandidates?: number;
 }
 
 export type DocumentSource = 'docs' | 'url' | 'file' | 'manual';
