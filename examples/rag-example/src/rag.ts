@@ -3,12 +3,15 @@ import { getEmbedding, chat } from './openrouter';
 import type { Message, Document, SearchResult, RAGConfig, ManagedDocument, DocumentSource } from './types';
 
 const COLLECTION_NAME = 'documents';
-const EMBEDDING_DIMENSION = 1536; // text-embedding-3-small
 
 export class RAGEngine {
   private db: LatticeDB | null = null;
   private config: RAGConfig;
   private documents: Map<number, ManagedDocument> = new Map();
+  // Derived from the model's first embedding — the model is the single
+  // source of truth for vector size (e.g. 2048 for the NVIDIA Nemotron embed
+  // model), so we never hardcode a dimension that a model swap could break.
+  private embeddingDimension: number | null = null;
 
   constructor(config: RAGConfig) {
     this.config = {
@@ -19,21 +22,22 @@ export class RAGEngine {
 
   async init(): Promise<void> {
     this.db = await LatticeDB.init();
+  }
 
-    try {
-      this.db.createCollection(COLLECTION_NAME, {
-        vectors: {
-          size: EMBEDDING_DIMENSION,
-          distance: 'Cosine'
-        }
-      });
-    } catch (e) {
-      // Collection may already exist, try to get it
-      const collections = this.db.listCollections();
-      if (!collections.includes(COLLECTION_NAME)) {
-        throw e;
-      }
+  private ensureCollection(size: number): void {
+    if (!this.db) {
+      throw new Error('RAGEngine not initialized. Call init() first.');
     }
+    if (this.db.listCollections().includes(COLLECTION_NAME)) {
+      return;
+    }
+    this.embeddingDimension = size;
+    this.db.createCollection(COLLECTION_NAME, {
+      vectors: {
+        size,
+        distance: 'Cosine'
+      }
+    });
   }
 
   async addDocument(
@@ -50,6 +54,8 @@ export class RAGEngine {
       this.config.apiKey,
       this.config.embeddingModel
     );
+
+    this.ensureCollection(embedding.length);
 
     this.db.upsert(COLLECTION_NAME, [{
       id: doc.id,
@@ -153,14 +159,18 @@ export class RAGEngine {
   }
 
   clearDocuments(): void {
-    if (this.db) {
+    if (this.db && this.db.listCollections().includes(COLLECTION_NAME)) {
       this.db.deleteCollection(COLLECTION_NAME);
-      this.db.createCollection(COLLECTION_NAME, {
-        vectors: {
-          size: EMBEDDING_DIMENSION,
-          distance: 'Cosine'
-        }
-      });
+      // Recreate eagerly only if we already know the dimension; otherwise the
+      // collection is re-created lazily on the next addDocument().
+      if (this.embeddingDimension !== null) {
+        this.db.createCollection(COLLECTION_NAME, {
+          vectors: {
+            size: this.embeddingDimension,
+            distance: 'Cosine'
+          }
+        });
+      }
     }
     this.documents.clear();
   }
