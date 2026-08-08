@@ -269,3 +269,122 @@ fn blank_lines_are_ignored() {
     let text = dump(&seeded(), &ExportOptions::inline()).replace('\n', "\n\n");
     assert_eq!(import_jsonl(text.as_bytes()).unwrap().points.len(), 3);
 }
+
+/// ★ Determinism must not depend on a feature a CONSUMER controls.
+///
+/// The first version of this relied on `serde_json::Value` being
+/// `BTreeMap`-backed, which holds only while nobody enables serde_json's
+/// `preserve_order`. Cargo unifies features across the whole build graph, so a
+/// downstream crate can turn it on for us — Atlas, the first real consumer,
+/// does. Under `preserve_order` a `Value` faithfully preserves whatever
+/// arbitrary order it was handed, silently restoring the bug in a build this
+/// repo's own CI would never see.
+///
+/// This asserts the output is sorted as *text*, which is true under either
+/// backing and cannot be quietly undone by a feature flag.
+#[test]
+fn header_keys_are_sorted_regardless_of_the_serde_json_backing() {
+    let header = dump(&seeded(), &ExportOptions::inline())
+        .lines()
+        .next()
+        .unwrap()
+        .to_string();
+
+    // Depth-aware: sibling keys must ascend WITHIN each object. A flat scan
+    // would mix levels and report a false failure on correctly sorted output.
+    assert!(
+        keys_are_sorted_per_level(&header),
+        "some object's keys are not in sorted order: {header}"
+    );
+
+    // The nested relations map is the one that actually carried the bug.
+    let rel = header.find("\"relations\"").expect("relations in header");
+    let after = &header[rel..];
+    let a = after.find("\"attests\"").expect("attests present");
+    let i = after.find("\"invalidates\"").expect("invalidates present");
+    assert!(a < i, "nested relations map is not sorted: {after}");
+}
+
+/// Scan raw JSON text and check that every object's own keys ascend.
+///
+/// Deliberately textual: parsing with `serde_json` would re-order the keys
+/// through whichever map backs `Value`, which is exactly the thing under test.
+fn keys_are_sorted_per_level(json: &str) -> bool {
+    let bytes: Vec<char> = json.chars().collect();
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut current = String::new();
+    let mut escaped = false;
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+                // A string immediately followed by ':' is a key.
+                if bytes.get(i + 1) == Some(&':') {
+                    if let Some(slot) = stack.last_mut() {
+                        if let Some(prev) = slot {
+                            if current.as_str() < prev.as_str() {
+                                return false;
+                            }
+                        }
+                        *slot = Some(current.clone());
+                    }
+                }
+                current.clear();
+            } else {
+                current.push(c);
+            }
+        } else {
+            match c {
+                '"' => in_string = true,
+                '{' => stack.push(None),
+                '}' => {
+                    stack.pop();
+                }
+                // Arrays do not introduce keys, but they must not be mistaken
+                // for the enclosing object's scope either.
+                '[' => stack.push(Some(String::new())),
+                ']' => {
+                    stack.pop();
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    true
+}
+
+/// A negative control for the scanner above.
+///
+/// A checker that always returned `true` would make the determinism test pass
+/// vacuously, so the checker itself is tested against known-unsorted input —
+/// including the nested and post-array cases, which are where a naive
+/// implementation gets it wrong.
+#[test]
+fn the_sortedness_scanner_actually_detects_disorder() {
+    assert!(keys_are_sorted_per_level(r#"{"a":1,"b":2}"#));
+    assert!(!keys_are_sorted_per_level(r#"{"b":1,"a":2}"#));
+    assert!(keys_are_sorted_per_level(r#"{"a":{"x":1,"y":2},"b":3}"#));
+    assert!(
+        !keys_are_sorted_per_level(r#"{"a":{"y":1,"x":2},"b":3}"#),
+        "disorder nested one level deep must be caught"
+    );
+    // A nested object must not leak its last key into the parent's comparison.
+    assert!(
+        keys_are_sorted_per_level(r#"{"a":{"z":1},"b":2}"#),
+        "a child's key must not be compared against a parent's next key"
+    );
+    // Arrays introduce no keys and must not disturb the enclosing scope.
+    assert!(keys_are_sorted_per_level(r#"{"a":[1,2,3],"b":2}"#));
+    assert!(!keys_are_sorted_per_level(r#"{"b":[1],"a":2}"#));
+    // A key containing a quote or colon must not desynchronise the scan.
+    assert!(keys_are_sorted_per_level(r#"{"a:b":1,"c\"d":2}"#));
+}

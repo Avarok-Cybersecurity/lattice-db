@@ -148,23 +148,55 @@ fn json_to_payload(v: &serde_json::Value) -> LatticeResult<Vec<u8>> {
     })
 }
 
-/// Serialize one line with every map in sorted key order.
+/// Rebuild a value with every nested object's keys in sorted order.
 ///
-/// ★ The detour through [`serde_json::Value`] is load-bearing, not stylistic.
+/// ★ Why this is explicit rather than "just serialize through `Value`".
+///
 /// Serializing a `HashMap` directly emits it in *iteration* order, and Rust's
-/// `RandomState` seeds each map instance separately — so two exports of
+/// `RandomState` seeds each map instance separately, so two exports of
 /// identical data inside one process can order the same map differently.
-/// [`CollectionConfig::relations`] is such a map and rides in the header.
-/// `serde_json::Value` is backed by a `BTreeMap` (this crate does not enable
-/// `preserve_order`), so round-tripping through it sorts every nested map at
-/// once and keeps future `HashMap` fields from silently reintroducing the bug.
+/// [`CollectionConfig::relations`] is exactly such a map and rides in the
+/// header.
+///
+/// The tempting fix is to round-trip through [`serde_json::Value`] and rely on
+/// it being `BTreeMap`-backed. That is true **only while nobody enables
+/// serde_json's `preserve_order` feature** — and cargo unifies features across
+/// the whole build graph, so a *downstream consumer* can turn it on for us.
+/// Atlas, the first such consumer, does exactly that. Under `preserve_order`
+/// `Value` is `IndexMap`-backed and faithfully preserves the arbitrary order it
+/// was given, silently restoring the bug in a build we do not control.
+///
+/// So the ordering is imposed here, where it cannot be switched off. Inserting
+/// into a fresh map in sorted key order produces sorted output under both
+/// backings.
+fn sort_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k, sort_keys(v)))
+                    .collect(),
+            )
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(sort_keys).collect())
+        }
+        other => other,
+    }
+}
+
+/// Serialize one line with every map in sorted key order.
 fn write_line<W: Write>(w: &mut W, line: &Line) -> LatticeResult<()> {
     let normalized = serde_json::to_value(line).map_err(|e| LatticeError::Serialization {
         message: format!("encoding dump line: {e}"),
     })?;
-    let s = serde_json::to_string(&normalized).map_err(|e| LatticeError::Serialization {
-        message: format!("encoding dump line: {e}"),
-    })?;
+    let s =
+        serde_json::to_string(&sort_keys(normalized)).map_err(|e| LatticeError::Serialization {
+            message: format!("encoding dump line: {e}"),
+        })?;
     writeln!(w, "{s}").map_err(|e| LatticeError::Serialization {
         message: format!("writing dump line: {e}"),
     })
