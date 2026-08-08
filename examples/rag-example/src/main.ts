@@ -1,7 +1,9 @@
 import { RAGEngine } from './rag';
 import { loadLatticeDBDocs, fetchUrlContent, parseFile, getFileTitle, getUrlTitle } from './documents';
+import * as opfs from './opfs';
+import { DEFAULT_EMBEDDING_MODEL } from './openrouter';
 import { marked } from 'marked';
-import type { Message } from './types';
+import type { Message, ManagedDocument } from './types';
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -11,6 +13,17 @@ marked.setOptions({
 
 let engine: RAGEngine | null = null;
 let chatHistory: Message[] = [];
+
+// --- OPFS persistence state ---------------------------------------------
+/// Snapshot the current session writes into. Created on the first autosave,
+/// or adopted when the user restores an existing snapshot.
+let currentSnapshotId: string | null = null;
+let currentSnapshotCreatedAt = 0;
+let currentSnapshotRevision = 0;
+let autosaveTimer: number | undefined;
+/// Coalesce bursts of document changes (a 492-chunk load fires many) into one
+/// write once things settle.
+const AUTOSAVE_DEBOUNCE_MS = 1200;
 
 function getElement<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -168,6 +181,10 @@ async function initializeEngine(): Promise<void> {
     localStorage.setItem('openrouter-api-key', apiKey);
 
     addMessageToChat('assistant', 'Connected! Now pick a **knowledge source** on the left — load the **LatticeDB Docs**, or add **your own documents** — then ask me anything. LatticeDB runs **inside your own browser** via WebAssembly.');
+
+    // Surface anything already saved on this device so the user can pick up
+    // where they left off instead of re-embedding.
+    await refreshSavedSessions();
   } catch (error) {
     removeLoadingBubble();
     setStatus(`Connection failed: ${error}`, true);
@@ -381,6 +398,274 @@ function updateDocCount(): void {
   getElement<HTMLSpanElement>('doc-noun').textContent = count === 1 ? 'document' : 'documents';
   // Reveal the knowledge-base status row once documents exist.
   getElement<HTMLElement>('kb-status').hidden = count === 0;
+  // Every mutation funnels through here, so this is the single autosave hook.
+  scheduleAutosave();
+}
+
+// ===========================================================================
+// OPFS persistence
+// ===========================================================================
+
+/** Human label for a snapshot, derived from where its documents came from. */
+function describeDocuments(docs: ManagedDocument[]): { label: string; sources: Record<string, number> } {
+  const sources: Record<string, number> = {};
+  for (const doc of docs) {
+    sources[doc.source] = (sources[doc.source] ?? 0) + 1;
+  }
+
+  const names: Record<string, string> = {
+    docs: 'LatticeDB Docs',
+    url: 'Web pages',
+    file: 'Uploaded files',
+    manual: 'Pasted text'
+  };
+  const primary = Object.entries(sources).sort((a, b) => b[1] - a[1])[0];
+  const label = primary ? names[primary[0]] ?? 'Knowledge base' : 'Knowledge base';
+  const extra = Object.keys(sources).length - 1;
+
+  return { label: extra > 0 ? `${label} +${extra} more` : label, sources };
+}
+
+function setSaveState(text: string, saving: boolean): void {
+  const row = getElement<HTMLElement>('save-state');
+  row.hidden = false;
+  row.classList.toggle('is-saving', saving);
+  getElement<HTMLSpanElement>('save-text').textContent = text;
+}
+
+/** Debounced write of the current knowledge base to OPFS. */
+function scheduleAutosave(): void {
+  if (!opfs.isSupported() || !engine) return;
+
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    void autosave();
+  }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function autosave(): Promise<void> {
+  if (!engine) return;
+
+  const exported = engine.exportSnapshot();
+  const dimension = engine.getVectorDimension();
+
+  // Nothing to persist: drop the snapshot so the UI doesn't advertise an
+  // empty one.
+  if (!exported || dimension === null) {
+    if (currentSnapshotId) {
+      await opfs.deleteSnapshot(currentSnapshotId).catch(() => undefined);
+      currentSnapshotId = null;
+      currentSnapshotRevision = 0;
+      getElement<HTMLElement>('save-state').hidden = true;
+      await refreshSavedSessions();
+    }
+    return;
+  }
+
+  setSaveState('Saving…', true);
+  try {
+    const now = Date.now();
+    if (!currentSnapshotId) {
+      currentSnapshotId = `kb-${now.toString(36)}`;
+      currentSnapshotCreatedAt = now;
+    }
+    currentSnapshotRevision += 1;
+
+    const { label, sources } = describeDocuments(exported.documents);
+    await opfs.saveSnapshot(
+      {
+        id: currentSnapshotId,
+        label,
+        revision: currentSnapshotRevision,
+        createdAt: currentSnapshotCreatedAt,
+        updatedAt: now,
+        documentCount: exported.documents.length,
+        vectorDimension: dimension,
+        embeddingModel: DEFAULT_EMBEDDING_MODEL,
+        sources
+      },
+      exported.documents,
+      exported.vectors
+    );
+
+    setSaveState(`Saved · v${currentSnapshotRevision}`, false);
+    await refreshSavedSessions();
+  } catch (error) {
+    setSaveState('Save failed', false);
+    console.error('OPFS autosave failed', error);
+  }
+}
+
+/** Render the "Saved on this device" panel in step 2. */
+async function refreshSavedSessions(): Promise<void> {
+  const panel = getElement<HTMLElement>('saved-sessions');
+  const list = getElement<HTMLElement>('saved-list');
+
+  if (!opfs.isSupported()) {
+    panel.hidden = true;
+    return;
+  }
+
+  const snapshots = (await opfs.listSnapshots()).filter(s => s.id !== currentSnapshotId);
+  panel.hidden = snapshots.length === 0;
+  if (snapshots.length === 0) return;
+
+  list.innerHTML = snapshots
+    .map(
+      s => `
+      <button class="saved-item" type="button" data-restore="${escapeHtml(s.id)}">
+        <span class="saved-item-icon">${s.schemaVersion === opfs.SNAPSHOT_SCHEMA_VERSION ? '📦' : '⚠️'}</span>
+        <span class="saved-item-body">
+          <span class="saved-item-name">${escapeHtml(s.label)}</span>
+          <span class="saved-item-meta">${plural(s.documentCount, 'doc')} · ${opfs.formatBytes(s.bytes)} · ${formatWhen(s.updatedAt)}</span>
+        </span>
+        <span class="saved-item-action">Restore</span>
+      </button>`
+    )
+    .join('');
+}
+
+function plural(n: number, word: string): string {
+  return `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function formatWhen(timestamp: number): string {
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+/** Load a stored snapshot into the engine — no embedding calls. */
+async function restoreSnapshot(id: string): Promise<void> {
+  if (!engine) {
+    setStatus('Connect first', true);
+    return;
+  }
+
+  showLoadingBubble();
+  try {
+    const snapshot = await opfs.readSnapshot(id);
+    if (!snapshot) {
+      setStatus('That saved session could not be read', true);
+      return;
+    }
+
+    engine.restoreSnapshot(snapshot.documents, snapshot.vectors, snapshot.meta.vectorDimension);
+
+    // Continue writing into the snapshot we just restored.
+    currentSnapshotId = snapshot.meta.id;
+    currentSnapshotCreatedAt = snapshot.meta.createdAt;
+    currentSnapshotRevision = snapshot.meta.revision;
+
+    removeLoadingBubble();
+    updateDocCount();
+    setSaveState(`Saved · v${currentSnapshotRevision}`, false);
+    await refreshSavedSessions();
+
+    setStatus(`Restored ${snapshot.documents.length} ${snapshot.documents.length === 1 ? 'document' : 'documents'}`);
+    addMessageToChat(
+      'assistant',
+      `Restored **${snapshot.documents.length.toLocaleString()} ${snapshot.documents.length === 1 ? 'document' : 'documents'}** from this device — no re-embedding needed. Ask me anything.`
+    );
+  } catch (error) {
+    removeLoadingBubble();
+    setStatus(`Restore failed: ${error}`, true);
+  }
+}
+
+// --- Storage manager ------------------------------------------------------
+
+async function openStorageManager(): Promise<void> {
+  await renderStorageList();
+  getElement<HTMLDivElement>('storage-modal').style.display = 'flex';
+}
+
+function closeStorageManager(): void {
+  getElement<HTMLDivElement>('storage-modal').style.display = 'none';
+}
+
+async function renderStorageList(): Promise<void> {
+  const list = getElement<HTMLElement>('storage-list');
+  const summary = getElement<HTMLElement>('storage-summary');
+
+  if (!opfs.isSupported()) {
+    summary.textContent = 'This browser does not support OPFS storage.';
+    list.innerHTML = '<p class="empty-state">Persistent storage unavailable.</p>';
+    return;
+  }
+
+  const snapshots = await opfs.listSnapshots();
+  const total = snapshots.reduce((sum, s) => sum + s.bytes, 0);
+  summary.textContent = snapshots.length
+    ? `${snapshots.length} saved ${snapshots.length === 1 ? 'session' : 'sessions'} · ${opfs.formatBytes(total)} used`
+    : 'Nothing stored yet';
+
+  if (snapshots.length === 0) {
+    list.innerHTML = '<p class="empty-state">Nothing saved on this device yet.</p>';
+    return;
+  }
+
+  list.innerHTML = snapshots
+    .map(s => {
+      const active = s.id === currentSnapshotId;
+      const stale = s.schemaVersion !== opfs.SNAPSHOT_SCHEMA_VERSION;
+      const sourceChips = Object.entries(s.sources)
+        .map(([name, n]) => `<span class="chip">${escapeHtml(name)}: ${n}</span>`)
+        .join('');
+
+      return `
+        <div class="storage-item">
+          <div class="storage-item-icon">${stale ? '⚠️' : '📦'}</div>
+          <div class="storage-item-body">
+            <div class="storage-item-name">${escapeHtml(s.label)}${active ? ' · in use' : ''}</div>
+            <div class="storage-item-meta">
+              <span class="chip">v${s.revision}</span>
+              <span class="chip">format v${s.schemaVersion}</span>
+              <span>${plural(s.documentCount, 'doc')}</span>
+              <span>${s.vectorDimension}-dim</span>
+              <span>${opfs.formatBytes(s.bytes)}</span>
+              <span>${formatWhen(s.updatedAt)}</span>
+              ${sourceChips}
+            </div>
+          </div>
+          <div class="storage-item-actions">
+            ${
+              stale || active
+                ? ''
+                : `<button class="secondary" data-restore="${escapeHtml(s.id)}">Restore</button>`
+            }
+            <button class="icon-btn" data-delete="${escapeHtml(s.id)}">Delete</button>
+          </div>
+        </div>`;
+    })
+    .join('');
+}
+
+async function deleteStoredSnapshot(id: string): Promise<void> {
+  await opfs.deleteSnapshot(id);
+  if (id === currentSnapshotId) {
+    currentSnapshotId = null;
+    currentSnapshotRevision = 0;
+    getElement<HTMLElement>('save-state').hidden = true;
+  }
+  await renderStorageList();
+  await refreshSavedSessions();
+  setStatus('Deleted from this device');
+}
+
+async function clearAllStorage(): Promise<void> {
+  if (!confirm('Delete every saved session from this device? This cannot be undone.')) return;
+  await opfs.clearAll();
+  currentSnapshotId = null;
+  currentSnapshotRevision = 0;
+  getElement<HTMLElement>('save-state').hidden = true;
+  await renderStorageList();
+  await refreshSavedSessions();
+  setStatus('All device storage cleared');
 }
 
 // Document Manager Modal
@@ -463,6 +748,38 @@ function setupEventListeners(): void {
   getElement<HTMLButtonElement>('send-btn').addEventListener('click', sendMessage);
   getElement<HTMLButtonElement>('clear-chat').addEventListener('click', clearChat);
   getElement<HTMLButtonElement>('manage-docs-btn').addEventListener('click', openDocManager);
+
+  // --- OPFS storage manager ---
+  getElement<HTMLButtonElement>('open-storage').addEventListener('click', () => {
+    void openStorageManager();
+  });
+  getElement<HTMLButtonElement>('open-storage-inline').addEventListener('click', () => {
+    void openStorageManager();
+  });
+  getElement<HTMLButtonElement>('close-storage').addEventListener('click', closeStorageManager);
+  getElement<HTMLButtonElement>('clear-all-storage').addEventListener('click', () => {
+    void clearAllStorage();
+  });
+  getElement<HTMLDivElement>('storage-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeStorageManager();
+  });
+
+  // Restore / delete are rendered dynamically, so delegate from the containers.
+  getElement<HTMLElement>('saved-list').addEventListener('click', (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[data-restore]');
+    if (target?.dataset.restore) void restoreSnapshot(target.dataset.restore);
+  });
+  getElement<HTMLElement>('storage-list').addEventListener('click', (e) => {
+    const el = e.target as HTMLElement;
+    const restore = el.closest<HTMLElement>('[data-restore]');
+    if (restore?.dataset.restore) {
+      closeStorageManager();
+      void restoreSnapshot(restore.dataset.restore);
+      return;
+    }
+    const del = el.closest<HTMLElement>('[data-delete]');
+    if (del?.dataset.delete) void deleteStoredSnapshot(del.dataset.delete);
+  });
   getElement<HTMLButtonElement>('close-modal').addEventListener('click', closeDocManager);
   getElement<HTMLButtonElement>('clear-all-docs').addEventListener('click', clearAllDocuments);
 

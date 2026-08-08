@@ -11,6 +11,8 @@ const RERANK_CANDIDATE_MULTIPLIER = 4;
 // Texts embedded per request when bulk-loading. Batching keeps the free-tier
 // request count low (hundreds of chunks -> a handful of calls).
 const EMBED_BATCH_SIZE = 32;
+// Points fetched per scroll page when exporting a snapshot.
+const SCROLL_PAGE_SIZE = 256;
 
 export class RAGEngine {
   private db: LatticeDB | null = null;
@@ -150,6 +152,96 @@ export class RAGEngine {
 
   getDocuments(): ManagedDocument[] {
     return Array.from(this.documents.values()).sort((a, b) => b.addedAt - a.addedAt);
+  }
+
+  /** Vector dimension in use, or null before the first document is added. */
+  getVectorDimension(): number | null {
+    return this.embeddingDimension;
+  }
+
+  /**
+   * Read every document back out of the database together with its vector,
+   * ready to be persisted. Vectors are returned row-major so they can be
+   * written as one contiguous binary blob.
+   */
+  exportSnapshot(): { documents: ManagedDocument[]; vectors: Float32Array } | null {
+    if (!this.db || !this.collectionExists() || this.embeddingDimension === null) {
+      return null;
+    }
+
+    const dim = this.embeddingDimension;
+    const documents: ManagedDocument[] = [];
+    const chunks: number[][] = [];
+
+    // Pull points in pages so a large corpus doesn't need one huge request.
+    let offset: number | undefined;
+    for (;;) {
+      const page = this.db.scroll(COLLECTION_NAME, {
+        limit: SCROLL_PAGE_SIZE,
+        offset,
+        with_payload: false,
+        with_vector: true
+      });
+
+      for (const point of page.points) {
+        const id = Number(point.id);
+        const managed = this.documents.get(id);
+        const vector = point.vector;
+        // Only persist points we still have metadata for and a usable vector.
+        if (!managed || !vector || vector.length !== dim) continue;
+        documents.push(managed);
+        chunks.push(Array.from(vector));
+      }
+
+      const next = page.next_page_offset;
+      if (next === null || next === undefined) break;
+      offset = Number(next);
+    }
+
+    if (documents.length === 0) return null;
+
+    const vectors = new Float32Array(documents.length * dim);
+    chunks.forEach((vec, i) => vectors.set(vec, i * dim));
+
+    return { documents, vectors };
+  }
+
+  /**
+   * Replace the current contents with a previously exported snapshot.
+   *
+   * No embedding calls are made — the stored vectors are inserted directly,
+   * which is what makes restoring free and instant.
+   */
+  restoreSnapshot(
+    documents: ManagedDocument[],
+    vectors: Float32Array,
+    dimension: number
+  ): void {
+    if (!this.db) {
+      throw new Error('RAGEngine not initialized. Call init() first.');
+    }
+    if (vectors.length !== documents.length * dimension) {
+      throw new Error('Snapshot vectors do not match the document count');
+    }
+
+    this.clearDocuments();
+    this.ensureCollection(dimension);
+
+    this.db.upsert(
+      COLLECTION_NAME,
+      documents.map((doc, i) => ({
+        id: doc.id,
+        vector: Array.from(vectors.subarray(i * dimension, (i + 1) * dimension)),
+        payload: {
+          text: doc.text,
+          ...doc.metadata
+        }
+      }))
+    );
+
+    for (const doc of documents) {
+      this.documents.set(doc.id, doc);
+    }
   }
 
   async search(queryText: string, topK?: number): Promise<SearchResult[]> {

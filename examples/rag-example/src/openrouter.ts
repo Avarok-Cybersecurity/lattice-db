@@ -3,7 +3,7 @@ import type { Message, EmbeddingResponse, ChatCompletionResponse, RerankResponse
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1';
 
 // Free-tier models on OpenRouter — the demo runs at zero cost.
-const DEFAULT_EMBEDDING_MODEL = 'nvidia/llama-nemotron-embed-vl-1b-v2:free';
+export const DEFAULT_EMBEDDING_MODEL = 'nvidia/llama-nemotron-embed-vl-1b-v2:free';
 const DEFAULT_CHAT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const DEFAULT_RERANK_MODEL = 'nvidia/llama-nemotron-rerank-vl-1b-v2:free';
 
@@ -14,6 +14,77 @@ const OPENROUTER_HEADERS = (apiKey: string): Record<string, string> => ({
   'X-Title': 'LatticeDB RAG Example'
 });
 
+/**
+ * Parse an OpenRouter response, failing fast with a readable message.
+ *
+ * OpenRouter can report upstream failures as **HTTP 200 with an `error` body**
+ * (e.g. `{"error":{"message":"Upstream error from Nvidia: ResourceExhausted…"}}`),
+ * which is common on the free tier when a provider is saturated. Without this
+ * check the caller reads a missing field and throws an opaque TypeError, so
+ * every request funnels through here.
+ */
+async function parseResponse<T>(response: Response, what: string): Promise<T> {
+  const raw = await response.text();
+
+  if (!response.ok) {
+    throw new TransientAwareError(
+      `${what} failed: ${response.status} - ${raw}`,
+      response.status === 429 || response.status >= 500
+    );
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new TransientAwareError(`${what} returned invalid JSON: ${raw.slice(0, 200)}`, false);
+  }
+
+  const maybeError = (data as { error?: { message?: string; code?: number } }).error;
+  if (maybeError) {
+    const code = maybeError.code ?? 0;
+    const message = maybeError.message ?? 'unknown error';
+    throw new TransientAwareError(
+      `${what} failed${code ? ` (${code})` : ''}: ${message}`,
+      code === 429 || code >= 500 || /ResourceExhausted|rate.?limit|overloaded/i.test(message)
+    );
+  }
+
+  return data as T;
+}
+
+/** Error that knows whether retrying could plausibly help. */
+class TransientAwareError extends Error {
+  constructor(message: string, readonly transient: boolean) {
+    super(message);
+    this.name = 'OpenRouterError';
+  }
+}
+
+// The free tier shares provider capacity, so requests intermittently come back
+// as "ResourceExhausted". A couple of short retries turn most of those into a
+// successful call instead of a failed answer.
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 700;
+
+async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const transient = error instanceof TransientAwareError && error.transient;
+      if (!transient || attempt === MAX_ATTEMPTS) break;
+      // Exponential backoff: 700ms, 1400ms
+      await new Promise(resolve => setTimeout(resolve, RETRY_BASE_MS * 2 ** (attempt - 1)));
+    }
+  }
+
+  throw lastError;
+}
+
 // Embed a batch of texts in a single request. Results are returned in the same
 // order as `texts` (the API may return them out of order, so we sort by index).
 export async function getEmbeddings(
@@ -23,21 +94,18 @@ export async function getEmbeddings(
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
 
-  const response = await fetch(`${OPENROUTER_API_URL}/embeddings`, {
-    method: 'POST',
-    headers: OPENROUTER_HEADERS(apiKey),
-    body: JSON.stringify({
-      model,
-      input: texts
-    })
+  const data = await withRetry(async () => {
+    const response = await fetch(`${OPENROUTER_API_URL}/embeddings`, {
+      method: 'POST',
+      headers: OPENROUTER_HEADERS(apiKey),
+      body: JSON.stringify({
+        model,
+        input: texts
+      })
+    });
+    return parseResponse<EmbeddingResponse>(response, 'Embedding request');
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Embedding request failed: ${response.status} - ${error}`);
-  }
-
-  const data: EmbeddingResponse = await response.json();
   return data.data
     .slice()
     .sort((a, b) => a.index - b.index)
@@ -69,22 +137,22 @@ ${context}`
 
   const allMessages = [systemMessage, ...messages];
 
-  const response = await fetch(`${OPENROUTER_API_URL}/chat/completions`, {
-    method: 'POST',
-    headers: OPENROUTER_HEADERS(apiKey),
-    body: JSON.stringify({
-      model,
-      messages: allMessages
-    })
+  const data = await withRetry(async () => {
+    const response = await fetch(`${OPENROUTER_API_URL}/chat/completions`, {
+      method: 'POST',
+      headers: OPENROUTER_HEADERS(apiKey),
+      body: JSON.stringify({
+        model,
+        messages: allMessages
+      })
+    });
+    return parseResponse<ChatCompletionResponse>(response, 'Chat request');
   });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Chat request failed: ${response.status} - ${error}`);
+  const content = data.choices?.[0]?.message?.content;
+  if (content === undefined) {
+    throw new Error('Chat request returned no message content');
   }
-
-  const data: ChatCompletionResponse = await response.json();
-  return data.choices[0].message.content;
+  return content;
 }
 
 /**
@@ -100,24 +168,21 @@ export async function rerank(
   topN: number,
   model: string = DEFAULT_RERANK_MODEL
 ): Promise<Array<{ index: number; score: number }>> {
-  const response = await fetch(`${OPENROUTER_API_URL}/rerank`, {
-    method: 'POST',
-    headers: OPENROUTER_HEADERS(apiKey),
-    body: JSON.stringify({
-      model,
-      query,
-      documents,
-      top_n: topN,
-      return_documents: false
-    })
+  const data = await withRetry(async () => {
+    const response = await fetch(`${OPENROUTER_API_URL}/rerank`, {
+      method: 'POST',
+      headers: OPENROUTER_HEADERS(apiKey),
+      body: JSON.stringify({
+        model,
+        query,
+        documents,
+        top_n: topN,
+        return_documents: false
+      })
+    });
+    return parseResponse<RerankResponse>(response, 'Rerank request');
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Rerank request failed: ${response.status} - ${error}`);
-  }
-
-  const data: RerankResponse = await response.json();
   return data.results
     .slice()
     .sort((a, b) => b.relevance_score - a.relevance_score)
