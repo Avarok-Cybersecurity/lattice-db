@@ -343,8 +343,10 @@ jobs:
       # the CLI (versus the config on npmjs.com not matching this workflow).
       - name: Report OIDC context
         run: |
-          REF="${GITHUB_WORKFLOW_REF##*/}"   # e.g. release.yml@refs/tags/v0.3.2
-          echo "workflow file : ${REF%%@*}"
+          # e.g. owner/repo/.github/workflows/release.yml@refs/tags/v0.3.2
+          # Drop the git ref first, then take the basename.
+          REF="${GITHUB_WORKFLOW_REF%%@*}"
+          echo "workflow file : ${REF##*/}"
           echo "repository    : ${GITHUB_REPOSITORY}"
           echo "environment   : ${GITHUB_ENVIRONMENT:-<none>}"
           if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
