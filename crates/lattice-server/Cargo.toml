@@ -1,5 +1,5 @@
 [package]
-name = "lattice-server"
+name = "latticedb-server"
 description = "HTTP and Service Worker transport for LatticeDB"
 version.workspace = true
 edition.workspace = true
@@ -8,6 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [lib]
+# Pinned to the original name: wasm-pack derives its output filenames from it
+# (lattice_server.js / lattice_server_bg.wasm), which are published release
+# assets and referenced by URL, so renaming the package must not change them.
+name = "lattice_server"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
@@ -92,6 +96,8 @@ mmap = ["lattice-core/mmap"]
 tls = ["native", "tokio-rustls", "rustls", "rustls-pemfile"]
 
 [[bin]]
+# Pinned: the release workflow packages target/<triple>/release/lattice-server
+# and publishes it under that name.
 name = "lattice-server"
 path = "src/main.rs"
 required-features = ["native"]

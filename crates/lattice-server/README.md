@@ -6,13 +6,13 @@ High-performance Vector + Graph database REST API server. Qdrant-compatible with
 
 ```bash
 # Run with default settings (port 6333)
-cargo run -p lattice-server
+cargo run -p latticedb-server
 
 # Run with custom address
-cargo run -p lattice-server -- 127.0.0.1:8080
+cargo run -p latticedb-server -- 127.0.0.1:8080
 
 # Run with OpenAPI/Swagger UI
-cargo run -p lattice-server --features openapi
+cargo run -p latticedb-server --features openapi
 # Visit http://localhost:6333/docs
 ```
 
@@ -423,7 +423,7 @@ All endpoints return errors in this format:
 
 ```bash
 # Build with specific features
-cargo build -p lattice-server --features "native,openapi"
+cargo build -p latticedb-server --features "native,openapi"
 ```
 
 ---

@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Avarok-Cybersecurity/lattice-db"
@@ -72,14 +72,19 @@ utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "8", features = ["axum"] }
 
 # Internal crates.
-# `version` is required for `cargo publish` (path-only deps are rejected), and
+#
+# Published on crates.io as `latticedb-*` (plain `lattice-core` is taken by an
+# unrelated crate). The dependency keys keep the original names via `package`,
+# so member manifests and `use lattice_core::…` are unaffected.
+#
+# `version` is required for `cargo publish` (path-only deps are rejected) and
 # must be kept in sync with [workspace.package] version above.
-lattice-core = { path = "crates/lattice-core", version = "0.3.1" }
-lattice-storage = { path = "crates/lattice-storage", version = "0.3.1", default-features = false }
-lattice-server = { path = "crates/lattice-server", version = "0.3.1" }
+lattice-core = { path = "crates/lattice-core", version = "0.3.2", package = "latticedb-core" }
+lattice-storage = { path = "crates/lattice-storage", version = "0.3.2", package = "latticedb-storage", default-features = false }
+lattice-server = { path = "crates/lattice-server", version = "0.3.2", package = "latticedb-server" }
 # dev-only and unpublished: deliberately has no `version`, so `cargo publish`
 # strips it from the published manifest instead of demanding it from the registry.
-lattice-test-harness = { path = "crates/lattice-test-harness" }
+lattice-test-harness = { path = "crates/lattice-test-harness", package = "latticedb-test-harness" }
 
 # Optimized release profile for maximum performance
 [profile.release]

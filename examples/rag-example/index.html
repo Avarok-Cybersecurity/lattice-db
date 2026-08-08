@@ -66,6 +66,19 @@
             </div>
           </div>
           <div class="step-body">
+            <!-- Saved sessions found in OPFS (restores instantly, no re-embedding) -->
+            <div class="saved-sessions" id="saved-sessions" hidden>
+              <div class="saved-header">
+                <span class="saved-title">
+                  <span class="saved-dot"></span>
+                  Saved on this device
+                </span>
+                <button id="open-storage" class="link-btn" type="button">manage</button>
+              </div>
+              <div class="saved-list" id="saved-list"></div>
+              <p class="panel-note saved-note">Restoring is instant and free &mdash; vectors are reused, nothing is re-embedded.</p>
+            </div>
+
             <div class="source-cards">
               <button class="source-card" id="source-docs" data-source="docs" type="button" disabled>
                 <span class="source-icon">📚</span>
@@ -111,6 +124,15 @@
             <div class="kb-status" id="kb-status" hidden>
               <span class="kb-count"><strong id="doc-count">0</strong> <span id="doc-noun">documents</span> ready</span>
               <button id="manage-docs-btn" class="link-btn" type="button">manage</button>
+            </div>
+
+            <!-- Autosave indicator (also the always-available way into the
+                 storage manager, since the saved-sessions panel hides once the
+                 only snapshot is the one in use) -->
+            <div class="save-state" id="save-state" hidden>
+              <span class="save-icon" id="save-icon">💾</span>
+              <span id="save-text">Saved to this device</span>
+              <button id="open-storage-inline" class="link-btn" type="button">storage</button>
             </div>
           </div>
         </section>
@@ -172,6 +194,28 @@
       </div>
       <div class="modal-footer">
         <button id="clear-all-docs" class="secondary">Clear All Documents</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Storage Manager Modal (OPFS) -->
+  <div id="storage-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h2>Device Storage</h2>
+          <p class="modal-sub" id="storage-summary">&nbsp;</p>
+        </div>
+        <button id="close-storage" class="icon-btn">Close</button>
+      </div>
+      <div class="modal-body">
+        <div id="storage-list" class="storage-list">
+          <p class="empty-state">Nothing saved on this device yet.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="storage-foot">Stored privately in your browser (OPFS) &mdash; never uploaded.</small>
+        <button id="clear-all-storage" class="secondary">Delete All</button>
       </div>
     </div>
   </div>
