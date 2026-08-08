@@ -38,7 +38,7 @@ git clone https://github.com/Avarok-Cybersecurity/lattice-db.git
 cd lattice-db
 
 # Build release binary
-cargo build --release -p lattice-server
+cargo build --release -p latticedb-server
 
 # Binary is at target/release/lattice-server
 ```

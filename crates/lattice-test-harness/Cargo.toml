@@ -1,5 +1,5 @@
 [package]
-name = "lattice-test-harness"
+name = "latticedb-test-harness"
 description = "Test infrastructure for LatticeDB ACID testing"
 # Internal test-only crate; never published to crates.io.
 publish = false

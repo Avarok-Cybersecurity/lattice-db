@@ -19,7 +19,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,7 +39,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -67,7 +67,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -81,13 +81,13 @@ jobs:
       # `axum-transport` is not a default feature, so the mountable-router
       # tests would otherwise never run.
       - name: Run library embedding tests (axum-transport)
-        run: cargo test -p lattice-server --features axum-transport
+        run: cargo test -p latticedb-server --features axum-transport
 
   test-wasm:
     name: Test (WASM)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -110,7 +110,7 @@ jobs:
     name: Test (JavaScript)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -118,9 +118,9 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -148,7 +148,7 @@ jobs:
     name: Build Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -162,20 +162,20 @@ jobs:
         run: cargo check --workspace
 
       - name: Check WASM target (core)
-        run: cargo check -p lattice-core --target wasm32-unknown-unknown
+        run: cargo check -p latticedb-core --target wasm32-unknown-unknown
 
       - name: Check WASM target (server)
-        run: cargo check -p lattice-server --target wasm32-unknown-unknown --no-default-features --features wasm
+        run: cargo check -p latticedb-server --target wasm32-unknown-unknown --no-default-features --features wasm
 
       # Ensures the embeddable Axum router keeps compiling for library users
       - name: Check library embedding feature (axum-transport)
-        run: cargo clippy -p lattice-server --features axum-transport --all-targets -- -D warnings
+        run: cargo clippy -p latticedb-server --features axum-transport --all-targets -- -D warnings
 
   doc:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -192,7 +192,7 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -213,7 +213,7 @@ jobs:
         run: cargo tarpaulin --workspace --exclude lattice-bench --engine llvm --timeout 300 --out Xml --skip-clean
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: cobertura.xml
           fail_ci_if_error: false
@@ -222,7 +222,7 @@ jobs:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

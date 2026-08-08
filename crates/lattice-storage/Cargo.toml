@@ -1,11 +1,16 @@
 [package]
-name = "lattice-storage"
+# Published as `latticedb-*` on crates.io for a consistent family name.
+name = "latticedb-storage"
 description = "Storage backend implementations for LatticeDB"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+# The library keeps its original name so `use lattice_storage::…` is unchanged.
+[lib]
+name = "lattice_storage"
 
 [dependencies]
 lattice-core.workspace = true

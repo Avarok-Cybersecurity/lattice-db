@@ -67,22 +67,22 @@ dependencies = ["build-wasm-core", "build-wasm-storage", "build-wasm-server"]
 [tasks.build-wasm-core]
 description = "Build lattice-core for WASM"
 command = "cargo"
-args = ["build", "-p", "lattice-core", "--target", "wasm32-unknown-unknown"]
+args = ["build", "-p", "latticedb-core", "--target", "wasm32-unknown-unknown"]
 
 [tasks.build-wasm-storage]
 description = "Build lattice-storage for WASM"
 command = "cargo"
-args = ["build", "-p", "lattice-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+args = ["build", "-p", "latticedb-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
 
 [tasks.build-wasm-server]
 description = "Build lattice-server for WASM"
 command = "cargo"
-args = ["build", "-p", "lattice-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+args = ["build", "-p", "latticedb-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
 
 [tasks.build-wasm-release]
 description = "Build all crates for WASM in release mode"
 command = "cargo"
-args = ["build", "--target", "wasm32-unknown-unknown", "--release", "-p", "lattice-core", "-p", "lattice-storage", "-p", "lattice-server", "--no-default-features", "--features", "wasm"]
+args = ["build", "--target", "wasm32-unknown-unknown", "--release", "-p", "latticedb-core", "-p", "latticedb-storage", "-p", "latticedb-server", "--no-default-features", "--features", "wasm"]
 
 # =============================================================================
 # Check Tasks
@@ -100,17 +100,17 @@ dependencies = ["check-wasm-core", "check-wasm-storage", "check-wasm-server"]
 [tasks.check-wasm-core]
 description = "Check lattice-core compiles for WASM"
 command = "cargo"
-args = ["check", "-p", "lattice-core", "--target", "wasm32-unknown-unknown"]
+args = ["check", "-p", "latticedb-core", "--target", "wasm32-unknown-unknown"]
 
 [tasks.check-wasm-storage]
 description = "Check lattice-storage compiles for WASM"
 command = "cargo"
-args = ["check", "-p", "lattice-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+args = ["check", "-p", "latticedb-storage", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
 
 [tasks.check-wasm-server]
 description = "Check lattice-server compiles for WASM"
 command = "cargo"
-args = ["check", "-p", "lattice-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
+args = ["check", "-p", "latticedb-server", "--target", "wasm32-unknown-unknown", "--no-default-features", "--features", "wasm"]
 
 [tasks.check-all]
 description = "Check compilation for native and WASM"
@@ -146,12 +146,12 @@ dependencies = ["clippy", "fmt-check"]
 [tasks.run]
 description = "Run the server"
 command = "cargo"
-args = ["run", "-p", "lattice-server"]
+args = ["run", "-p", "latticedb-server"]
 
 [tasks.run-openapi]
 description = "Run the server with OpenAPI/Swagger UI"
 command = "cargo"
-args = ["run", "-p", "lattice-server", "--features", "openapi"]
+args = ["run", "-p", "latticedb-server", "--features", "openapi"]
 
 # =============================================================================
 # Documentation Tasks

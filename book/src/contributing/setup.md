@@ -71,7 +71,7 @@ cargo build
 cargo build --release
 
 # Build specific crate
-cargo build -p lattice-core
+cargo build -p latticedb-core
 ```
 
 ### WASM Build
@@ -97,7 +97,7 @@ cargo build --release --features simd
 cargo build --release --features mmap
 
 # Build with OpenAPI documentation
-cargo build -p lattice-server --features openapi
+cargo build -p latticedb-server --features openapi
 ```
 
 ## Running Tests
@@ -116,13 +116,13 @@ cargo test --workspace -- --nocapture
 
 ```bash
 # Test specific crate
-cargo test -p lattice-core
+cargo test -p latticedb-core
 
 # Test specific module
-cargo test -p lattice-core --lib hnsw
+cargo test -p latticedb-core --lib hnsw
 
 # Test specific function
-cargo test -p lattice-core test_search_returns_k_results
+cargo test -p latticedb-core test_search_returns_k_results
 ```
 
 ### WASM Tests
@@ -282,7 +282,7 @@ wasm-pack build --dev crates/lattice-server --target web
 
 ```bash
 # Example
-RUST_LOG=debug cargo run -p lattice-server
+RUST_LOG=debug cargo run -p latticedb-server
 ```
 
 ## Docker Development

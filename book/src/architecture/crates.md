@@ -236,7 +236,7 @@ Benchmarks use Criterion and output:
 ### Native Server
 
 ```bash
-cargo build --release -p lattice-server --features native
+cargo build --release -p latticedb-server --features native
 ```
 
 ### WASM Browser
