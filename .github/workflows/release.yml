@@ -211,19 +211,34 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p lattice-server --target ${{ matrix.target }}
 
-      # Emits two identical archives plus a checksum file:
-      #   lattice-db-<platform>-<tag>.tar.gz  -> pin to an exact release
-      #   lattice-db-<platform>.tar.gz        -> stable name, resolvable via
-      #                                          /releases/latest/download/...
+      # Each platform publishes four directly-downloadable assets plus a
+      # checksum file, so consumers can either extract an archive or link
+      # straight at the executable:
+      #   lattice-db-<platform>-<tag>.tar.gz  archive, pinned to one release
+      #   lattice-db-<platform>.tar.gz        archive, stable name
+      #   lattice-server-<platform>-<tag>     raw binary, pinned
+      #   lattice-server-<platform>           raw binary, stable name
+      # Stable names resolve via /releases/latest/download/<name>.
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
-          VERSIONED="lattice-db-${{ matrix.name }}-${{ github.ref_name }}.tar.gz"
-          STABLE="lattice-db-${{ matrix.name }}.tar.gz"
-          tar -czvf "$VERSIONED" -C target/${{ matrix.target }}/release lattice-server
-          cp "$VERSIONED" "$STABLE"
-          shasum -a 256 "$VERSIONED" "$STABLE" > "lattice-db-${{ matrix.name }}.sha256"
+          BIN="target/${{ matrix.target }}/release/lattice-server"
+          ARCHIVE_VERSIONED="lattice-db-${{ matrix.name }}-${{ github.ref_name }}.tar.gz"
+          ARCHIVE_STABLE="lattice-db-${{ matrix.name }}.tar.gz"
+          BIN_VERSIONED="lattice-server-${{ matrix.name }}-${{ github.ref_name }}"
+          BIN_STABLE="lattice-server-${{ matrix.name }}"
+
+          tar -czvf "$ARCHIVE_VERSIONED" -C "$(dirname "$BIN")" lattice-server
+          cp "$ARCHIVE_VERSIONED" "$ARCHIVE_STABLE"
+
+          # Raw, uncompressed executables for direct hyperlinking
+          cp "$BIN" "$BIN_VERSIONED"
+          cp "$BIN" "$BIN_STABLE"
+          chmod +x "$BIN_VERSIONED" "$BIN_STABLE"
+
+          shasum -a 256 "$ARCHIVE_VERSIONED" "$ARCHIVE_STABLE" \
+            "$BIN_VERSIONED" "$BIN_STABLE" > "lattice-db-${{ matrix.name }}.sha256"
           cat "lattice-db-${{ matrix.name }}.sha256"
 
       - name: Package (Windows)
@@ -231,13 +246,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $Versioned = "lattice-db-${{ matrix.name }}-${{ github.ref_name }}.zip"
-          $Stable = "lattice-db-${{ matrix.name }}.zip"
-          Compress-Archive `
-            -Path target/${{ matrix.target }}/release/lattice-server.exe `
-            -DestinationPath $Versioned
-          Copy-Item $Versioned $Stable
-          Get-FileHash $Versioned, $Stable -Algorithm SHA256 |
+          $Bin = "target/${{ matrix.target }}/release/lattice-server.exe"
+          $ArchiveVersioned = "lattice-db-${{ matrix.name }}-${{ github.ref_name }}.zip"
+          $ArchiveStable = "lattice-db-${{ matrix.name }}.zip"
+          $BinVersioned = "lattice-server-${{ matrix.name }}-${{ github.ref_name }}.exe"
+          $BinStable = "lattice-server-${{ matrix.name }}.exe"
+
+          Compress-Archive -Path $Bin -DestinationPath $ArchiveVersioned
+          Copy-Item $ArchiveVersioned $ArchiveStable
+
+          # Raw executables for direct hyperlinking
+          Copy-Item $Bin $BinVersioned
+          Copy-Item $Bin $BinStable
+
+          Get-FileHash $ArchiveVersioned, $ArchiveStable, $BinVersioned, $BinStable -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Out-File -Encoding ascii "lattice-db-${{ matrix.name }}.sha256"
           Get-Content "lattice-db-${{ matrix.name }}.sha256"
@@ -250,6 +272,7 @@ jobs:
             lattice-db-${{ matrix.name }}*.tar.gz
             lattice-db-${{ matrix.name }}*.zip
             lattice-db-${{ matrix.name }}.sha256
+            lattice-server-${{ matrix.name }}*
 
   deploy-pages:
     name: Deploy Pages
@@ -340,6 +363,7 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
             artifacts/**/*.sha256
+            artifacts/**/lattice-server-*
             artifacts/js-bundle/dist/lattice-db.js
             artifacts/js-bundle/dist/lattice-db.esm.js
             artifacts/js-bundle/dist/lattice-db.min.js
