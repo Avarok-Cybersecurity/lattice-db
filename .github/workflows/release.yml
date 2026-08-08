@@ -49,6 +49,11 @@ jobs:
             --no-default-features \
             --features wasm
 
+      # wasm-pack writes a catch-all .gitignore into the out-dir, which would
+      # exclude the wasm/ contents from the published npm tarball.
+      - name: Drop generated wasm .gitignore
+        run: rm -f packages/lattice-db-js/wasm/.gitignore
+
       - name: Install npm dependencies
         working-directory: packages/lattice-db-js
         run: npm install
@@ -305,9 +310,12 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      # --ignore-scripts skips the package's prepublishOnly hook, which would
+      # re-run `wasm-pack build` — impossible here (no Rust toolchain) and
+      # redundant, since this job publishes the artifact built upstream.
       - name: Publish to npm
         working-directory: package
-        run: npm publish --access public
+        run: npm publish --ignore-scripts --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_JS_TOKEN }}
 
