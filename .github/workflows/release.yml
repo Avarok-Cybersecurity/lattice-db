@@ -309,8 +309,15 @@ jobs:
     runs-on: ubuntu-latest
     # Publishes via npm trusted publishing (OIDC) — no long-lived token.
     # `id-token: write` lets the runner mint the short-lived OIDC token that
-    # npm exchanges for publish rights. The trusted publisher configured on
-    # npmjs.com must name this workflow file exactly (release.yml).
+    # npm exchanges for publish rights.
+    #
+    # The trusted publisher on npmjs.com must match this job exactly:
+    #   workflow filename -> release.yml
+    #   repository        -> Avarok-Cybersecurity/lattice-db
+    #   environment       -> npm-js (below)
+    # The environment name is part of the OIDC token's claims, so if npm has
+    # one configured the job must run in it or the publish is rejected.
+    environment: npm-js
     permissions:
       contents: read
       id-token: write
@@ -348,7 +355,9 @@ jobs:
           REF="${GITHUB_WORKFLOW_REF%%@*}"
           echo "workflow file : ${REF##*/}"
           echo "repository    : ${GITHUB_REPOSITORY}"
-          echo "environment   : ${GITHUB_ENVIRONMENT:-<none>}"
+          # Actions exposes no variable for the job's environment, so this is
+          # printed literally — keep it in sync with `environment:` above.
+          echo "environment   : npm-js"
           if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
             echo "OIDC token    : available to this job"
           else
