@@ -78,6 +78,11 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      # `axum-transport` is not a default feature, so the mountable-router
+      # tests would otherwise never run.
+      - name: Run library embedding tests (axum-transport)
+        run: cargo test -p lattice-server --features axum-transport
+
   test-wasm:
     name: Test (WASM)
     runs-on: ubuntu-latest
@@ -161,6 +166,10 @@ jobs:
 
       - name: Check WASM target (server)
         run: cargo check -p lattice-server --target wasm32-unknown-unknown --no-default-features --features wasm
+
+      # Ensures the embeddable Axum router keeps compiling for library users
+      - name: Check library embedding feature (axum-transport)
+        run: cargo clippy -p lattice-server --features axum-transport --all-targets -- -D warnings
 
   doc:
     name: Documentation

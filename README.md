@@ -521,6 +521,55 @@ curl -sSfLO https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/d
 sha256sum --check --ignore-missing lattice-db-linux-x64.sha256
 ```
 
+### Embedding in Your Own Axum Server
+
+You don't have to run LatticeDB as a separate process. `lattice-server` is also
+a library: mount the entire Qdrant-compatible API **inside your existing Axum
+app**, alongside your own routes, sharing one process and one port.
+
+```toml
+[dependencies]
+lattice-server = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.1", features = ["axum-transport"] }
+axum = "0.7"
+```
+
+```rust
+use axum::{routing::get, Router};
+use lattice_server::{axum_transport, router::new_app_state};
+
+#[tokio::main]
+async fn main() {
+    // your application's routes
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .route("/api/users", get(list_users));
+
+    // the full LatticeDB API, at its canonical paths
+    let app = axum_transport::attach_to(app, new_app_state());
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+```
+
+`GET /collections`, `PUT /collections/{name}/points`, and
+`POST /collections/{name}/graph/query` all behave exactly as they do in the
+standalone server — so existing **Qdrant clients and Cypher queries work
+unchanged** — while `/health` and `/api/users` are still served by your app.
+
+- **No endpoint list to maintain.** `attach_to` forwards to the same dispatcher
+  the standalone server uses, so the entire Qdrant + Neo4j/Cypher surface is
+  covered, including endpoints added in future versions.
+- **Your routes win.** The host application is matched first; LatticeDB handles
+  what's left. It does become the app's fallback, so unmatched paths return
+  LatticeDB's JSON 404 — use `.nest("/vectordb", axum_transport::routes(state))`
+  instead if you need to keep your own fallback or a prefix.
+- **Configure limits and persistence** with
+  `new_app_state_with_config(ServerConfig::production().with_data_dir(dir))`.
+- **Share the database with your own handlers** by cloning the `AppState`
+  (it's an `Arc`) and keeping a copy — your code and the REST API then operate
+  on the same collections.
+
 ### Using with Python (Qdrant Client)
 
 ```python

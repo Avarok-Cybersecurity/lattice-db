@@ -70,6 +70,9 @@ tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 rand.workspace = true
+# `ServiceExt::oneshot`, used to exercise the mountable Axum router in tests
+# without binding a port.
+tower = { version = "0.5", features = ["util"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal"] }

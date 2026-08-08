@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Avarok-Cybersecurity/lattice-db"
@@ -71,10 +71,14 @@ getrandom = { version = "0.2", features = ["js"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "8", features = ["axum"] }
 
-# Internal crates
-lattice-core = { path = "crates/lattice-core" }
-lattice-storage = { path = "crates/lattice-storage", default-features = false }
-lattice-server = { path = "crates/lattice-server" }
+# Internal crates.
+# `version` is required for `cargo publish` (path-only deps are rejected), and
+# must be kept in sync with [workspace.package] version above.
+lattice-core = { path = "crates/lattice-core", version = "0.3.1" }
+lattice-storage = { path = "crates/lattice-storage", version = "0.3.1", default-features = false }
+lattice-server = { path = "crates/lattice-server", version = "0.3.1" }
+# dev-only and unpublished: deliberately has no `version`, so `cargo publish`
+# strips it from the published manifest instead of demanding it from the registry.
 lattice-test-harness = { path = "crates/lattice-test-harness" }
 
 # Optimized release profile for maximum performance

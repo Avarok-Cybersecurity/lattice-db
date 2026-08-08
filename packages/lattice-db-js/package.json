@@ -1,6 +1,6 @@
 {
   "name": "lattice-db",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "World's First Production-Grade Hybrid Graph/Vector Database for the Browser",
   "type": "module",
   "main": "dist/lattice-db.js",
