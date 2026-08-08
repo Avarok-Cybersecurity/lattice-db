@@ -41,10 +41,10 @@ let results = engine.search(query)?;
 
 ```bash
 # Run all tests
-cargo test -p lattice-core
+cargo test -p latticedb-core
 
 # Run with specific features
-cargo test -p lattice-core --features simd
+cargo test -p latticedb-core --features simd
 ```
 
 ### WASM Tests
@@ -112,10 +112,10 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 ```bash
 # Check compilation
-cargo check -p lattice-core --target wasm32-unknown-unknown
+cargo check -p latticedb-core --target wasm32-unknown-unknown
 
 # Build
-cargo build -p lattice-core --target wasm32-unknown-unknown --release
+cargo build -p latticedb-core --target wasm32-unknown-unknown --release
 ```
 
 ## Architecture

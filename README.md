@@ -402,10 +402,10 @@ git clone https://github.com/Avarok-Cybersecurity/lattice-db.git
 cd lattice-db
 
 # Build release binary
-cargo build --release -p lattice-server
+cargo build --release -p latticedb-server
 
 # Run the server (Qdrant-compatible API)
-cargo run --release -p lattice-server
+cargo run --release -p latticedb-server
 ```
 
 ### Prebuilt Binaries
@@ -493,6 +493,21 @@ serves the newest version, with `Access-Control-Allow-Origin: *` and the correct
 | `…/lattice-db/wasm/lattice_server_bg.wasm` | `wasm32-unknown-unknown` binary |
 | `…/lattice-db/js/lattice-db.min.js` | optional high-level JS wrapper |
 
+**Prefer a CDN?** The npm package works with `import` too — jsDelivr and unpkg
+both send `Access-Control-Allow-Origin: *` and serve `.wasm` as
+`application/wasm`, and `@latest` tracks the newest published release:
+
+```html
+<script type="module">
+  import init, { LatticeDB }
+    from 'https://cdn.jsdelivr.net/npm/lattice-db@latest/wasm/lattice_server.js';
+  await init();
+</script>
+```
+
+Pin a version by swapping `@latest` for `@0.3.2`. `https://unpkg.com/lattice-db@latest/wasm/lattice_server.js`
+works the same way.
+
 > **Note:** use the URLs above for anything loaded *by a browser*. GitHub
 > release-asset URLs are served without CORS headers and as
 > `application/octet-stream`, so browsers reject them for `import`/`fetch` —
@@ -529,9 +544,15 @@ app**, alongside your own routes, sharing one process and one port.
 
 ```toml
 [dependencies]
-lattice-server = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.1", features = ["axum-transport"] }
+# On crates.io the crates are published as `latticedb-*`
+latticedb-server = { version = "0.3", features = ["axum-transport"] }
+# ...or track the repository directly:
+# latticedb-server = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.2", features = ["axum-transport"] }
 axum = "0.7"
 ```
+
+> The package is named `latticedb-server`, but the library it provides is
+> `lattice_server` — so imports read `use lattice_server::…`.
 
 ```rust
 use axum::{routing::get, Router};
@@ -1046,7 +1067,7 @@ Once the WASM module and your data are loaded, LatticeDB requires zero network c
 
 ```bash
 # Run as a server (Qdrant-compatible API)
-cargo run --release -p lattice-server
+cargo run --release -p latticedb-server
 # Listening on http://localhost:6333
 ```
 
