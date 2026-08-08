@@ -1144,19 +1144,28 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
             results.retain(|r| r.score <= threshold);
         }
 
-        // Enrich results with vector/payload if requested
+        // Drop results whose point no longer exists, then enrich the rest.
+        //
+        // `delete_points` removes a point from `points` immediately but only
+        // *queues* its removal from the HNSW index, so a search that runs
+        // before the background indexer catches up can still traverse the
+        // deleted node. `points` is authoritative for existence, so anything
+        // missing from it is filtered out here rather than returned to the
+        // caller with an empty payload.
         {
             let pts = self.points.read_safe()?;
-            for result in &mut results {
-                if let Some(point) = pts.get(&result.id) {
-                    if query.with_vector {
-                        result.vector = Some(point.vector.clone());
-                    }
-                    if query.with_payload {
-                        result.payload = Some(self.payload_to_json(&point.payload));
-                    }
+            results.retain_mut(|result| {
+                let Some(point) = pts.get(&result.id) else {
+                    return false;
+                };
+                if query.with_vector {
+                    result.vector = Some(point.vector.clone());
                 }
-            }
+                if query.with_payload {
+                    result.payload = Some(self.payload_to_json(&point.payload));
+                }
+                true
+            });
         }
 
         Ok(results)
@@ -1230,6 +1239,20 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                 }
                 results
             }
+        };
+
+        // Same guarantee as `search`: the HNSW index can still hold points
+        // whose deletion has not been applied yet, so results are filtered
+        // against the authoritative point store before being returned.
+        let all_results = {
+            let pts = self.points.read_safe()?;
+            all_results
+                .into_iter()
+                .map(|mut results| {
+                    results.retain(|result| pts.contains_key(&result.id));
+                    results
+                })
+                .collect()
         };
 
         Ok(all_results)
