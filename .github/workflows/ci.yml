@@ -15,6 +15,19 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  # Fast, dependency-free guard: every declaration of the project's version has
+  # to agree. On a release branch or tag (release/vX.Y.Z or vX.Y.Z) the name
+  # itself is included, so a release branch can never ship a different version
+  # than it claims.
+  version:
+    name: Version Symmetry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check version symmetry
+        run: ./scripts/check-release-version.sh
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
