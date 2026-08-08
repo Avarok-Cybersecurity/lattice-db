@@ -26,6 +26,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Gate for everything that publishes. The npm version is taken from the tag
+  # while the Rust version comes from Cargo.toml, so without this a tag could
+  # ship mismatched versions to the two registries.
+  verify-version:
+    name: Verify Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check version symmetry
+        run: ./scripts/check-release-version.sh
+
   build-wasm-js:
     name: Build WASM & JS Bundle
     runs-on: ubuntu-latest
@@ -305,7 +317,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && inputs.publish_npm)
-    needs: build-wasm-js
+    needs: [build-wasm-js, verify-version]
     runs-on: ubuntu-latest
     # Publishes via npm trusted publishing (OIDC) — no long-lived token.
     # `id-token: write` lets the runner mint the short-lived OIDC token that
@@ -376,6 +388,7 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -407,7 +420,7 @@ jobs:
   create-release:
     name: Create Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-docs, build-wasm-js, build-native]
+    needs: [build-docs, build-wasm-js, build-native, verify-version]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

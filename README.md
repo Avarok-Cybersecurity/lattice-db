@@ -430,7 +430,7 @@ Every asset is published under two names:
 
 - **Stable** (`lattice-server-linux-x64`) — always resolves to the newest
   release via `/releases/latest/download/…`
-- **Pinned** (`lattice-server-linux-x64-v0.3.0`) — immutable, tied to one tag
+- **Pinned** (`lattice-server-linux-x64-v0.3.3`) — immutable, tied to one tag
 
 A `lattice-db-<platform>.sha256` checksum file accompanies each build.
 
@@ -454,7 +454,7 @@ Other repositories can run LatticeDB as a test dependency on their own runners:
 - name: Start LatticeDB
   run: |
     curl -sSfLo lattice-server \
-      https://github.com/Avarok-Cybersecurity/lattice-db/releases/download/v0.3.0/lattice-server-linux-x64-v0.3.0
+      https://github.com/Avarok-Cybersecurity/lattice-db/releases/download/v0.3.3/lattice-server-linux-x64-v0.3.3
     chmod +x lattice-server
     ./lattice-server 127.0.0.1:6333 &
     # Wait for the API to accept connections
@@ -505,7 +505,7 @@ both send `Access-Control-Allow-Origin: *` and serve `.wasm` as
 </script>
 ```
 
-Pin a version by swapping `@latest` for `@0.3.2`. `https://unpkg.com/lattice-db@latest/wasm/lattice_server.js`
+Pin a version by swapping `@latest` for `@0.3.3`. `https://unpkg.com/lattice-db@latest/wasm/lattice_server.js`
 works the same way.
 
 > **Note:** use the URLs above for anything loaded *by a browser*. GitHub
@@ -524,7 +524,7 @@ curl -sSfLO $BASE/lattice-db.min.js        # optional high-level JS wrapper
 ```
 
 Or grab everything in one archive — `lattice-db-wasm.tar.gz` (stable) /
-`lattice-db-wasm-v0.3.0.tar.gz` (pinned), verified by `lattice-db-wasm.sha256`.
+`lattice-db-wasm-v0.3.3.tar.gz` (pinned), verified by `lattice-db-wasm.sha256`.
 
 Pin to a tagged URL (as above) for reproducible builds, or swap in
 `releases/latest/download/lattice-db-linux-x64.tar.gz` to always track the
@@ -547,7 +547,7 @@ app**, alongside your own routes, sharing one process and one port.
 # On crates.io the crates are published as `latticedb-*`
 latticedb-server = { version = "0.3", features = ["axum-transport"] }
 # ...or track the repository directly:
-# latticedb-server = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.2", features = ["axum-transport"] }
+# latticedb-server = { git = "https://github.com/Avarok-Cybersecurity/lattice-db", tag = "v0.3.3", features = ["axum-transport"] }
 axum = "0.7"
 ```
 
