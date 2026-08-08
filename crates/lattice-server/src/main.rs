@@ -140,9 +140,13 @@ async fn main() {
     // Parse data directory (PCND: explicit opt-in via env var)
     let data_dir: Option<PathBuf> = env::var("LATTICE_DATA_DIR").ok().map(PathBuf::from);
 
+    // Version comes from the crate manifest (SSOT) so the banner never drifts.
     println!("╔═══════════════════════════════════════════╗");
-    println!("║           LatticeDB Server v0.1           ║");
-    println!("║   Vector + Graph Database in Rust/WASM   ║");
+    println!(
+        "║{:^43}║",
+        format!("LatticeDB Server v{}", env!("CARGO_PKG_VERSION"))
+    );
+    println!("║{:^43}║", "Vector + Graph Database in Rust/WASM");
     println!("╚═══════════════════════════════════════════╝");
     println!();
 

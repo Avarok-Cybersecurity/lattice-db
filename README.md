@@ -8,7 +8,7 @@
 
 **Runs in your browser. Zero backend required.**
 
-*Democratizing AI databases for frontend developers*
+*Democratizing AI databases for developers*
 
 [![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Try_It_Now!-ff6b6b?style=for-the-badge)](https://avarok-cybersecurity.github.io/lattice-db/chat/)
 
@@ -406,6 +406,119 @@ cargo build --release -p lattice-server
 
 # Run the server (Qdrant-compatible API)
 cargo run --release -p lattice-server
+```
+
+### Prebuilt Binaries
+
+Every release publishes a standalone `lattice-server` binary. No toolchain, no
+runtime dependencies — download, extract, run.
+
+Each platform ships both an **archive** and the **raw executable** as separate,
+directly downloadable assets — so you can extract a tarball, or link straight at
+the binary with a single URL.
+
+| Platform | Archive | Raw executable |
+|----------|---------|----------------|
+| Linux x86_64 | `lattice-db-linux-x64.tar.gz` | `lattice-server-linux-x64` |
+| Linux arm64 | `lattice-db-linux-arm64.tar.gz` | `lattice-server-linux-arm64` |
+| macOS Intel | `lattice-db-macos-x64.tar.gz` | `lattice-server-macos-x64` |
+| macOS Apple Silicon | `lattice-db-macos-arm64.tar.gz` | `lattice-server-macos-arm64` |
+| Windows x86_64 | `lattice-db-windows-x64.zip` | `lattice-server-windows-x64.exe` |
+| `wasm32-unknown-unknown` | `lattice-db-wasm.tar.gz` | `lattice_server_bg.wasm` |
+
+Every asset is published under two names:
+
+- **Stable** (`lattice-server-linux-x64`) — always resolves to the newest
+  release via `/releases/latest/download/…`
+- **Pinned** (`lattice-server-linux-x64-v0.3.0`) — immutable, tied to one tag
+
+A `lattice-db-<platform>.sha256` checksum file accompanies each build.
+
+```bash
+# Raw binary — one URL, no extraction
+curl -sSfLo lattice-server https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-server-linux-x64
+chmod +x lattice-server
+
+# …or the archive
+curl -sSfL https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.tar.gz | tar xz
+
+./lattice-server                 # listens on 0.0.0.0:6334 by default
+./lattice-server 0.0.0.0:6333    # or pass an explicit address
+```
+
+### Use in GitHub Actions
+
+Other repositories can run LatticeDB as a test dependency on their own runners:
+
+```yaml
+- name: Start LatticeDB
+  run: |
+    curl -sSfLo lattice-server \
+      https://github.com/Avarok-Cybersecurity/lattice-db/releases/download/v0.3.0/lattice-server-linux-x64-v0.3.0
+    chmod +x lattice-server
+    ./lattice-server 127.0.0.1:6333 &
+    # Wait for the API to accept connections
+    for i in $(seq 1 30); do
+      curl -sf http://127.0.0.1:6333/collections && break
+      sleep 1
+    done
+
+- name: Run tests against LatticeDB
+  run: cargo test   # or pytest / npm test — it speaks the Qdrant REST API
+```
+
+### WASM Artifacts (`wasm32-unknown-unknown`)
+
+**Always-latest, zero-install — link straight from your HTML.** Every release
+republishes the `wasm32-unknown-unknown` build to a stable URL that always
+serves the newest version, with `Access-Control-Allow-Origin: *` and the correct
+`application/wasm` MIME type, so any page on any origin can import it:
+
+```html
+<script type="module">
+  import init, { LatticeDB }
+    from 'https://avarok-cybersecurity.github.io/lattice-db/wasm/lattice_server.js';
+
+  await init();          // fetches lattice_server_bg.wasm automatically
+  const db = new LatticeDB();
+  db.createCollection('docs', { vectors: { size: 3, distance: 'Cosine' } });
+  db.upsert('docs', [{ id: 1, vector: [1, 0, 0], payload: { title: 'hello' } }]);
+  console.log(db.search('docs', [1, 0, 0], 1));
+</script>
+```
+
+| Always-latest URL | Contents |
+|---|---|
+| `…/lattice-db/wasm/lattice_server.js` | wasm-bindgen loader (ES module) |
+| `…/lattice-db/wasm/lattice_server_bg.wasm` | `wasm32-unknown-unknown` binary |
+| `…/lattice-db/js/lattice-db.min.js` | optional high-level JS wrapper |
+
+> **Note:** use the URLs above for anything loaded *by a browser*. GitHub
+> release-asset URLs are served without CORS headers and as
+> `application/octet-stream`, so browsers reject them for `import`/`fetch` —
+> they are for downloads (CI, servers, containers) only.
+
+To vendor the files instead — or pin an exact version for reproducibility —
+download them from the release:
+
+```bash
+BASE=https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download
+curl -sSfLO $BASE/lattice_server.js        # wasm-bindgen loader
+curl -sSfLO $BASE/lattice_server_bg.wasm   # wasm32-unknown-unknown binary
+curl -sSfLO $BASE/lattice-db.min.js        # optional high-level JS wrapper
+```
+
+Or grab everything in one archive — `lattice-db-wasm.tar.gz` (stable) /
+`lattice-db-wasm-v0.3.0.tar.gz` (pinned), verified by `lattice-db-wasm.sha256`.
+
+Pin to a tagged URL (as above) for reproducible builds, or swap in
+`releases/latest/download/lattice-db-linux-x64.tar.gz` to always track the
+newest release. To verify the download:
+
+```bash
+curl -sSfLO https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.tar.gz
+curl -sSfLO https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.sha256
+sha256sum --check --ignore-missing lattice-db-linux-x64.sha256
 ```
 
 ### Using with Python (Qdrant Client)
