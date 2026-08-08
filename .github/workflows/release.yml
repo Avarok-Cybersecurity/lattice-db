@@ -91,15 +91,29 @@ jobs:
           name: npm-package
           path: packages/lattice-db-js/
 
-      # Also upload tarred WASM for legacy compatibility
+      # wasm32-unknown-unknown build, packaged for external static referencing.
+      # Emits versioned + stable tarball names plus a checksum file, mirroring
+      # the native binaries.
       - name: Package WASM
-        run: tar -czvf lattice-db-wasm-${{ github.ref_name }}.tar.gz -C packages/lattice-db-js/wasm .
+        run: |
+          set -euo pipefail
+          VERSIONED="lattice-db-wasm-${{ github.ref_name }}.tar.gz"
+          STABLE="lattice-db-wasm.tar.gz"
+          tar -czvf "$VERSIONED" -C packages/lattice-db-js/wasm .
+          cp "$VERSIONED" "$STABLE"
+          shasum -a 256 "$VERSIONED" "$STABLE" \
+            packages/lattice-db-js/wasm/lattice_server.js \
+            packages/lattice-db-js/wasm/lattice_server_bg.wasm \
+            > lattice-db-wasm.sha256
+          cat lattice-db-wasm.sha256
 
       - name: Upload WASM tarball
         uses: actions/upload-artifact@v4
         with:
           name: wasm-package
-          path: lattice-db-wasm-*.tar.gz
+          path: |
+            lattice-db-wasm*.tar.gz
+            lattice-db-wasm.sha256
 
   build-docs:
     name: Build Documentation
@@ -171,6 +185,9 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x64
@@ -194,25 +211,45 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p lattice-server --target ${{ matrix.target }}
 
+      # Emits two identical archives plus a checksum file:
+      #   lattice-db-<platform>-<tag>.tar.gz  -> pin to an exact release
+      #   lattice-db-<platform>.tar.gz        -> stable name, resolvable via
+      #                                          /releases/latest/download/...
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          tar -czvf lattice-db-${{ matrix.name }}-${{ github.ref_name }}.tar.gz \
-            -C target/${{ matrix.target }}/release \
-            lattice-server
+          set -euo pipefail
+          VERSIONED="lattice-db-${{ matrix.name }}-${{ github.ref_name }}.tar.gz"
+          STABLE="lattice-db-${{ matrix.name }}.tar.gz"
+          tar -czvf "$VERSIONED" -C target/${{ matrix.target }}/release lattice-server
+          cp "$VERSIONED" "$STABLE"
+          shasum -a 256 "$VERSIONED" "$STABLE" > "lattice-db-${{ matrix.name }}.sha256"
+          cat "lattice-db-${{ matrix.name }}.sha256"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $Versioned = "lattice-db-${{ matrix.name }}-${{ github.ref_name }}.zip"
+          $Stable = "lattice-db-${{ matrix.name }}.zip"
           Compress-Archive `
             -Path target/${{ matrix.target }}/release/lattice-server.exe `
-            -DestinationPath lattice-db-${{ matrix.name }}-${{ github.ref_name }}.zip
+            -DestinationPath $Versioned
+          Copy-Item $Versioned $Stable
+          Get-FileHash $Versioned, $Stable -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Out-File -Encoding ascii "lattice-db-${{ matrix.name }}.sha256"
+          Get-Content "lattice-db-${{ matrix.name }}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: lattice-db-${{ matrix.name }}-*
+          path: |
+            lattice-db-${{ matrix.name }}*.tar.gz
+            lattice-db-${{ matrix.name }}*.zip
+            lattice-db-${{ matrix.name }}.sha256
 
   deploy-pages:
     name: Deploy Pages
@@ -302,9 +339,11 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            artifacts/**/*.sha256
             artifacts/js-bundle/dist/lattice-db.js
             artifacts/js-bundle/dist/lattice-db.esm.js
             artifacts/js-bundle/dist/lattice-db.min.js
+            artifacts/js-bundle/wasm/lattice_server.js
             artifacts/js-bundle/wasm/lattice_server_bg.wasm
           generate_release_notes: true
           draft: false

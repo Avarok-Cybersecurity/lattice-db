@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Avarok-Cybersecurity/lattice-db"
@@ -32,9 +32,6 @@ smallvec = { version = "1.13", features = ["serde"] }
 # Parsing (WASM-compatible)
 pest = "2.7"
 pest_derive = "2.7"
-
-# String optimization (WASM-compatible)
-compact_str = { version = "0.8", features = ["serde", "rkyv"] }
 
 # Error handling
 thiserror = "2.0"

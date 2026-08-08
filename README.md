@@ -408,6 +408,89 @@ cargo build --release -p lattice-server
 cargo run --release -p lattice-server
 ```
 
+### Prebuilt Binaries
+
+Every release publishes a standalone `lattice-server` binary. No toolchain, no
+runtime dependencies — download, extract, run.
+
+| Platform | Asset |
+|----------|-------|
+| Linux x86_64 | `lattice-db-linux-x64.tar.gz` |
+| Linux arm64 | `lattice-db-linux-arm64.tar.gz` |
+| macOS Intel | `lattice-db-macos-x64.tar.gz` |
+| macOS Apple Silicon | `lattice-db-macos-arm64.tar.gz` |
+| Windows x86_64 | `lattice-db-windows-x64.zip` |
+| `wasm32-unknown-unknown` | `lattice-db-wasm.tar.gz` |
+
+Two names are published for each platform:
+
+- **Stable** (`lattice-db-linux-x64.tar.gz`) — always resolves to the newest
+  release via `/releases/latest/download/…`
+- **Pinned** (`lattice-db-linux-x64-v0.3.0.tar.gz`) — immutable, tied to one tag
+
+A `lattice-db-<platform>.sha256` checksum file accompanies each build.
+
+```bash
+# Latest release
+curl -sSfL https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.tar.gz | tar xz
+./lattice-server                 # listens on 0.0.0.0:6334 by default
+./lattice-server 0.0.0.0:6333    # or pass an explicit address
+```
+
+### Use in GitHub Actions
+
+Other repositories can run LatticeDB as a test dependency on their own runners:
+
+```yaml
+- name: Start LatticeDB
+  run: |
+    curl -sSfL https://github.com/Avarok-Cybersecurity/lattice-db/releases/download/v0.3.0/lattice-db-linux-x64-v0.3.0.tar.gz | tar xz
+    ./lattice-server 127.0.0.1:6333 &
+    # Wait for the API to accept connections
+    for i in $(seq 1 30); do
+      curl -sf http://127.0.0.1:6333/collections && break
+      sleep 1
+    done
+
+- name: Run tests against LatticeDB
+  run: cargo test   # or pytest / npm test — it speaks the Qdrant REST API
+```
+
+### WASM Artifacts (`wasm32-unknown-unknown`)
+
+The browser build is published as individually addressable files, so it can be
+statically referenced from another project, a CDN, or a CI job — no npm install
+required. The `.wasm` module needs its generated loader (`lattice_server.js`)
+alongside it:
+
+```bash
+BASE=https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download
+curl -sSfLO $BASE/lattice_server.js        # wasm-bindgen loader (ES module)
+curl -sSfLO $BASE/lattice_server_bg.wasm   # wasm32-unknown-unknown binary
+curl -sSfLO $BASE/lattice-db.min.js        # optional high-level JS wrapper
+```
+
+Or grab everything in one archive — `lattice-db-wasm.tar.gz` (stable) /
+`lattice-db-wasm-v0.3.0.tar.gz` (pinned), verified by `lattice-db-wasm.sha256`.
+
+```html
+<script type="module">
+  import init, { LatticeDB } from './lattice_server.js';
+  await init();                     // loads lattice_server_bg.wasm
+  const db = new LatticeDB();
+</script>
+```
+
+Pin to a tagged URL (as above) for reproducible builds, or swap in
+`releases/latest/download/lattice-db-linux-x64.tar.gz` to always track the
+newest release. To verify the download:
+
+```bash
+curl -sSfLO https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.tar.gz
+curl -sSfLO https://github.com/Avarok-Cybersecurity/lattice-db/releases/latest/download/lattice-db-linux-x64.sha256
+sha256sum --check --ignore-missing lattice-db-linux-x64.sha256
+```
+
 ### Using with Python (Qdrant Client)
 
 ```python

@@ -32,9 +32,6 @@ bumpalo = "3.16"
 pest.workspace = true
 pest_derive.workspace = true
 
-# String optimization (WASM-compatible)
-compact_str.workspace = true
-
 # Error handling
 thiserror.workspace = true
 
