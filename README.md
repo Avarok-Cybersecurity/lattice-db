@@ -8,7 +8,7 @@
 
 **Runs in your browser. Zero backend required.**
 
-*Democratizing AI databases for frontend developers*
+*Democratizing AI databases for developers*
 
 [![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Try_It_Now!-ff6b6b?style=for-the-badge)](https://avarok-cybersecurity.github.io/lattice-db/chat/)
 
