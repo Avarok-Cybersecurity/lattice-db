@@ -71,7 +71,7 @@ impl LatticeTransport for AxumTransport {
 
         // Build API router - catch all routes and methods
         let api_router = Router::new()
-            .route("/*path", any(handle_request::<H, Fut>))
+            .route("/{*path}", any(handle_request::<H, Fut>))
             .route("/", any(handle_request::<H, Fut>))
             .with_state(handler);
 
@@ -125,7 +125,7 @@ impl LatticeTransport for AxumTransport {
 pub fn routes(state: AppState) -> Router {
     Router::new()
         .route("/", any(dispatch))
-        .route("/*path", any(dispatch))
+        .route("/{*path}", any(dispatch))
         .with_state(state)
 }
 
