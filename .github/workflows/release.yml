@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # Lets the registry publishes be retried against the version already in the
+  # tree, without inventing a new tag just to re-run a failed publish.
+  workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: 'Publish the current version to npm'
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -294,7 +302,9 @@ jobs:
 
   publish-npm:
     name: Publish to NPM
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_npm)
     needs: build-wasm-js
     runs-on: ubuntu-latest
     # Publishes via npm trusted publishing (OIDC) — no long-lived token.
@@ -317,6 +327,9 @@ jobs:
           # Trusted publishing requires Node >= 22.14.0
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          # Recommended when publishing: a poisoned package cache could
+          # otherwise expose credentials, including the OIDC token.
+          package-manager-cache: false
 
       # Trusted publishing needs npm >= 11.5.1; the npm bundled with Node is
       # usually older, so upgrade before publishing.
@@ -324,6 +337,21 @@ jobs:
         run: |
           npm install -g npm@latest
           npm --version
+
+      # npm only validates a trusted-publisher configuration at publish time,
+      # so if publishing fails this shows whether OIDC was even available to
+      # the CLI (versus the config on npmjs.com not matching this workflow).
+      - name: Report OIDC context
+        run: |
+          REF="${GITHUB_WORKFLOW_REF##*/}"   # e.g. release.yml@refs/tags/v0.3.2
+          echo "workflow file : ${REF%%@*}"
+          echo "repository    : ${GITHUB_REPOSITORY}"
+          echo "environment   : ${GITHUB_ENVIRONMENT:-<none>}"
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "OIDC token    : available to this job"
+          else
+            echo "OIDC token    : MISSING (id-token: write not in effect)"
+          fi
 
       # No NODE_AUTH_TOKEN: npm detects the OIDC environment and authenticates
       # with it, and provenance attestations are generated automatically.
