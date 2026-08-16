@@ -121,21 +121,27 @@ export async function getEmbedding(
   return embedding;
 }
 
+// Prepend the RAG system prompt (with retrieved context) to the conversation.
+function withSystemPrompt(messages: Message[], context: string): Message[] {
+  return [
+    {
+      role: 'system',
+      content: `You are a helpful assistant. Use the following context to answer questions accurately and concisely. If the context doesn't contain relevant information, say so.
+
+Context:
+${context}`
+    },
+    ...messages
+  ];
+}
+
 export async function chat(
   messages: Message[],
   context: string,
   apiKey: string,
   model: string = DEFAULT_CHAT_MODEL
 ): Promise<string> {
-  const systemMessage: Message = {
-    role: 'system',
-    content: `You are a helpful assistant. Use the following context to answer questions accurately and concisely. If the context doesn't contain relevant information, say so.
-
-Context:
-${context}`
-  };
-
-  const allMessages = [systemMessage, ...messages];
+  const allMessages = withSystemPrompt(messages, context);
 
   const data = await withRetry(async () => {
     const response = await fetch(`${OPENROUTER_API_URL}/chat/completions`, {
@@ -153,6 +159,127 @@ ${context}`
     throw new Error('Chat request returned no message content');
   }
   return content;
+}
+
+/// A single streamed increment: reasoning ("thinking") and/or answer tokens.
+export interface ChatStreamDelta {
+  reasoning?: string;
+  content?: string;
+}
+
+/**
+ * Stream a chat completion, invoking `onDelta` as reasoning and answer tokens
+ * arrive. Resolves with the full answer text (reasoning excluded).
+ *
+ * OpenRouter emits Server-Sent Events: `data:` lines carrying a JSON chunk,
+ * `:`-prefixed keepalive comments, and a final `data: [DONE]`. Reasoning
+ * models put thinking on `delta.reasoning` while `delta.content` is empty, then
+ * switch to `delta.content` for the answer. An upstream failure can also arrive
+ * as an `{ "error": ... }` chunk mid-stream.
+ */
+export async function chatStream(
+  messages: Message[],
+  context: string,
+  apiKey: string,
+  onDelta: (delta: ChatStreamDelta) => void,
+  model: string = DEFAULT_CHAT_MODEL
+): Promise<string> {
+  const allMessages = withSystemPrompt(messages, context);
+  const body = JSON.stringify({ model, messages: allMessages, stream: true });
+
+  let content = '';
+  let emitted = false;
+
+  const runOnce = async (): Promise<void> => {
+    const response = await fetch(`${OPENROUTER_API_URL}/chat/completions`, {
+      method: 'POST',
+      headers: OPENROUTER_HEADERS(apiKey),
+      body
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new TransientAwareError(
+        `Chat request failed: ${response.status} - ${text}`,
+        response.status === 429 || response.status >= 500
+      );
+    }
+    if (!response.body) {
+      throw new TransientAwareError('Chat request returned no response stream', true);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are newline-delimited; process every complete line and keep
+      // any partial remainder in the buffer.
+      let newlineIdx: number;
+      while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newlineIdx).trim();
+        buffer = buffer.slice(newlineIdx + 1);
+
+        if (line === '' || line.startsWith(':')) continue; // blank / keepalive
+        if (!line.startsWith('data:')) continue;
+
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') return;
+
+        let chunk: {
+          error?: { message?: string; code?: number };
+          choices?: Array<{ delta?: { reasoning?: unknown; content?: unknown } }>;
+        };
+        try {
+          chunk = JSON.parse(payload);
+        } catch {
+          continue; // ignore any non-JSON line
+        }
+
+        if (chunk.error) {
+          const message = chunk.error.message ?? 'unknown error';
+          throw new TransientAwareError(
+            `Chat request failed: ${message}`,
+            (chunk.error.code ?? 0) >= 500 ||
+              /ResourceExhausted|rate.?limit|overloaded/i.test(message)
+          );
+        }
+
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        const reasoning = typeof delta.reasoning === 'string' && delta.reasoning
+          ? delta.reasoning
+          : undefined;
+        const answer = typeof delta.content === 'string' && delta.content
+          ? delta.content
+          : undefined;
+
+        if (reasoning || answer) {
+          emitted = true;
+          if (answer) content += answer;
+          onDelta({ reasoning, content: answer });
+        }
+      }
+    }
+  };
+
+  // Retry only while nothing has been emitted yet: once tokens have been
+  // rendered, restarting the stream would duplicate them.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await runOnce();
+      return content;
+    } catch (error) {
+      const transient = error instanceof TransientAwareError && error.transient;
+      if (!transient || emitted || attempt >= MAX_ATTEMPTS) throw error;
+      await new Promise(resolve => setTimeout(resolve, RETRY_BASE_MS * 2 ** (attempt - 1)));
+    }
+  }
 }
 
 /**

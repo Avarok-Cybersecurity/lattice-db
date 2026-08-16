@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "generated_at": "2026-07-21T16:47:51.709Z",
+  "generated_at": "2026-08-16T17:34:56.062Z",
   "source": "24 files (book/src chapters + crate/package READMEs)",
   "chunks": [
     {
@@ -1014,7 +1014,7 @@
     {
       "id": "book-src-architecture-crates-md-building-for-different-platforms-native-server-22",
       "section": "Building for Different Platforms > Native Server",
-      "content": "```bash\ncargo build --release -p lattice-server --features native\n```",
+      "content": "```bash\ncargo build --release -p latticedb-server --features native\n```",
       "metadata": {
         "category": "architecture",
         "source": "book/src/architecture/crates.md"
@@ -1365,7 +1365,7 @@
     {
       "id": "book-src-contributing-setup-md-building-native-build-5",
       "section": "Building > Native Build",
-      "content": "```bash\n# Debug build (fast compilation)\ncargo build\n\n# Release build (optimized)\ncargo build --release\n\n# Build specific crate\ncargo build -p lattice-core\n```",
+      "content": "```bash\n# Debug build (fast compilation)\ncargo build\n\n# Release build (optimized)\ncargo build --release\n\n# Build specific crate\ncargo build -p latticedb-core\n```",
       "metadata": {
         "category": "contributing",
         "source": "book/src/contributing/setup.md"
@@ -1383,7 +1383,7 @@
     {
       "id": "book-src-contributing-setup-md-building-build-with-features-7",
       "section": "Building > Build with Features",
-      "content": "```bash\n# Build with SIMD optimization\ncargo build --release --features simd\n\n# Build with memory-mapped storage\ncargo build --release --features mmap\n\n# Build with OpenAPI documentation\ncargo build -p lattice-server --features openapi\n```",
+      "content": "```bash\n# Build with SIMD optimization\ncargo build --release --features simd\n\n# Build with memory-mapped storage\ncargo build --release --features mmap\n\n# Build with OpenAPI documentation\ncargo build -p latticedb-server --features openapi\n```",
       "metadata": {
         "category": "contributing",
         "source": "book/src/contributing/setup.md"
@@ -1401,7 +1401,7 @@
     {
       "id": "book-src-contributing-setup-md-running-tests-specific-tests-9",
       "section": "Running Tests > Specific Tests",
-      "content": "```bash\n# Test specific crate\ncargo test -p lattice-core\n\n# Test specific module\ncargo test -p lattice-core --lib hnsw\n\n# Test specific function\ncargo test -p lattice-core test_search_returns_k_results\n```",
+      "content": "```bash\n# Test specific crate\ncargo test -p latticedb-core\n\n# Test specific module\ncargo test -p latticedb-core --lib hnsw\n\n# Test specific function\ncargo test -p latticedb-core test_search_returns_k_results\n```",
       "metadata": {
         "category": "contributing",
         "source": "book/src/contributing/setup.md"
@@ -1527,7 +1527,7 @@
     {
       "id": "book-src-contributing-setup-md-environment-variables-23",
       "section": "Environment Variables",
-      "content": "| Variable | Description | Default |\n|----------|-------------|---------|\n| `RUST_LOG` | Log level | `info` |\n| `RUST_BACKTRACE` | Enable backtraces | `0` |\n| `LATTICE_PORT` | Server port | `6333` |\n\n```bash\n# Example\nRUST_LOG=debug cargo run -p lattice-server\n```",
+      "content": "| Variable | Description | Default |\n|----------|-------------|---------|\n| `RUST_LOG` | Log level | `info` |\n| `RUST_BACKTRACE` | Enable backtraces | `0` |\n| `LATTICE_PORT` | Server port | `6333` |\n\n```bash\n# Example\nRUST_LOG=debug cargo run -p latticedb-server\n```",
       "metadata": {
         "category": "contributing",
         "source": "book/src/contributing/setup.md"
@@ -1869,7 +1869,7 @@
     {
       "id": "book-src-getting-started-installation-md-standalone-server-from-source-3",
       "section": "Standalone Server > From Source",
-      "content": "```bash\n# Clone the repository\ngit clone https://github.com/Avarok-Cybersecurity/lattice-db.git\ncd lattice-db\n\n# Build release binary\ncargo build --release -p lattice-server\n\n# Binary is at target/release/lattice-server\n```",
+      "content": "```bash\n# Clone the repository\ngit clone https://github.com/Avarok-Cybersecurity/lattice-db.git\ncd lattice-db\n\n# Build release binary\ncargo build --release -p latticedb-server\n\n# Binary is at target/release/lattice-server\n```",
       "metadata": {
         "category": "getting-started",
         "source": "book/src/getting-started/installation.md"
@@ -4203,7 +4203,7 @@
     {
       "id": "crates-lattice-server-readme-md-quick-start-1",
       "section": "Quick Start",
-      "content": "```bash\n# Run with default settings (port 6333)\ncargo run -p lattice-server\n\n# Run with custom address\ncargo run -p lattice-server -- 127.0.0.1:8080\n\n# Run with OpenAPI/Swagger UI\ncargo run -p lattice-server --features openapi\n# Visit http://localhost:6333/docs\n```",
+      "content": "```bash\n# Run with default settings (port 6333)\ncargo run -p latticedb-server\n\n# Run with custom address\ncargo run -p latticedb-server -- 127.0.0.1:8080\n\n# Run with OpenAPI/Swagger UI\ncargo run -p latticedb-server --features openapi\n# Visit http://localhost:6333/docs\n```",
       "metadata": {
         "category": "api",
         "source": "crates/lattice-server/README.md"
@@ -4276,7 +4276,7 @@
     {
       "id": "crates-lattice-server-readme-md-feature-flags-8",
       "section": "Feature Flags",
-      "content": "| Feature | Description |\n|---------|-------------|\n| `native` | Enable native HTTP server (default) |\n| `wasm` | Enable WASM/Service Worker transport |\n| `openapi` | Enable OpenAPI/Swagger UI at `/docs` |\n\n```bash\n# Build with specific features\ncargo build -p lattice-server --features \"native,openapi\"\n```",
+      "content": "| Feature | Description |\n|---------|-------------|\n| `native` | Enable native HTTP server (default) |\n| `wasm` | Enable WASM/Service Worker transport |\n| `openapi` | Enable OpenAPI/Swagger UI at `/docs` |\n\n```bash\n# Build with specific features\ncargo build -p latticedb-server --features \"native,openapi\"\n```",
       "metadata": {
         "category": "api",
         "source": "crates/lattice-server/README.md"
@@ -4339,7 +4339,7 @@
     {
       "id": "crates-lattice-core-readme-md-running-tests-native-tests-3",
       "section": "Running Tests > Native Tests",
-      "content": "```bash\n# Run all tests\ncargo test -p lattice-core\n\n# Run with specific features\ncargo test -p lattice-core --features simd\n```",
+      "content": "```bash\n# Run all tests\ncargo test -p latticedb-core\n\n# Run with specific features\ncargo test -p latticedb-core --features simd\n```",
       "metadata": {
         "category": "api",
         "source": "crates/lattice-core/README.md"
@@ -4366,7 +4366,7 @@
     {
       "id": "crates-lattice-core-readme-md-building-for-wasm-6",
       "section": "Building for WASM",
-      "content": "```bash\n# Check compilation\ncargo check -p lattice-core --target wasm32-unknown-unknown\n\n# Build\ncargo build -p lattice-core --target wasm32-unknown-unknown --release\n```",
+      "content": "```bash\n# Check compilation\ncargo check -p latticedb-core --target wasm32-unknown-unknown\n\n# Build\ncargo build -p latticedb-core --target wasm32-unknown-unknown --release\n```",
       "metadata": {
         "category": "api",
         "source": "crates/lattice-core/README.md"
