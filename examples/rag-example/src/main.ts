@@ -62,27 +62,145 @@ function addMessageToChat(role: 'user' | 'assistant', content: string, sources?:
   messageDiv.appendChild(avatar);
   messageDiv.appendChild(bubble);
 
-  if (sources && sources.length > 0) {
-    const sourcesDiv = document.createElement('div');
-    sourcesDiv.className = 'message-sources';
-    sourcesDiv.innerHTML = `
-      <button class="sources-toggle" onclick="this.parentElement.classList.toggle('expanded')">
-        Sources (${sources.length})
-      </button>
-      <div class="sources-content">
-        ${sources.map((s, i) => `
-          <div class="source-item">
-            <span class="source-badge">[${i + 1}] ${(s.score * 100).toFixed(0)}%</span>
-            <span class="source-text">${escapeHtml(s.text.slice(0, 150))}${s.text.length > 150 ? '...' : ''}</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
-    messageDiv.appendChild(sourcesDiv);
-  }
+  const sourcesEl = buildSourcesElement(sources);
+  if (sourcesEl) messageDiv.appendChild(sourcesEl);
 
   chatMessages.appendChild(messageDiv);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+type MessageSource = { text: string; score: number };
+
+/** Build the collapsible "Sources (N)" block, or null when there are none. */
+function buildSourcesElement(sources?: MessageSource[]): HTMLDivElement | null {
+  if (!sources || sources.length === 0) return null;
+
+  const sourcesDiv = document.createElement('div');
+  sourcesDiv.className = 'message-sources';
+  sourcesDiv.innerHTML = `
+    <button class="sources-toggle" onclick="this.parentElement.classList.toggle('expanded')">
+      Sources (${sources.length})
+    </button>
+    <div class="sources-content">
+      ${sources.map((s, i) => `
+        <div class="source-item">
+          <span class="source-badge">[${i + 1}] ${(s.score * 100).toFixed(0)}%</span>
+          <span class="source-text">${escapeHtml(s.text.slice(0, 150))}${s.text.length > 150 ? '...' : ''}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  return sourcesDiv;
+}
+
+/** Live-updating assistant message: streams reasoning and answer tokens. */
+interface StreamingMessage {
+  /** Append thinking tokens (shown in the collapsible "Thinking" panel). */
+  pushReasoning(text: string): void;
+  /** Append answer tokens (rendered as markdown). */
+  pushContent(text: string): void;
+  /** Finished successfully: collapse thinking, attach sources. */
+  finish(sources?: MessageSource[]): void;
+  /** Failed: show an error in place of the answer. */
+  fail(message: string): void;
+}
+
+function createStreamingMessage(): StreamingMessage {
+  const chatMessages = getElement<HTMLDivElement>('chat-messages');
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = 'chat-message assistant';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = 'AI';
+
+  // Column holding the thinking panel + answer bubble beside the avatar.
+  const stack = document.createElement('div');
+  stack.className = 'assistant-stack';
+
+  // Thinking panel (hidden until the first reasoning token arrives).
+  const thinking = document.createElement('details');
+  thinking.className = 'thinking';
+  thinking.open = true;
+  thinking.hidden = true;
+  const summary = document.createElement('summary');
+  summary.innerHTML = '<span class="thinking-label">Thinking</span><span class="thinking-dots"><span></span><span></span><span></span></span>';
+  const reasoningEl = document.createElement('div');
+  reasoningEl.className = 'thinking-content';
+  thinking.appendChild(summary);
+  thinking.appendChild(reasoningEl);
+
+  // Answer bubble; starts as a typing indicator until content arrives.
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<span class="typing-indicator"><span></span><span></span><span></span></span>';
+
+  stack.appendChild(thinking);
+  stack.appendChild(bubble);
+  messageDiv.appendChild(avatar);
+  messageDiv.appendChild(stack);
+  chatMessages.appendChild(messageDiv);
+
+  let reasoning = '';
+  let content = '';
+  let hasContent = false;
+  let renderQueued = false;
+
+  // Keep pinned to the bottom only if the user hasn't scrolled up to read back.
+  const nearBottom = (): boolean =>
+    chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+
+  // Coalesce DOM updates to one per frame — many tokens can arrive per frame.
+  const scheduleRender = (): void => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      const pin = nearBottom();
+      if (reasoning) reasoningEl.textContent = reasoning;
+      if (hasContent) bubble.innerHTML = marked.parse(content) as string;
+      if (pin) chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+  };
+
+  return {
+    pushReasoning(text: string) {
+      if (thinking.hidden) thinking.hidden = false;
+      reasoning += text;
+      scheduleRender();
+    },
+    pushContent(text: string) {
+      if (!hasContent) {
+        hasContent = true;
+        content = '';
+        // Answer has started: collapse the thinking panel and stop its spinner.
+        thinking.open = false;
+        summary.querySelector('.thinking-dots')?.remove();
+        summary.querySelector('.thinking-label')!.textContent = 'Thoughts';
+      }
+      content += text;
+      scheduleRender();
+    },
+    finish(sources?: MessageSource[]) {
+      // Flush any pending render synchronously so the final state is exact.
+      if (hasContent) {
+        bubble.innerHTML = marked.parse(content) as string;
+      } else {
+        // Reasoning-only or empty answer: don't leave the typing indicator up.
+        bubble.innerHTML = marked.parse(content || '_(no answer returned)_') as string;
+      }
+      if (reasoning) reasoningEl.textContent = reasoning;
+      const sourcesEl = buildSourcesElement(sources);
+      if (sourcesEl) stack.appendChild(sourcesEl);
+      if (nearBottom()) chatMessages.scrollTop = chatMessages.scrollHeight;
+    },
+    fail(message: string) {
+      bubble.classList.add('error-bubble');
+      bubble.textContent = message;
+      if (nearBottom()) chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+  };
 }
 
 function showLoadingBubble(): HTMLDivElement {
@@ -367,24 +485,38 @@ async function sendMessage(): Promise<void> {
 
   input.value = '';
   addMessageToChat('user', message);
+  const historyBeforeTurn = chatHistory.slice();
   chatHistory.push({ role: 'user', content: message });
 
-  showLoadingBubble();
+  // Stream the response so reasoning and answer render live, token by token.
+  const stream = createStreamingMessage();
 
   try {
-    const { answer, sources } = await engine.query(message, chatHistory.slice(0, -1));
-    removeLoadingBubble();
+    const { answer } = await engine.queryStream(
+      message,
+      historyBeforeTurn,
+      (delta) => {
+        if (delta.reasoning) stream.pushReasoning(delta.reasoning);
+        if (delta.content) stream.pushContent(delta.content);
+      },
+      (sources) => {
+        pendingSources = sources;
+      }
+    );
     chatHistory.push({ role: 'assistant', content: answer });
-    addMessageToChat('assistant', answer, sources);
+    stream.finish(pendingSources);
   } catch (error) {
-    removeLoadingBubble();
-    const errorMsg = `Sorry, I encountered an error: ${error}`;
-    addMessageToChat('assistant', errorMsg);
+    stream.fail(`Sorry, I encountered an error: ${error}`);
     setStatus(`Query failed: ${error}`, true);
   } finally {
+    pendingSources = undefined;
     input.focus();
   }
 }
+
+// Sources resolve before streaming begins but are attached when the message
+// finishes; held here across the async callback boundary.
+let pendingSources: MessageSource[] | undefined;
 
 function clearChat(): void {
   chatHistory = [];

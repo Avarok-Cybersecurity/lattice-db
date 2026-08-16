@@ -1,5 +1,6 @@
 import { LatticeDB } from 'lattice-db';
-import { getEmbedding, getEmbeddings, chat, rerank } from './openrouter';
+import { getEmbedding, getEmbeddings, chat, chatStream, rerank } from './openrouter';
+import type { ChatStreamDelta } from './openrouter';
 import type { Message, Document, SearchResult, RAGConfig, ManagedDocument, DocumentSource } from './types';
 
 const COLLECTION_NAME = 'documents';
@@ -294,6 +295,12 @@ export class RAGEngine {
       .map(({ index, score }) => ({ ...candidates[index], score }));
   }
 
+  private buildContext(sources: SearchResult[]): string {
+    return sources.length > 0
+      ? sources.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n')
+      : 'No relevant documents found in the knowledge base.';
+  }
+
   async query(
     question: string,
     history: Message[] = [],
@@ -301,19 +308,39 @@ export class RAGEngine {
   ): Promise<{ answer: string; sources: SearchResult[] }> {
     const sources = await this.search(question, topK);
 
-    const context = sources.length > 0
-      ? sources.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n')
-      : 'No relevant documents found in the knowledge base.';
-
-    const messages: Message[] = [
-      ...history,
-      { role: 'user', content: question }
-    ];
-
     const answer = await chat(
-      messages,
-      context,
+      [...history, { role: 'user', content: question }],
+      this.buildContext(sources),
       this.config.apiKey,
+      this.config.chatModel
+    );
+
+    return { answer, sources };
+  }
+
+  /**
+   * Streaming variant of {@link query}.
+   *
+   * `onSources` fires once, as soon as retrieval + reranking finish (before the
+   * model is called), so the UI can show what it's grounding on immediately.
+   * `onDelta` then fires for each reasoning/answer increment. Resolves with the
+   * final answer and the sources used.
+   */
+  async queryStream(
+    question: string,
+    history: Message[],
+    onDelta: (delta: ChatStreamDelta) => void,
+    onSources?: (sources: SearchResult[]) => void,
+    topK?: number
+  ): Promise<{ answer: string; sources: SearchResult[] }> {
+    const sources = await this.search(question, topK);
+    onSources?.(sources);
+
+    const answer = await chatStream(
+      [...history, { role: 'user', content: question }],
+      this.buildContext(sources),
+      this.config.apiKey,
+      onDelta,
       this.config.chatModel
     );
 

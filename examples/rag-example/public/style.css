@@ -1202,3 +1202,89 @@ button.icon-btn:hover {
 .save-state #save-text {
   flex: 1;
 }
+
+/* ============================================================
+   Streaming responses: thinking panel + live answer
+   ============================================================ */
+/* Column beside the avatar holding the thinking panel + answer bubble. */
+.assistant-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Collapsible "Thinking / Thoughts" panel */
+.thinking {
+  border: 1px solid #262626;
+  border-radius: 12px;
+  background: #131313;
+  overflow: hidden;
+}
+
+.thinking > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.78rem;
+  color: #9a9a9a;
+  user-select: none;
+}
+
+.thinking > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Disclosure caret that rotates when open */
+.thinking > summary::before {
+  content: '▸';
+  color: #667eea;
+  font-size: 0.7rem;
+  transition: transform 0.15s ease;
+}
+
+.thinking[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.thinking-label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Animated dots while the model is still reasoning */
+.thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.thinking-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #667eea;
+  animation: typing 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+.thinking-content {
+  padding: 0 0.85rem 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #8a8a8a;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.error-bubble {
+  color: #f87171;
+}
