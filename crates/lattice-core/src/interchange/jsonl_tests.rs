@@ -201,6 +201,59 @@ fn vectors_roundtrip_exactly() {
     assert_eq!(back.points[0].vector, awkward);
 }
 
+/// ★ export ∘ import ∘ export is the identity for f64 config fields.
+///
+/// The header carries the collection config, whose `hnsw.ml` is an f64. The
+/// serializer already emits the shortest round-trippable representation (ryu),
+/// but without serde_json's `float_roundtrip` feature the *parser* reads that
+/// string back up to 1 ulp off — e.g. `0.36067376022224085` returns as
+/// `0.3606737602222409`. The re-exported header then differs by one digit and
+/// the dumps are no longer byte-identical, breaking the format's whole reason
+/// to exist. Vectors are f32 and unaffected; this only bites f64 config fields.
+///
+/// `ml` is set to `1.0/(16f64).ln()`, an irrational value that has no short
+/// decimal and so exercises the full-precision parse.
+#[test]
+fn f64_config_fields_survive_import_byte_identically() {
+    let ml = 1.0 / (16f64).ln();
+    let cfg = CollectionConfig::new(
+        "roundtrip",
+        VectorConfig::new(4, Distance::Cosine),
+        HnswConfig {
+            m: 16,
+            m0: 32,
+            ml,
+            ef: 100,
+            ef_construction: 200,
+        },
+    );
+
+    let mut e = CollectionEngine::new(cfg.clone()).unwrap();
+    e.upsert_points(vec![Point::new_vector(1, vec![0.1, 0.2, 0.3, 0.4])])
+        .unwrap();
+
+    // First export.
+    let mut buf = Vec::new();
+    export_jsonl(&e, &cfg, &mut buf, &ExportOptions::inline()).unwrap();
+    let first = String::from_utf8(buf).unwrap();
+
+    // Import, rebuild, and re-export using the config as it came back.
+    let back = import_jsonl(first.as_bytes()).unwrap();
+    let mut e2 = CollectionEngine::new(back.header.config.clone()).unwrap();
+    e2.upsert_points(back.points.clone()).unwrap();
+    for (from, to, rel, w) in &back.edges {
+        e2.add_edge(*from, *to, rel, *w).unwrap();
+    }
+    let mut buf = Vec::new();
+    export_jsonl(&e2, &back.header.config, &mut buf, &ExportOptions::inline()).unwrap();
+    let second = String::from_utf8(buf).unwrap();
+
+    assert_eq!(
+        first, second,
+        "export∘import∘export must be byte-identical for f64 config fields"
+    );
+}
+
 /// ★ A truncated dump is an error, not a short collection.
 ///
 /// The header's counts are a checksum on the body. Without honouring them, a
