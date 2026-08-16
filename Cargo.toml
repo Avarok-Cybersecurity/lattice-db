@@ -19,7 +19,12 @@ rust-version = "1.75"
 # Serialization - zero-copy
 rkyv = { version = "0.8", features = ["bytecheck", "smallvec-1"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `float_roundtrip`: parse f64 to the exact value of the shortest round-trip
+# representation the serializer (ryu) already emits. Without it the parser is
+# up to 1 ulp off, so JSONL export∘import is not the identity for f64 config
+# fields (e.g. hnsw.ml). Enabled workspace-wide (every crate inherits this via
+# `serde_json.workspace = true`) so parsing is consistent everywhere.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 simd-json = "0.14"
 
 # Async runtime (features specified per-crate for WASM compatibility)
