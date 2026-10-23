@@ -325,6 +325,53 @@ fn test_delete_points() {
     assert!(!result_ids.contains(&5));
 }
 
+/// A search issued straight after a delete must never surface the deleted
+/// point.
+///
+/// On native, `delete_points` removes the point from the authoritative store
+/// immediately but only *queues* its removal from the HNSW index. A search
+/// that beats the background indexer therefore traverses a node that no longer
+/// exists, and before results were filtered against the point store it was
+/// returned to the caller (with an empty payload).
+///
+/// Reproducing this needs the points to be in the HNSW index first — deleting
+/// while they are still queued removes them cleanly and proves nothing — hence
+/// the `flush_pending` before the delete.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_search_never_returns_deleted_points() {
+    let deleted_ids = [1u64, 3, 5];
+
+    for _ in 0..20 {
+        let mut engine = CollectionEngine::new(test_config()).unwrap();
+        engine.upsert_points(create_test_points()).unwrap();
+
+        // Make sure the points really are in the HNSW index, so the delete
+        // below leaves a stale index entry rather than a queued one.
+        engine.flush_pending().unwrap();
+
+        assert_eq!(engine.delete_points(&deleted_ids).unwrap(), 3);
+
+        // Query in a tight loop: the window closes as soon as the indexer
+        // applies the queued deletes.
+        for _ in 0..25 {
+            let query = SearchQuery::new(vec![1.0, 0.0, 0.0, 0.0], 7).with_ef(64);
+            for result in engine.search(query).unwrap() {
+                assert!(
+                    !deleted_ids.contains(&result.id),
+                    "search returned deleted point {}",
+                    result.id
+                );
+                assert!(
+                    engine.get_point(result.id).unwrap().is_some(),
+                    "search returned point {} that is absent from the store",
+                    result.id
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn test_upsert_updates_existing() {
     let config = test_config();
