@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **DiskStorage pages no longer overwrite each other**: pages lived in one `pages.dat` at
+  `page_id * page_size` (4 KiB), but a WAL page grows to 256 KiB and one synced batch can exceed
+  that, so each page rotation wrote over the tail of the page before it and WAL replay silently
+  skipped the clobbered entries (lost upserts, deletes and stale state after reopen). Each page
+  is now its own file under `pages/`, written via a temp file and rename, and read back exactly.
+  `DiskStorage::new`'s size argument is now the largest page it writes (`CapacityExceeded`
+  beyond it; `with_defaults` = 1 GiB). A directory holding the old `pages.dat` is refused with
+  `StorageError::InvalidFormat` and must be rebuilt. lattice-server now calls `init()` on its
+  storages, so it loads the WAL header on restart and applies that refusal.
+
 - Dense vector operations now return `Option`/`Result` instead of panicking
 
 ## [0.1.0] - 2025-01-22

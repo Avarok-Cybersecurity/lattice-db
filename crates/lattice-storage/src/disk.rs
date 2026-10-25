@@ -10,12 +10,21 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 #[cfg(feature = "native")]
-use tokio::fs::{self, File, OpenOptions};
+use tokio::fs::{self, File};
 #[cfg(feature = "native")]
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::AsyncWriteExt;
 
-/// Default page size (4KB, matching typical filesystem block size)
-const DEFAULT_PAGE_SIZE: usize = 4096;
+/// Default largest page a `DiskStorage` holds (1 GiB).
+///
+/// Pages have no fixed size: a WAL page grows to 256 KiB, a single synced batch
+/// can exceed that, and a checkpoint snapshot holds the whole collection. The
+/// bound only refuses a runaway page loudly instead of writing it.
+pub const DEFAULT_MAX_PAGE_BYTES: usize = 1 << 30;
+
+/// The page layout of releases up to 0.3.4: one `pages.dat` holding page `n` at
+/// byte `n * 4096`. A page larger than the stride overwrote its neighbour, so a
+/// directory holding one is refused, never read.
+const LEGACY_PAGES_FILE: &str = "pages.dat";
 
 /// Disk-based storage backend
 ///
@@ -26,15 +35,18 @@ const DEFAULT_PAGE_SIZE: usize = 4096;
 ///
 /// ```text
 /// base_path/
-/// ├── meta.json       # Metadata key-value store
-/// ├── pages.dat       # Page data (offset = page_id * page_size)
-/// └── wal.dat         # Write-ahead log (appended entries)
+/// ├── meta.json                         # Metadata key-value store
+/// └── pages/
+///     └── 00000000000000000000.page     # One file per page, exactly the bytes written
 /// ```
+///
+/// Each page is its own file, so a page of any length never touches another,
+/// and a read returns exactly the bytes of the last write.
 pub struct DiskStorage {
     /// Base directory for all files
     path: PathBuf,
-    /// Page size in bytes
-    page_size: usize,
+    /// Largest page in bytes; a larger write fails with `CapacityExceeded`
+    max_page_bytes: usize,
     /// In-memory cache of metadata (flushed on sync)
     #[cfg(feature = "native")]
     meta_cache: RwLock<HashMap<String, Vec<u8>>>,
@@ -48,11 +60,12 @@ impl DiskStorage {
     ///
     /// # Arguments
     /// * `path` - Directory to store data files
-    /// * `page_size` - Size of each page in bytes (PCND: required)
-    pub fn new(path: PathBuf, page_size: usize) -> Self {
+    /// * `max_page_bytes` - Largest page this storage writes (PCND: required);
+    ///   a larger page fails with `StorageError::CapacityExceeded`
+    pub fn new(path: PathBuf, max_page_bytes: usize) -> Self {
         Self {
             path,
-            page_size,
+            max_page_bytes,
             #[cfg(feature = "native")]
             meta_cache: RwLock::new(HashMap::new()),
             #[cfg(feature = "native")]
@@ -60,23 +73,36 @@ impl DiskStorage {
         }
     }
 
-    /// Create with default page size (4KB)
+    /// Create with the default page bound ([`DEFAULT_MAX_PAGE_BYTES`])
     pub fn with_defaults(path: PathBuf) -> Self {
-        Self::new(path, DEFAULT_PAGE_SIZE)
+        Self::new(path, DEFAULT_MAX_PAGE_BYTES)
     }
 
     /// Initialize storage directory and load existing metadata
+    ///
+    /// Fails with `StorageError::InvalidFormat` on a directory written in the
+    /// fixed-stride layout of 0.3.4 and earlier (`pages.dat`): its pages may
+    /// already overlap, so it must be rebuilt, not read.
     #[cfg(feature = "native")]
     pub async fn init(&self) -> StorageResult<()> {
-        // Create directory if it doesn't exist
-        fs::create_dir_all(&self.path)
+        if self.path.join(LEGACY_PAGES_FILE).exists() {
+            return Err(StorageError::InvalidFormat {
+                expected: "pages/ (one file per page)".to_string(),
+                found: format!(
+                    "{} (the fixed-stride layout of 0.3.4 and earlier, whose pages overlap; rebuild this store)",
+                    self.path.join(LEGACY_PAGES_FILE).display()
+                ),
+            });
+        }
+
+        fs::create_dir_all(self.pages_dir())
             .await
             .map_err(|e| StorageError::Io {
                 message: format!("Failed to create storage directory: {}", e),
             })?;
 
         // Load existing metadata if present
-        let meta_path = self.path.join("meta.json");
+        let meta_path = self.meta_path();
         if meta_path.exists() {
             let content = fs::read_to_string(&meta_path)
                 .await
@@ -95,9 +121,14 @@ impl DiskStorage {
         Ok(())
     }
 
-    /// Get the path to the pages file
-    fn pages_path(&self) -> PathBuf {
-        self.path.join("pages.dat")
+    /// Get the directory holding one file per page
+    fn pages_dir(&self) -> PathBuf {
+        self.path.join("pages")
+    }
+
+    /// Get the path of one page's file
+    fn page_path(&self, page_id: u64) -> PathBuf {
+        self.pages_dir().join(format!("{:020}.page", page_id))
     }
 
     /// Get the path to the metadata file
@@ -129,135 +160,68 @@ impl LatticeStorage for DiskStorage {
     }
 
     async fn read_page(&self, page_id: u64) -> StorageResult<Page> {
-        let pages_path = self.pages_path();
-
-        // If file doesn't exist, return empty page
-        if !pages_path.exists() {
-            return Err(StorageError::PageNotFound { page_id });
-        }
-
-        let mut file = File::open(&pages_path)
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to open pages file: {}", e),
-            })?;
-
-        // Calculate offset
-        let offset = page_id * self.page_size as u64;
-
-        // Check if page exists within file
-        let file_len = file
-            .metadata()
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to get file metadata: {}", e),
-            })?
-            .len();
-
-        if offset >= file_len {
-            return Err(StorageError::PageNotFound { page_id });
-        }
-
-        // Seek to page offset
-        file.seek(SeekFrom::Start(offset))
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to seek to page: {}", e),
-            })?;
-
-        // Read all available bytes from this page's offset to end of file.
-        // Pages may exceed page_size (e.g. WAL page grows with appended entries).
-        let available = (file_len - offset) as usize;
-        let mut buffer = vec![0u8; available];
-        let mut total_read = 0;
-        while total_read < available {
-            let n = file
-                .read(&mut buffer[total_read..])
-                .await
-                .map_err(|e| StorageError::Io {
-                    message: format!("Failed to read page: {}", e),
-                })?;
-            if n == 0 {
-                break;
+        match fs::read(self.page_path(page_id)).await {
+            Ok(page) => Ok(page),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(StorageError::PageNotFound { page_id })
             }
-            total_read += n;
+            Err(e) => Err(StorageError::Io {
+                message: format!("Failed to read page {}: {}", page_id, e),
+            }),
         }
-        buffer.truncate(total_read);
-
-        Ok(buffer)
     }
 
     async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {
-        let pages_path = self.pages_path();
-
-        // Open file for reading and writing, create if doesn't exist
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&pages_path)
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to open pages file: {}", e),
-            })?;
-
-        // Calculate offset
-        let offset = page_id * self.page_size as u64;
-
-        // Seek to page offset
-        file.seek(SeekFrom::Start(offset))
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to seek to page: {}", e),
-            })?;
-
-        // Write data (pad to page size if smaller)
-        let mut padded = data.to_vec();
-        if padded.len() < self.page_size {
-            padded.resize(self.page_size, 0);
+        if data.len() > self.max_page_bytes {
+            return Err(StorageError::CapacityExceeded);
         }
 
-        file.write_all(&padded)
+        // Write a temporary file, make it durable, then rename it over the page:
+        // a crash leaves either the old page or the new one, never a torn page.
+        fs::create_dir_all(self.pages_dir())
             .await
             .map_err(|e| StorageError::Io {
-                message: format!("Failed to write page: {}", e),
+                message: format!("Failed to create pages directory: {}", e),
+            })?;
+        let final_path = self.page_path(page_id);
+        let tmp_path = final_path.with_extension("page.tmp");
+        let mut file = File::create(&tmp_path)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to create page {}: {}", page_id, e),
+            })?;
+        file.write_all(data).await.map_err(|e| StorageError::Io {
+            message: format!("Failed to write page {}: {}", page_id, e),
+        })?;
+        file.sync_all().await.map_err(|e| StorageError::Io {
+            message: format!("Failed to sync page {}: {}", page_id, e),
+        })?;
+        drop(file);
+        fs::rename(&tmp_path, &final_path)
+            .await
+            .map_err(|e| StorageError::Io {
+                message: format!("Failed to install page {}: {}", page_id, e),
             })?;
 
         Ok(())
     }
 
     async fn page_exists(&self, page_id: u64) -> StorageResult<bool> {
-        let pages_path = self.pages_path();
-
-        if !pages_path.exists() {
-            return Ok(false);
-        }
-
-        let file = File::open(&pages_path)
+        fs::try_exists(self.page_path(page_id))
             .await
             .map_err(|e| StorageError::Io {
-                message: format!("Failed to open pages file: {}", e),
-            })?;
-
-        let offset = page_id * self.page_size as u64;
-        let file_len = file
-            .metadata()
-            .await
-            .map_err(|e| StorageError::Io {
-                message: format!("Failed to get file metadata: {}", e),
-            })?
-            .len();
-
-        Ok(offset < file_len)
+                message: format!("Failed to stat page {}: {}", page_id, e),
+            })
     }
 
     async fn delete_page(&self, page_id: u64) -> StorageResult<()> {
-        // Known limitation: zero-fills the page rather than releasing disk space.
-        // The file will not shrink. A future compaction pass could reclaim space
-        // by tracking free pages in a bitmap and rewriting the file.
-        let zeros = vec![0u8; self.page_size];
-        self.write_page(page_id, &zeros).await
+        match fs::remove_file(self.page_path(page_id)).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StorageError::Io {
+                message: format!("Failed to delete page {}: {}", page_id, e),
+            }),
+        }
     }
 
     async fn sync(&self) -> StorageResult<()> {
@@ -284,21 +248,19 @@ impl LatticeStorage for DiskStorage {
             }
         }
 
-        // Sync pages file if it exists
-        // Open with write access — Windows requires it for sync_all()
-        let pages_path = self.pages_path();
-        if pages_path.exists() {
-            let file = OpenOptions::new()
-                .write(true)
-                .open(&pages_path)
-                .await
-                .map_err(|e| StorageError::Io {
-                    message: format!("Failed to open pages file for sync: {}", e),
+        // Page contents are made durable by write_page; make their directory
+        // entries durable too (Unix only: Windows cannot open a directory).
+        #[cfg(unix)]
+        {
+            let pages_dir = self.pages_dir();
+            if pages_dir.exists() {
+                let dir = File::open(&pages_dir).await.map_err(|e| StorageError::Io {
+                    message: format!("Failed to open pages directory for sync: {}", e),
                 })?;
-
-            file.sync_all().await.map_err(|e| StorageError::Io {
-                message: format!("Failed to sync pages file: {}", e),
-            })?;
+                dir.sync_all().await.map_err(|e| StorageError::Io {
+                    message: format!("Failed to sync pages directory: {}", e),
+                })?;
+            }
         }
 
         Ok(())
@@ -478,6 +440,96 @@ mod tests {
         }
 
         // Cleanup
+        fs::remove_dir_all(&path).await.ok();
+    }
+
+    fn pattern(seed: u8, len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|i| seed.wrapping_add((i % 251) as u8))
+            .collect()
+    }
+
+    /// Pages larger than 4 KiB (a WAL page grows to 256 KiB) keep their own
+    /// bytes: writing page 1 must not overwrite page 0, and a read returns the
+    /// exact bytes written, before and after a reopen.
+    #[tokio::test]
+    async fn test_disk_storage_large_pages_do_not_overlap() {
+        let path = temp_storage_path();
+        let pages: Vec<Vec<u8>> = (0..4u8)
+            .map(|i| pattern(i * 7, 300_000 + usize::from(i)))
+            .collect();
+        {
+            let storage = DiskStorage::with_defaults(path.clone());
+            storage.init().await.unwrap();
+            for (id, p) in pages.iter().enumerate() {
+                storage.write_page(id as u64, p).await.unwrap();
+            }
+            storage.sync().await.unwrap();
+            for (id, p) in pages.iter().enumerate() {
+                assert_eq!(&storage.read_page(id as u64).await.unwrap(), p, "page {id}");
+            }
+        }
+        let storage = DiskStorage::with_defaults(path.clone());
+        storage.init().await.unwrap();
+        for (id, p) in pages.iter().enumerate() {
+            assert_eq!(
+                &storage.read_page(id as u64).await.unwrap(),
+                p,
+                "page {id} after reopen"
+            );
+        }
+        fs::remove_dir_all(&path).await.ok();
+    }
+
+    /// A page rewritten shorter reads back as the shorter bytes, with no tail
+    /// left over from the longer write.
+    #[tokio::test]
+    async fn test_disk_storage_rewrite_shorter_page_has_no_stale_tail() {
+        let path = temp_storage_path();
+        let storage = DiskStorage::with_defaults(path.clone());
+        storage.init().await.unwrap();
+        storage.write_page(3, &pattern(1, 10_000)).await.unwrap();
+        storage.write_page(3, b"short").await.unwrap();
+        assert_eq!(storage.read_page(3).await.unwrap(), b"short".to_vec());
+        storage.delete_page(3).await.unwrap();
+        assert!(!storage.page_exists(3).await.unwrap());
+        assert!(matches!(
+            storage.read_page(3).await,
+            Err(StorageError::PageNotFound { page_id: 3 })
+        ));
+        fs::remove_dir_all(&path).await.ok();
+    }
+
+    /// A page larger than the configured bound fails loudly and writes nothing;
+    /// a page of exactly the bound is accepted.
+    #[tokio::test]
+    async fn test_disk_storage_refuses_a_page_over_its_bound() {
+        let path = temp_storage_path();
+        let storage = DiskStorage::new(path.clone(), 1024);
+        storage.init().await.unwrap();
+        assert!(matches!(
+            storage.write_page(0, &pattern(0, 1025)).await,
+            Err(StorageError::CapacityExceeded)
+        ));
+        assert!(!storage.page_exists(0).await.unwrap());
+        storage.write_page(0, &pattern(0, 1024)).await.unwrap();
+        assert_eq!(storage.read_page(0).await.unwrap(), pattern(0, 1024));
+        fs::remove_dir_all(&path).await.ok();
+    }
+
+    /// A directory in the 0.3.4 fixed-stride layout is refused, not misread.
+    #[tokio::test]
+    async fn test_disk_storage_refuses_the_legacy_layout() {
+        let path = temp_storage_path();
+        fs::create_dir_all(&path).await.unwrap();
+        fs::write(path.join("pages.dat"), vec![0u8; 8192])
+            .await
+            .unwrap();
+        let storage = DiskStorage::with_defaults(path.clone());
+        assert!(matches!(
+            storage.init().await,
+            Err(StorageError::InvalidFormat { .. })
+        ));
         fs::remove_dir_all(&path).await.ok();
     }
 }
