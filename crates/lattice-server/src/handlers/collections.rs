@@ -261,8 +261,16 @@ pub async fn create_collection(
                     ));
                 }
 
-                let wal_storage = lattice_storage::DiskStorage::new(wal_dir, 4096);
-                let data_storage = lattice_storage::DiskStorage::new(data_sub, 4096);
+                let wal_storage = lattice_storage::DiskStorage::with_defaults(wal_dir);
+                let data_storage = lattice_storage::DiskStorage::with_defaults(data_sub);
+                for storage in [&wal_storage, &data_storage] {
+                    if let Err(e) = storage.init().await {
+                        return LatticeResponse::internal_error(&format!(
+                            "Failed to open storage: {}",
+                            e
+                        ));
+                    }
+                }
 
                 match AnyEngine::open_durable(config, wal_storage, data_storage).await {
                     Ok(e) => e,

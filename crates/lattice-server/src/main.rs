@@ -96,8 +96,17 @@ async fn load_collections_from_disk(data_dir: &Path, state: &AppState) -> usize 
         };
 
         // Open durable engine (replays WAL for crash recovery)
-        let wal_storage = lattice_storage::DiskStorage::new(path.join("wal"), 4096);
-        let data_storage = lattice_storage::DiskStorage::new(path.join("data"), 4096);
+        let wal_storage = lattice_storage::DiskStorage::with_defaults(path.join("wal"));
+        let data_storage = lattice_storage::DiskStorage::with_defaults(path.join("data"));
+        // init loads the WAL header from meta.json and refuses the pre-0.3.5 layout.
+        if let Err(e) = wal_storage.init().await {
+            error!(collection = %name, error = %e, "Failed to open WAL storage");
+            continue;
+        }
+        if let Err(e) = data_storage.init().await {
+            error!(collection = %name, error = %e, "Failed to open data storage");
+            continue;
+        }
 
         let engine = match AnyEngine::open_durable(config, wal_storage, data_storage).await {
             Ok(e) => e,

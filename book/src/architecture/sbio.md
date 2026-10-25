@@ -80,7 +80,7 @@ The page-based model is chosen because it maps naturally to all storage backends
 | Backend | Page Implementation |
 |---------|---------------------|
 | **MemStorage** | `HashMap<u64, Vec<u8>>` - pages are hash map entries |
-| **DiskStorage** | File with `offset = page_id * PAGE_SIZE` |
+| **DiskStorage** | One file per page under `pages/` |
 | **OpfsStorage** | OPFS file with same offset calculation |
 | **IndexedDB** | Could use page_id as object store key |
 
