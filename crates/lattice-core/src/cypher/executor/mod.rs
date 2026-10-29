@@ -5,9 +5,12 @@
 
 mod context;
 mod evaluation;
+mod expand;
 mod hashing;
 mod json;
+mod mutate;
 mod operations;
+mod sort;
 
 pub use context::{ExecutionContext, LabelRegistry};
 
