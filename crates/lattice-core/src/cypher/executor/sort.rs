@@ -1,6 +1,9 @@
-//! Sort execution: generic comparator plus batch fast paths for property keys.
-
-//! Query operation execution
+//! Sort execution: the ORDER BY total order (`compare::order_cmp`) plus batch fast paths.
+//!
+//! The fast paths read `var.prop` straight from storage for every row. They apply only when
+//! they provably agree with the generic path: `var` is the node in column 0 of every row, the
+//! property is a stored one (not the computed `id` or an internal `_` key), and every value
+//! decoded cleanly; otherwise the generic path runs.
 
 use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats, SortKey};
 use crate::cypher::ast::{Expr, OrderByItem};
@@ -53,16 +56,13 @@ impl QueryExecutor {
                 .iter()
                 .enumerate()
                 .map(|(idx, row)| {
-                    let keys: SortKey = items
+                    let keys = items
                         .iter()
-                        .map(|item| {
-                            self.evaluate_expr(&item.expr, row, ctx)
-                                .unwrap_or(CypherValue::Null)
-                        })
-                        .collect();
-                    (keys, idx)
+                        .map(|item| self.evaluate_expr(&item.expr, row, ctx))
+                        .collect::<CypherResult<SortKey>>()?;
+                    Ok((keys, idx))
                 })
-                .collect()
+                .collect::<CypherResult<_>>()?
         };
 
         // Check for homogeneous i64 keys - enables SIMD-accelerated comparison
@@ -248,7 +248,7 @@ impl QueryExecutor {
         }
 
         // Check if sort expression is simple property access
-        let property = self.extract_simple_property_access(&items[0].expr)?;
+        let property = self.extract_simple_property_access(&items[0].expr, ctx)?;
 
         // Extract all NodeRef IDs from first column (preallocated)
         let node_ids = Self::extract_node_ids(input_rows)?;
@@ -258,6 +258,11 @@ impl QueryExecutor {
             .collection
             .batch_extract_i64_property(&node_ids, property)
             .ok()?;
+        // i64::MIN is the extractor's marker for "missing or not an integer", whose place in
+        // the ORDER BY total order only the generic path knows.
+        if keys.contains(&i64::MIN) {
+            return None;
+        }
         Some((keys, items[0].ascending))
     }
 
@@ -278,7 +283,7 @@ impl QueryExecutor {
         // Pattern: ORDER BY p.property where p is the first column (NodeRef)
         let property_names: Vec<&str> = items
             .iter()
-            .filter_map(|item| self.extract_simple_property_access(&item.expr))
+            .filter_map(|item| self.extract_simple_property_access(&item.expr, ctx))
             .collect();
 
         // If not all expressions match, fall back to sequential
@@ -295,38 +300,46 @@ impl QueryExecutor {
             .batch_extract_properties(&node_ids, &property_names)
             .ok()?;
 
-        // Parallel deserialize JSON bytes to CypherValues
-        let prefetched: Vec<Vec<CypherValue>> = parallel::enumerate_map_collect(
+        // Parallel deserialize JSON bytes to CypherValues (None: a value failed to decode)
+        let prefetched: Vec<Option<Vec<CypherValue>>> = parallel::enumerate_map_collect(
             &raw_properties,
             |_idx, row_properties: &Vec<Option<Vec<u8>>>| {
                 row_properties
                     .iter()
-                    .map(|opt_bytes: &Option<Vec<u8>>| {
-                        opt_bytes
-                            .as_ref()
-                            .and_then(|bytes| self.json_bytes_to_cypher_value(bytes).ok())
-                            .unwrap_or(CypherValue::Null)
+                    .map(|opt_bytes: &Option<Vec<u8>>| match opt_bytes {
+                        Some(bytes) => self.json_bytes_to_cypher_value(bytes).ok(),
+                        None => Some(CypherValue::Null),
                     })
                     .collect()
             },
         );
 
-        Some(prefetched)
+        prefetched.into_iter().collect()
     }
 
-    /// Extract the property name if this expression is a simple property access on first column.
-    /// Pattern: Expr::Property { expr: Expr::Variable(_), property }
-    pub(crate) fn extract_simple_property_access<'a>(&self, expr: &'a Expr) -> Option<&'a str> {
-        if let Expr::Property {
-            expr: inner,
-            property,
-        } = expr
-        {
-            if matches!(inner.as_ref(), Expr::Variable(_)) {
-                return Some(property.as_str());
-            }
+    /// The property name when `expr` is `var.property`, `var` is bound to column 0, and the
+    /// property is a stored one (`id` is computed from the point id; `_` keys are internal)
+    pub(crate) fn extract_simple_property_access<'a>(
+        &self,
+        expr: &'a Expr,
+        ctx: &ExecutionContext,
+    ) -> Option<&'a str> {
+        match expr {
+            Expr::Property {
+                expr: inner,
+                property,
+            } => match inner.as_ref() {
+                Expr::Variable(var)
+                    if ctx.get_variable_column(var) == Some(0)
+                        && property != "id"
+                        && !property.starts_with('_') =>
+                {
+                    Some(property.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
         }
-        None
     }
 
     /// Optimized sort for single i64 key using unstable sort.
@@ -334,20 +347,16 @@ impl QueryExecutor {
     /// comparison path which has more overhead per comparison.
     #[inline]
     pub(crate) fn sort_i64_simd(&self, keyed_indices: &mut [(SortKey, usize)], ascending: bool) {
-        // Direct comparison with inline .as_int() extraction
-        // Cheaper than generic CypherValue comparison path
+        // (is_null, value): null sorts above every integer, as in the ORDER BY total order,
+        // so it comes last ascending and first descending.
+        let key = |k: &SortKey| {
+            let v = k.first().and_then(|v| v.as_int());
+            (v.is_none(), v.unwrap_or(0))
+        };
         if ascending {
-            keyed_indices.sort_unstable_by(|(a, _), (b, _)| {
-                let val_a = a.first().and_then(|v| v.as_int()).unwrap_or(i64::MAX);
-                let val_b = b.first().and_then(|v| v.as_int()).unwrap_or(i64::MAX);
-                val_a.cmp(&val_b)
-            });
+            keyed_indices.sort_unstable_by_key(|(k, _)| key(k));
         } else {
-            keyed_indices.sort_unstable_by(|(a, _), (b, _)| {
-                let val_a = a.first().and_then(|v| v.as_int()).unwrap_or(i64::MIN);
-                let val_b = b.first().and_then(|v| v.as_int()).unwrap_or(i64::MIN);
-                val_b.cmp(&val_a)
-            });
+            keyed_indices.sort_unstable_by_key(|(k, _)| std::cmp::Reverse(key(k)));
         }
     }
 }
