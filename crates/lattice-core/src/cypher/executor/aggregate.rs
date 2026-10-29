@@ -4,8 +4,8 @@
 //! order, so `collect()` after an ORDER BY keeps that order. With no grouping keys there is
 //! exactly one group, even over zero rows (`count(*)` = 0, `collect()` = []).
 
-use super::compare::order_cmp;
 use super::canon::Canon;
+use super::compare::order_cmp;
 use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats};
 use crate::cypher::ast::{AggregateKind, Expr, ProjectionItem};
 use crate::cypher::error::{CypherError, CypherResult};

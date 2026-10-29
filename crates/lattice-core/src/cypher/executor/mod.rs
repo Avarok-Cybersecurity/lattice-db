@@ -6,12 +6,12 @@
 mod access;
 mod aggregate;
 mod arith;
+mod canon;
 mod compare;
 mod context;
 mod evaluation;
 mod expand;
 mod functions;
-mod canon;
 mod join;
 mod json;
 mod mutate;
