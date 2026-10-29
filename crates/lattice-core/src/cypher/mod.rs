@@ -34,17 +34,29 @@
 //!   Results
 //! ```
 //!
-//! # Supported Cypher Subset (MVP)
+//! # Supported Cypher Subset
 //!
 //! | Clause | Support | Example |
 //! |--------|---------|---------|
-//! | MATCH | Single pattern | `MATCH (n:Person)` |
-//! | WHERE | Basic predicates | `WHERE n.age > 21` |
-//! | RETURN | Properties, aliases | `RETURN n.name AS name` |
+//! | MATCH | Patterns in any direction, comma-joined, own WHERE | `MATCH (m)-[r:MEASURES]->(k:Kernel)` |
+//! | OPTIONAL MATCH | Left outer join (nulls for no match) | `OPTIONAL MATCH (k)<-[:ABOUT]-(d)` |
+//! | WHERE | Any expression, three-valued logic | `WHERE m.tok_s > 10 AND k:Kernel` |
+//! | WITH | Projection, aggregation, DISTINCT, ORDER BY/SKIP/LIMIT, WHERE | `WITH k, count(m) AS n WHERE n > 2` |
+//! | UNWIND | Lists (null: no rows) | `UNWIND d.tags AS t` |
+//! | RETURN | Expressions, `*`, DISTINCT, implicit GROUP BY | `RETURN k.name, collect(m.name)` |
+//! | ORDER BY / SKIP / LIMIT | Expressions, aliases, aggregates; nulls last ascending | `ORDER BY count(*) DESC` |
 //! | CREATE | Nodes + relationships | `CREATE (n:Person {name: "Alice"})` |
 //! | DELETE | Single element | `DELETE n` |
-//! | LIMIT | Integer | `LIMIT 10` |
-//! | ORDER BY | Single property | `ORDER BY n.name` |
+//!
+//! Expressions: arithmetic, string/list `+`, comparisons (chained), AND/OR/XOR/NOT, IN,
+//! STARTS WITH / ENDS WITH / CONTAINS, IS \[NOT\] NULL, label predicates, CASE, list and map
+//! literals, indexing and slicing, parameters, the scalar functions of `ast::ScalarFn` and the
+//! aggregates of `ast::AggregateKind`.
+//!
+//! Refused with an error naming the construct: MERGE, SET, REMOVE, CALL, FOREACH, UNION,
+//! shortestPath, named paths, list/pattern comprehensions, subqueries, `=~`, and binding a
+//! variable-length relationship to a variable. Variable-length patterns return each node
+//! reachable within the hop range once (by shortest distance), not one row per path.
 //!
 //! # Example
 //!
@@ -67,6 +79,7 @@
 pub mod ast;
 pub mod error;
 pub mod executor;
+mod explain;
 pub mod handler;
 pub mod parser;
 pub mod planner;

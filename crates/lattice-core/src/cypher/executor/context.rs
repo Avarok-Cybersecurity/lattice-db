@@ -1,12 +1,28 @@
 //! Execution context and label registry for query execution
 
+use super::InternalRows;
+use crate::cypher::error::{CypherError, CypherResult};
 use crate::engine::EngineOps;
 use crate::sync::SyncCell;
 use crate::types::point::Point;
 use crate::types::value::CypherValue;
-use rustc_hash::FxHashMap;
+use crate::types::SharedStr;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// A relationship a query matched. LatticeDB edges have no identity of their own, so a query
+/// refers to one by a handle into the context's table, keyed by (start, end, type).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelRecord {
+    pub src: u64,
+    pub dst: u64,
+    pub rel_type: SharedStr,
+    pub weight: f32,
+}
+
+/// Incoming edges per node: target -> (source, type, weight)
+type ReverseAdjacency = FxHashMap<u64, Vec<(u64, SharedStr, f32)>>;
 
 /// Registry for label -> bit position mapping (supports up to 64 labels)
 ///
@@ -93,6 +109,15 @@ pub struct ExecutionContext<'a> {
     label_registry: SyncCell<LabelRegistry>,
     /// Cache for computed label bitmaps using FxHashMap for fast integer hashing
     label_bitmap_cache: SyncCell<FxHashMap<u64, u64>>,
+    /// Members of each label a label predicate asked about (one index read per label)
+    label_members: SyncCell<FxHashMap<String, Arc<FxHashSet<u64>>>>,
+    /// Relationships matched so far; `RelationshipRef(h)` is `rels[h]`
+    rels: Vec<RelRecord>,
+    rel_handles: FxHashMap<(u64, u64, SharedStr), u64>,
+    /// Built on the first incoming/undirected expansion (edges are stored outgoing only)
+    incoming: Option<ReverseAdjacency>,
+    /// Rows an `OptionalMatch` hands to the `Argument` leaf of its inner plan
+    argument: Option<InternalRows>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -106,6 +131,11 @@ impl<'a> ExecutionContext<'a> {
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
             label_bitmap_cache: SyncCell::new(FxHashMap::default()),
+            label_members: SyncCell::new(FxHashMap::default()),
+            rels: Vec::new(),
+            rel_handles: FxHashMap::default(),
+            incoming: None,
+            argument: None,
         }
     }
 
@@ -122,6 +152,11 @@ impl<'a> ExecutionContext<'a> {
             property_cache: SyncCell::new(FxHashMap::default()),
             label_registry: SyncCell::new(LabelRegistry::new()),
             label_bitmap_cache: SyncCell::new(FxHashMap::default()),
+            label_members: SyncCell::new(FxHashMap::default()),
+            rels: Vec::new(),
+            rel_handles: FxHashMap::default(),
+            incoming: None,
+            argument: None,
         }
     }
 
@@ -150,6 +185,113 @@ impl<'a> ExecutionContext<'a> {
     #[inline]
     pub fn clear_bindings(&mut self) {
         self.variable_bindings.clear();
+    }
+
+    /// Bindings sorted by column
+    pub(crate) fn bindings_in_order(&self) -> Vec<(String, usize)> {
+        let mut b: Vec<(String, usize)> = self
+            .variable_bindings
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        b.sort_by_key(|(_, c)| *c);
+        b
+    }
+
+    /// Replace all bindings: `names[i]` is column `i`
+    pub(crate) fn rebind(&mut self, names: impl IntoIterator<Item = impl AsRef<str>>) {
+        self.variable_bindings.clear();
+        for (i, n) in names.into_iter().enumerate() {
+            self.bind_variable(n.as_ref(), i);
+        }
+    }
+
+    /// Drop the binding of column `col` and shift every later column down by one
+    pub(crate) fn unbind_column(&mut self, col: usize) {
+        self.variable_bindings.retain(|_, c| *c != col);
+        for c in self.variable_bindings.values_mut() {
+            if *c > col {
+                *c -= 1;
+            }
+        }
+    }
+
+    /// Hand rows to the next `Argument` leaf
+    pub(crate) fn set_argument(&mut self, rows: InternalRows) {
+        self.argument = Some(rows);
+    }
+
+    /// Take the rows an enclosing `OptionalMatch` provided
+    pub(crate) fn take_argument(&mut self) -> CypherResult<InternalRows> {
+        self.argument
+            .take()
+            .ok_or_else(|| CypherError::internal("Argument evaluated outside OPTIONAL MATCH"))
+    }
+
+    /// The handle of relationship (src)-[rel_type]->(dst), registering it on first sight
+    pub(crate) fn rel_handle(&mut self, src: u64, dst: u64, rel_type: &str, weight: f32) -> u64 {
+        let key = (src, dst, SharedStr::from(rel_type));
+        if let Some(h) = self.rel_handles.get(&key) {
+            return *h;
+        }
+        let h = self.rels.len() as u64;
+        self.rels.push(RelRecord {
+            src,
+            dst,
+            rel_type: key.2.clone(),
+            weight,
+        });
+        self.rel_handles.insert(key, h);
+        h
+    }
+
+    /// The relationship behind a handle
+    pub(crate) fn rel(&self, handle: u64) -> CypherResult<&RelRecord> {
+        usize::try_from(handle)
+            .ok()
+            .and_then(|i| self.rels.get(i))
+            .ok_or(CypherError::RelationshipNotFound { id: handle })
+    }
+
+    /// Incoming edges of `node`, building the reverse adjacency on first use (one pass over
+    /// every node's outgoing edges)
+    pub(crate) fn incoming(&mut self, node: u64) -> CypherResult<Vec<(u64, SharedStr, f32)>> {
+        if self.incoming.is_none() {
+            let mut rev: ReverseAdjacency = FxHashMap::default();
+            for src in self.collection.point_ids()? {
+                for e in self.collection.get_edges(src)? {
+                    rev.entry(e.target_id).or_default().push((
+                        src,
+                        SharedStr::from(e.relation.as_str()),
+                        e.weight,
+                    ));
+                }
+            }
+            self.incoming = Some(rev);
+        }
+        Ok(self
+            .incoming
+            .as_ref()
+            .and_then(|rev| rev.get(&node).cloned())
+            .unwrap_or_default())
+    }
+
+    /// Whether `node` carries `label` (answered from the label index)
+    pub(crate) fn node_has_label(&self, node: u64, label: &str) -> CypherResult<bool> {
+        if let Some(members) = self.label_members.borrow().get(label) {
+            return Ok(members.contains(&node));
+        }
+        let members: Arc<FxHashSet<u64>> = Arc::new(
+            self.collection
+                .point_ids_by_label(label)?
+                .into_iter()
+                .collect(),
+        );
+        let has = members.contains(&node);
+        self.label_members
+            .borrow_mut()
+            .insert(label.to_string(), members);
+        Ok(has)
     }
 
     /// Get a point by ID, using cache if available

@@ -49,6 +49,22 @@ pub enum CypherError {
         value_type: String,
     },
 
+    #[error("Unknown function '{name}'")]
+    UnknownFunction { name: String },
+
+    #[error("Function {function}() takes {expected} argument(s), got {actual}")]
+    InvalidArgumentCount {
+        function: String,
+        expected: String,
+        actual: usize,
+    },
+
+    #[error("Invalid use of aggregation: {message}")]
+    InvalidAggregation { message: String },
+
+    #[error("Missing parameter: '${name}'")]
+    MissingParameter { name: String },
+
     // --- Execution Errors ---
     #[error("Node not found: {id}")]
     NodeNotFound { id: u64 },
@@ -122,6 +138,21 @@ impl CypherError {
     pub fn unsupported(feature: impl Into<String>) -> Self {
         Self::UnsupportedFeature {
             feature: feature.into(),
+        }
+    }
+
+    /// Create an invalid-operation (type) error
+    pub fn invalid(operation: impl Into<String>, value_type: impl Into<String>) -> Self {
+        Self::InvalidOperation {
+            operation: operation.into(),
+            value_type: value_type.into(),
+        }
+    }
+
+    /// Create an aggregation-misuse error
+    pub fn aggregation(message: impl Into<String>) -> Self {
+        Self::InvalidAggregation {
+            message: message.into(),
         }
     }
 

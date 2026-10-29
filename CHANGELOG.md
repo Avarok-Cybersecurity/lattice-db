@@ -38,6 +38,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dense vector operations now return `Option`/`Result` instead of panicking
 
+## [0.4.0] - 2026-10-28
+
+Cypher read queries now evaluate full expressions. This is a minor bump rather than a
+patch because the public `Query` AST and the planner's operators changed.
+
+### Breaking
+
+- `cypher::ast::Query` is now `clauses: Vec<Clause>` plus `return_clause`. The single
+  `match_clause`, `optional_matches`, `where_clause`, `with_clause` and `order_by` fields are
+  gone; each `MATCH`, `OPTIONAL MATCH`, `UNWIND` and `WITH` is a `Clause` in query order.
+  `ReturnClause` now carries `order_by`, `skip` and `limit`, and `WithClause` wraps a
+  `ReturnClause` projection.
+- `Expr` gains `HasLabels`, `Index`, `Slice` and `Scalar`; `CypherError` gains
+  `UnknownFunction`, `InvalidArgumentCount`, `InvalidAggregation` and `MissingParameter`.
+- `LogicalOp` gains `Aggregate`, `Argument`, `Cartesian` and `Unwind`, and `OptionalExpand`
+  is replaced by `OptionalMatch`.
+
+### Added
+
+- Expressions: property access on nodes, relationships and maps; comparisons and
+  `AND`/`OR`/`XOR`/`NOT` in three-valued logic; `IN`, `STARTS WITH`, `ENDS WITH`,
+  `CONTAINS`, `IS [NOT] NULL`; checked integer arithmetic and `^`; string and list `+`;
+  simple and generic `CASE`; list and map literals, indexing and slicing; parameters.
+- 34 scalar functions (`labels`, `type`, `id`, `keys`, `properties`, `size`, `length`,
+  `exists`, `coalesce`, `toString`, `toInteger`, `toFloat`, `toLower`, `toUpper`, `head`,
+  `last`, ...), resolved once at plan time with their arity checked.
+- Aggregates `count(*)`, `count(x)`, `count(DISTINCT x)`, `collect`, `min`, `max`, `sum`,
+  `avg`, with implicit grouping on the non-aggregate items.
+- Clauses: `MATCH`, `OPTIONAL MATCH` (left outer join), `UNWIND`, `WITH ... WHERE`, and
+  `RETURN` with `DISTINCT`, `ORDER BY` on any expression, `SKIP` and `LIMIT`, applied in
+  openCypher order (project, DISTINCT, ORDER BY, SKIP, LIMIT).
+- A pattern whose first node is unbound and whose last node is bound is planned from the
+  bound end, as one expansion per input row instead of a scan joined with every row.
+
+Anything outside this subset is refused with an error that names it, never answered
+wrongly: `MERGE`, `SET`, `CALL`, `UNION`, `shortestPath`, named paths, list and pattern
+comprehensions, subqueries, `reduce`, `=~`, `id()` of a relationship, and a variable bound
+to a variable-length relationship.
+
+### Changed
+
+- An unaliased result column is named by its expression text (`m.id`, `count(*)`).
+- Float division or modulo by zero is an error, like integer division by zero.
+- A single-hop match returns one row per matching relationship, so parallel relationships
+  and self-loops now appear.
+- A variable-length pattern returns each node in the hop range once, at its shortest
+  distance, not one row per path.
+- `SKIP` and `LIMIT` take integer literals only.
+- An `ORDER BY` key that fails to evaluate is an error instead of a null.
+
+### Fixed
+
+These returned wrong answers on 0.3.x:
+
+- `a - b` was parsed as `a + b`, `/` and `%` as `*`, and unary minus was dropped.
+- `CONTAINS` was evaluated as `IN`, and map literals evaluated to `{}`.
+- `WHERE x < 15` kept rows where `x` is null.
+- `(a)<-[]-(b)` followed outgoing relationships.
+- `DISTINCT` and `LIMIT` ran before the projection.
+- The `ORDER BY` fast paths sorted on the wrong column for a key on another variable, read a
+  payload `id` instead of the point id for `n.id`, and put nulls first; nulls now sort last
+  ascending and first descending, as on the generic path.
+- A query naming a label on any pattern node after the first failed with
+  `Unsupported feature: Complex expression evaluation`.
+- `IS NULL` and `count(*)` did not parse.
+
+### Security
+
+- utoipa 6 / utoipa-swagger-ui 10 move the `openapi` feature's build dependency from zip
+  3.0.0 to zip 9 (RUSTSEC-2026-0367, -0368, -0369).
+
 ## [0.1.0] - 2025-01-22
 
 ### Added
