@@ -174,7 +174,7 @@ pub fn attach_to(app: Router, state: AppState) -> Router {
 async fn dispatch(State(state): State<AppState>, request: Request<Body>) -> Response {
     let lattice_request = match to_lattice_request(request).await {
         Ok(req) => req,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     to_axum_response(route(state, lattice_request).await)
@@ -191,7 +191,7 @@ where
 {
     let lattice_request = match to_lattice_request(request).await {
         Ok(req) => req,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     to_axum_response(handler(lattice_request).await)
@@ -204,7 +204,7 @@ where
 /// Note: when this router is mounted with [`Router::nest`], Axum strips the
 /// mount prefix before the request reaches here, so LatticeDB always sees
 /// paths relative to its mount point.
-async fn to_lattice_request(request: Request<Body>) -> Result<LatticeRequest, Response> {
+async fn to_lattice_request(request: Request<Body>) -> Result<LatticeRequest, Box<Response>> {
     // Extract method and path - HTTP methods are already uppercase
     let method = request.method().to_string();
     let path = request.uri().path().to_owned();
@@ -217,11 +217,13 @@ async fn to_lattice_request(request: Request<Body>) -> Result<LatticeRequest, Re
     let body = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
         Ok(bytes) => bytes.into(),
         Err(e) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("Failed to read body: {}", e),
-            )
-                .into_response());
+            return Err(Box::new(
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to read body: {}", e),
+                )
+                    .into_response(),
+            ));
         }
     };
 

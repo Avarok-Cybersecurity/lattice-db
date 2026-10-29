@@ -651,7 +651,7 @@ impl HnswIndex {
                 .results
                 .sort_unstable_by(|a, b| cmp_f32(a.distance, b.distance));
             scratch.results.truncate(ef);
-            scratch.results.drain(..).collect()
+            scratch.results.to_vec()
         })
     }
 
