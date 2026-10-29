@@ -1,119 +1,111 @@
-//! Query planning: MATCH, OPTIONAL MATCH, WHERE and the projection pipeline.
+//! Query planning: the clause pipeline (MATCH, OPTIONAL MATCH, UNWIND, WITH) and RETURN.
+//!
+//! Clauses are planned left to right over one plan. `scope` holds the variables the current
+//! plan's rows bind, in binding order; `unit` is true while the plan is still the single empty
+//! row a query starts from (so the first scan replaces it instead of joining with it).
 
+use super::pattern::MatchState;
+use super::projection::ProjectionKind;
+use super::resolve::{resolve, Site};
 use super::{LogicalOp, QueryPlanner};
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
 
 impl QueryPlanner {
-    /// Plan a query
+    /// Plan a read query
     pub(super) fn plan_query(&self, query: &Query) -> CypherResult<LogicalOp> {
-        // Start with the MATCH clause or a single row
-        let mut plan = if let Some(match_clause) = &query.match_clause {
-            self.plan_match(match_clause)?
-        } else {
-            LogicalOp::SingleRow
-        };
+        let mut plan = LogicalOp::SingleRow;
+        let mut scope: Vec<String> = Vec::new();
+        let mut unit = true;
+        let mut anon = 0u32;
 
-        // Apply OPTIONAL MATCH clauses
-        for optional in &query.optional_matches {
-            plan = self.plan_optional_match(plan, optional)?;
-        }
-
-        // Apply WHERE clause
-        if let Some(where_clause) = &query.where_clause {
-            plan = LogicalOp::Filter {
-                input: Box::new(plan),
-                predicate: where_clause.predicate.clone(),
+        for clause in &query.clauses {
+            plan = match clause {
+                Clause::Match(m) => self.plan_match(plan, &mut scope, unit, &mut anon, m)?,
+                Clause::Unwind(u) => {
+                    if scope.contains(&u.variable) {
+                        return Err(CypherError::syntax(
+                            0,
+                            0,
+                            format!("Variable `{}` already declared", u.variable),
+                        ));
+                    }
+                    let expr = resolve(&u.expr, &scope, Site::Unwind)?;
+                    scope.push(u.variable.clone());
+                    LogicalOp::Unwind {
+                        input: Box::new(plan),
+                        expr,
+                        variable: u.variable.clone(),
+                    }
+                }
+                Clause::With(w) => {
+                    let mut plan = self.plan_projection(
+                        plan,
+                        &mut scope,
+                        &w.projection,
+                        ProjectionKind::With,
+                    )?;
+                    if let Some(where_clause) = &w.where_clause {
+                        plan = LogicalOp::Filter {
+                            input: Box::new(plan),
+                            predicate: resolve(&where_clause.predicate, &scope, Site::Where)?,
+                        };
+                    }
+                    plan
+                }
             };
+            unit = false;
         }
 
-        // Apply ORDER BY (with optional limit for partial sort optimization)
-        // When there's no SKIP, we can pass the LIMIT to Sort for O(n) partial sort
-        let sort_limit = if query.skip.is_none() {
-            query.limit
-        } else {
-            None
-        };
-        if let Some(order_by) = &query.order_by {
-            plan = LogicalOp::Sort {
-                input: Box::new(plan),
-                items: order_by.items.clone(),
-                limit: sort_limit,
-            };
-        }
-
-        // Apply SKIP
-        if let Some(skip) = query.skip {
-            plan = LogicalOp::Skip {
-                input: Box::new(plan),
-                count: skip,
-            };
-        }
-
-        // Apply LIMIT (even if Sort already handled it, keeps semantics correct)
-        if let Some(limit) = query.limit {
-            plan = LogicalOp::Limit {
-                input: Box::new(plan),
-                count: limit,
-            };
-        }
-
-        // Apply RETURN clause (projection)
-        if query.return_clause.distinct {
-            plan = LogicalOp::Distinct {
-                input: Box::new(plan),
-            };
-        }
-
-        plan = LogicalOp::Project {
-            input: Box::new(plan),
-            items: query.return_clause.items.clone(),
-        };
-
-        Ok(plan)
+        self.plan_projection(
+            plan,
+            &mut scope,
+            &query.return_clause,
+            ProjectionKind::Return,
+        )
     }
 
-    /// Plan a MATCH clause
-    pub(super) fn plan_match(&self, match_clause: &MatchClause) -> CypherResult<LogicalOp> {
-        if match_clause.patterns.is_empty() {
-            return Err(CypherError::syntax(0, 0, "Empty MATCH clause"));
-        }
-
-        // Limitation: only single-pattern MATCH is supported.
-        // Multi-pattern MATCH (Cartesian product) requires cross-join planning.
-        if match_clause.patterns.len() > 1 {
-            return Err(CypherError::unsupported(
-                "Multiple MATCH patterns (Cartesian product) not yet supported",
-            ));
-        }
-        let pattern = &match_clause.patterns[0];
-        self.plan_pattern(pattern)
-    }
-
-    /// Plan an OPTIONAL MATCH clause
-    pub(super) fn plan_optional_match(
+    /// Plan MATCH / OPTIONAL MATCH and its WHERE over `input`
+    fn plan_match(
         &self,
         input: LogicalOp,
-        match_clause: &MatchClause,
+        scope: &mut Vec<String>,
+        unit: bool,
+        anon: &mut u32,
+        m: &MatchClause,
     ) -> CypherResult<LogicalOp> {
-        // Limitation: OPTIONAL MATCH currently behaves like MATCH (inner join).
-        // Proper left-outer-join semantics (NULL rows for non-matches) not yet implemented.
-
-        if match_clause.patterns.is_empty() {
-            return Ok(input);
+        if m.patterns.is_empty() {
+            return Err(CypherError::syntax(0, 0, "Empty MATCH clause"));
         }
-
-        let pattern = &match_clause.patterns[0];
-
-        // Only support patterns that start with an existing variable
-        if let Some(PatternElement::Node(node)) = pattern.elements.first() {
-            if let Some(ref _var) = node.variable {
-                // Expand from existing variable
-                return self.plan_pattern_expansion(input, pattern);
-            }
+        let mut local_scope = scope.clone();
+        // An OPTIONAL MATCH is planned over its input's rows (Argument) and joined back.
+        let (mut plan, outer) = if m.optional {
+            (LogicalOp::Argument, Some(input))
+        } else {
+            (input, None)
+        };
+        let mut st = MatchState {
+            scope: &mut local_scope,
+            unit: unit && outer.is_none(),
+            anon,
+            rels: Vec::new(),
+        };
+        for pattern in &m.patterns {
+            plan = self.plan_pattern(plan, &mut st, pattern)?;
         }
-
-        // For standalone patterns, just plan them
-        self.plan_pattern(pattern)
+        if let Some(where_clause) = &m.where_clause {
+            plan = LogicalOp::Filter {
+                input: Box::new(plan),
+                predicate: resolve(&where_clause.predicate, &local_scope, Site::Where)?,
+            };
+        }
+        *scope = local_scope;
+        Ok(match outer {
+            Some(input) => LogicalOp::OptionalMatch {
+                input: Box::new(input),
+                inner: Box::new(plan),
+            },
+            None => plan,
+        })
     }
 }

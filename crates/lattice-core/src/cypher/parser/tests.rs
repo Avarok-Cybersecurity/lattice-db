@@ -3,6 +3,13 @@ use super::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
+fn first_match(query: &Query) -> MatchClause {
+    match query.clauses.first() {
+        Some(Clause::Match(m)) => m.clone(),
+        other => panic!("expected a MATCH clause, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_parse_simple_match() {
     let parser = CypherParser::new();
@@ -10,7 +17,7 @@ fn test_parse_simple_match() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        assert!(query.match_clause.is_some());
+        assert!(matches!(query.clauses.first(), Some(Clause::Match(_))));
         assert_eq!(query.return_clause.items.len(), 1);
     }
 }
@@ -22,7 +29,7 @@ fn test_parse_match_with_label() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        let match_clause = query.match_clause.unwrap();
+        let match_clause = first_match(&query);
         if let PatternElement::Node(node) = &match_clause.patterns[0].elements[0] {
             assert_eq!(node.labels[0], "Person");
         }
@@ -43,7 +50,7 @@ fn test_parse_match_with_relationship() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        let match_clause = query.match_clause.unwrap();
+        let match_clause = first_match(&query);
         assert_eq!(match_clause.patterns[0].elements.len(), 3);
     }
 }
@@ -55,7 +62,7 @@ fn test_parse_where_clause() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        assert!(query.where_clause.is_some());
+        assert!(first_match(&query).where_clause.is_some());
     }
 }
 
@@ -66,7 +73,7 @@ fn test_parse_order_by() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        assert!(query.order_by.is_some());
+        assert!(query.return_clause.order_by.is_some());
     }
 }
 
@@ -77,7 +84,7 @@ fn test_parse_limit() {
     assert!(result.is_ok(), "Failed: {:?}", result);
 
     if let Ok(Statement::Query(query)) = result {
-        assert_eq!(query.limit, Some(10));
+        assert_eq!(query.return_clause.limit, Some(10));
     }
 }
 

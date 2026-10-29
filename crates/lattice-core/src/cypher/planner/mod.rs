@@ -1,21 +1,32 @@
 //! Query planner - converts Cypher AST to logical operations
 //!
 //! The planner transforms the parsed AST into a logical execution plan
-//! that can be executed by the executor.
+//! that can be executed by the executor. It also does the semantic checks openCypher requires
+//! before execution: every variable must be in scope, every function must exist with the right
+//! arity, aggregates may appear only in projections, and unaliased WITH expressions are refused.
 
 use crate::cypher::ast::*;
 use crate::cypher::error::CypherResult;
-// compact_str removed - using standard String
 use serde::{Deserialize, Serialize};
-// smallvec removed - using standard Vec
 
 /// Maximum allowed path traversal depth (DoS protection)
 const MAX_PATH_LENGTH: u32 = 100;
 
+/// One aggregate the `Aggregate` operator computes per group
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AggregateCall {
+    pub kind: AggregateKind,
+    /// `count(DISTINCT x)`, `collect(DISTINCT x)`, ...
+    pub distinct: bool,
+    /// The argument; `None` is `count(*)`
+    pub arg: Option<Expr>,
+}
+
 /// Logical operation in the query plan
 ///
 /// These operations form a tree that represents the logical execution plan.
-/// The executor traverses this tree to produce results.
+/// The executor traverses this tree to produce results. Operators bind the variables they
+/// introduce to row columns in execution order (inputs first), which the executor tracks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LogicalOp {
     // === Scan Operators ===
@@ -34,26 +45,47 @@ pub enum LogicalOp {
     NodeByIdSeek { variable: String, ids: Vec<u64> },
 
     // === Expand Operators ===
-    /// Expand from a node along relationships
+    /// Expand from a bound node along relationships.
+    ///
+    /// When `to` (or `rel_variable`) is already bound, the expansion only keeps rows whose
+    /// traversed node (relationship) equals the bound value.
     Expand {
         input: Box<LogicalOp>,
         from: String,
+        /// Single-hop expansions always bind the relationship (anonymous ones under a hidden
+        /// name) so relationship uniqueness can be enforced; variable-length ones never do.
         rel_variable: Option<String>,
         to: String,
         rel_types: Vec<String>,
         direction: Direction,
         min_hops: u32,
         max_hops: u32,
+        /// Relationships bound earlier in the same MATCH that this one must differ from
+        distinct_from: Vec<String>,
     },
 
-    /// Optional expand (for OPTIONAL MATCH)
-    OptionalExpand {
+    // === Joins ===
+    /// Every combination of a left row and a right row (right is independent of left)
+    Cartesian {
+        left: Box<LogicalOp>,
+        right: Box<LogicalOp>,
+    },
+
+    /// The rows of the enclosing `OptionalMatch` input (leaf of its `inner` plan)
+    Argument,
+
+    /// Left outer join: `inner` runs over the input rows (via `Argument`); input rows with no
+    /// inner match are kept, with every variable `inner` introduced set to null
+    OptionalMatch {
         input: Box<LogicalOp>,
-        from: String,
-        rel_variable: Option<String>,
-        to: String,
-        rel_types: Vec<String>,
-        direction: Direction,
+        inner: Box<LogicalOp>,
+    },
+
+    /// One row per element of a list
+    Unwind {
+        input: Box<LogicalOp>,
+        expr: Expr,
+        variable: String,
     },
 
     // === Filter/Transform ===
@@ -63,9 +95,21 @@ pub enum LogicalOp {
         predicate: Expr,
     },
 
-    /// Project specific columns
+    /// Project columns. Every item has its output name as `alias`. With `carry`, the input
+    /// columns are kept after the projected ones (still bound to their variables) so a
+    /// following ORDER BY can use them; a later trimming `Project` drops them.
     Project {
         input: Box<LogicalOp>,
+        items: Vec<ProjectionItem>,
+        carry: bool,
+    },
+
+    /// Group rows by `keys` and compute `aggregates` per group. `items` (with output names as
+    /// `alias`) are evaluated per group over `#key{i}` / `#agg{j}` variables.
+    Aggregate {
+        input: Box<LogicalOp>,
+        keys: Vec<Expr>,
+        aggregates: Vec<AggregateCall>,
         items: Vec<ProjectionItem>,
     },
 
@@ -132,6 +176,109 @@ pub enum LogicalOp {
     },
 }
 
+impl LogicalOp {
+    /// Rebuild this operator with every input operator replaced by `f(input)`
+    fn map_inputs(self, f: &mut impl FnMut(LogicalOp) -> LogicalOp) -> LogicalOp {
+        let mut b = |op: Box<LogicalOp>| Box::new(f(*op));
+        match self {
+            LogicalOp::Expand {
+                input,
+                from,
+                rel_variable,
+                to,
+                rel_types,
+                direction,
+                min_hops,
+                max_hops,
+                distinct_from,
+            } => LogicalOp::Expand {
+                input: b(input),
+                from,
+                rel_variable,
+                to,
+                rel_types,
+                direction,
+                min_hops,
+                max_hops,
+                distinct_from,
+            },
+            LogicalOp::Cartesian { left, right } => LogicalOp::Cartesian {
+                left: b(left),
+                right: b(right),
+            },
+            LogicalOp::OptionalMatch { input, inner } => LogicalOp::OptionalMatch {
+                input: b(input),
+                inner: b(inner),
+            },
+            LogicalOp::Unwind {
+                input,
+                expr,
+                variable,
+            } => LogicalOp::Unwind {
+                input: b(input),
+                expr,
+                variable,
+            },
+            LogicalOp::Filter { input, predicate } => LogicalOp::Filter {
+                input: b(input),
+                predicate,
+            },
+            LogicalOp::Project {
+                input,
+                items,
+                carry,
+            } => LogicalOp::Project {
+                input: b(input),
+                items,
+                carry,
+            },
+            LogicalOp::Aggregate {
+                input,
+                keys,
+                aggregates,
+                items,
+            } => LogicalOp::Aggregate {
+                input: b(input),
+                keys,
+                aggregates,
+                items,
+            },
+            LogicalOp::Sort {
+                input,
+                items,
+                limit,
+            } => LogicalOp::Sort {
+                input: b(input),
+                items,
+                limit,
+            },
+            LogicalOp::Skip { input, count } => LogicalOp::Skip {
+                input: b(input),
+                count,
+            },
+            LogicalOp::Limit { input, count } => LogicalOp::Limit {
+                input: b(input),
+                count,
+            },
+            LogicalOp::Distinct { input } => LogicalOp::Distinct { input: b(input) },
+            LogicalOp::DeleteNode {
+                input,
+                variable,
+                detach,
+            } => LogicalOp::DeleteNode {
+                input: b(input),
+                variable,
+                detach,
+            },
+            LogicalOp::DeleteRelationship { input, variable } => LogicalOp::DeleteRelationship {
+                input: b(input),
+                variable,
+            },
+            leaf => leaf,
+        }
+    }
+}
+
 /// Query planner
 ///
 /// Converts Cypher AST to a logical execution plan.
@@ -153,62 +300,28 @@ impl QueryPlanner {
         }?;
 
         // Apply optimizations
-        let optimized = self.optimize_predicate_pushdown(plan);
-        Ok(optimized)
+        Ok(Self::optimize_predicate_pushdown(plan))
     }
 
-    /// Optimize the plan by pushing predicates down into scans
-    fn optimize_predicate_pushdown(&self, plan: LogicalOp) -> LogicalOp {
+    /// Push a Filter directly over a label scan into the scan, everywhere in the plan
+    fn optimize_predicate_pushdown(plan: LogicalOp) -> LogicalOp {
         match plan {
-            // Filter over NodeByLabelScan - push predicate down
-            LogicalOp::Filter { input, predicate } => {
-                match *input {
-                    LogicalOp::NodeByLabelScan {
-                        variable,
-                        label,
-                        predicate: None,
-                    } => {
-                        // Push predicate into the scan
-                        LogicalOp::NodeByLabelScan {
-                            variable,
-                            label,
-                            predicate: Some(Box::new(predicate)),
-                        }
-                    }
-                    // Recursively optimize the input
-                    other => LogicalOp::Filter {
-                        input: Box::new(self.optimize_predicate_pushdown(other)),
-                        predicate,
-                    },
-                }
-            }
-            // Recursively optimize other operators
-            LogicalOp::Project { input, items } => LogicalOp::Project {
-                input: Box::new(self.optimize_predicate_pushdown(*input)),
-                items,
+            LogicalOp::Filter { input, predicate } => match *input {
+                LogicalOp::NodeByLabelScan {
+                    variable,
+                    label,
+                    predicate: None,
+                } => LogicalOp::NodeByLabelScan {
+                    variable,
+                    label,
+                    predicate: Some(Box::new(predicate)),
+                },
+                other => LogicalOp::Filter {
+                    input: Box::new(Self::optimize_predicate_pushdown(other)),
+                    predicate,
+                },
             },
-            LogicalOp::Sort {
-                input,
-                items,
-                limit,
-            } => LogicalOp::Sort {
-                input: Box::new(self.optimize_predicate_pushdown(*input)),
-                items,
-                limit,
-            },
-            LogicalOp::Skip { input, count } => LogicalOp::Skip {
-                input: Box::new(self.optimize_predicate_pushdown(*input)),
-                count,
-            },
-            LogicalOp::Limit { input, count } => LogicalOp::Limit {
-                input: Box::new(self.optimize_predicate_pushdown(*input)),
-                count,
-            },
-            LogicalOp::Distinct { input } => LogicalOp::Distinct {
-                input: Box::new(self.optimize_predicate_pushdown(*input)),
-            },
-            // Other operators pass through unchanged
-            other => other,
+            other => other.map_inputs(&mut Self::optimize_predicate_pushdown),
         }
     }
 }
@@ -221,6 +334,8 @@ impl Default for QueryPlanner {
 
 mod mutation;
 mod pattern;
+mod projection;
 mod query;
+mod resolve;
 #[cfg(test)]
 mod tests;

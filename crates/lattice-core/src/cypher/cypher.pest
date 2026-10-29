@@ -1,55 +1,80 @@
-// Cypher Query Language Grammar (MVP Subset)
+// Cypher Query Language Grammar (read-query subset + CREATE / DELETE)
 //
-// This grammar supports:
-// - MATCH with node and relationship patterns
-// - WHERE with basic predicates
-// - RETURN with properties and aliases
-// - CREATE nodes and relationships
-// - DELETE nodes
-// - LIMIT, ORDER BY, SKIP
+// Read queries: MATCH / OPTIONAL MATCH (each with its own WHERE), UNWIND, WITH ... WHERE,
+// RETURN [DISTINCT] ... ORDER BY ... SKIP ... LIMIT.
+//
+// Every operator is a named rule so the parser sees it (an anonymous "-" would be dropped
+// from the parse tree, silently turning `a - b` into `a + b`). Keywords end at a word
+// boundary so `nullable`, `order_id` or `index` stay identifiers.
 
-// Entry point - a complete Cypher statement
 statement = _{ SOI ~ (query | create_statement | delete_statement) ~ ";"? ~ EOI }
+
+// === Keywords ===
+
+ident_char = _{ ASCII_ALPHANUMERIC | "_" }
+kw_match = @{ ^"MATCH" ~ !ident_char }
+kw_optional = @{ ^"OPTIONAL" ~ !ident_char }
+kw_where = @{ ^"WHERE" ~ !ident_char }
+kw_return = @{ ^"RETURN" ~ !ident_char }
+kw_with = @{ ^"WITH" ~ !ident_char }
+kw_unwind = @{ ^"UNWIND" ~ !ident_char }
+kw_as = @{ ^"AS" ~ !ident_char }
+kw_distinct = @{ ^"DISTINCT" ~ !ident_char }
+kw_order = @{ ^"ORDER" ~ !ident_char }
+kw_by = @{ ^"BY" ~ !ident_char }
+kw_skip = @{ ^"SKIP" ~ !ident_char }
+kw_limit = @{ ^"LIMIT" ~ !ident_char }
+kw_create = @{ ^"CREATE" ~ !ident_char }
+kw_delete = @{ ^"DELETE" ~ !ident_char }
+kw_detach = @{ ^"DETACH" ~ !ident_char }
+kw_or = @{ ^"OR" ~ !ident_char }
+kw_xor = @{ ^"XOR" ~ !ident_char }
+kw_and = @{ ^"AND" ~ !ident_char }
+kw_not = @{ ^"NOT" ~ !ident_char }
+kw_is = @{ ^"IS" ~ !ident_char }
+kw_null = @{ ^"NULL" ~ !ident_char }
+kw_in = @{ ^"IN" ~ !ident_char }
+kw_starts = @{ ^"STARTS" ~ !ident_char }
+kw_ends = @{ ^"ENDS" ~ !ident_char }
+kw_contains = @{ ^"CONTAINS" ~ !ident_char }
+kw_case = @{ ^"CASE" ~ !ident_char }
+kw_when = @{ ^"WHEN" ~ !ident_char }
+kw_then = @{ ^"THEN" ~ !ident_char }
+kw_else = @{ ^"ELSE" ~ !ident_char }
+kw_end = @{ ^"END" ~ !ident_char }
 
 // === Query Structure ===
 
-query = {
-    match_clause?
-    ~ optional_match*
-    ~ where_clause?
-    ~ return_clause
-    ~ order_by_clause?
-    ~ skip_clause?
-    ~ limit_clause?
-}
+query = { reading_clause* ~ return_clause }
+reading_clause = _{ match_clause | optional_match | unwind_clause | with_clause }
 
-match_clause = { ^"MATCH" ~ pattern_list }
+match_clause = { kw_match ~ pattern_list ~ where_clause? }
+optional_match = { kw_optional ~ kw_match ~ pattern_list ~ where_clause? }
+unwind_clause = { kw_unwind ~ expression ~ kw_as ~ identifier }
+with_clause = { kw_with ~ projection_body ~ where_clause? }
+where_clause = { kw_where ~ expression }
+return_clause = { kw_return ~ projection_body }
 
-optional_match = { ^"OPTIONAL" ~ ^"MATCH" ~ pattern_list }
-
-where_clause = { ^"WHERE" ~ expression }
-
-return_clause = { ^"RETURN" ~ distinct? ~ return_items }
-distinct = { ^"DISTINCT" }
+projection_body = { distinct? ~ return_items ~ order_by_clause? ~ skip_clause? ~ limit_clause? }
+distinct = { kw_distinct }
 return_items = { return_item ~ ("," ~ return_item)* }
-return_item = { "*" | (expression ~ alias?) }
-alias = { ^"AS" ~ identifier }
+return_item = { star | (expression ~ alias?) }
+star = { "*" }
+alias = { kw_as ~ identifier }
 
-order_by_clause = { ^"ORDER" ~ ^"BY" ~ order_item ~ ("," ~ order_item)* }
+order_by_clause = { kw_order ~ kw_by ~ order_item ~ ("," ~ order_item)* }
 order_item = { expression ~ order_direction? }
-order_direction = { ^"ASC" | ^"ASCENDING" | ^"DESC" | ^"DESCENDING" }
+order_direction = @{ (^"ASCENDING" | ^"ASC" | ^"DESCENDING" | ^"DESC") ~ !ident_char }
 
-skip_clause = { ^"SKIP" ~ integer }
-limit_clause = { ^"LIMIT" ~ integer }
+skip_clause = { kw_skip ~ integer }
+limit_clause = { kw_limit ~ integer }
 
-// === Create Statement ===
+// === Create / Delete Statements ===
 
-create_statement = { ^"CREATE" ~ pattern_list }
+create_statement = { kw_create ~ pattern_list }
 
-// === Delete Statement ===
-
-delete_statement = { detach? ~ ^"DELETE" ~ variable_list }
-detach = { ^"DETACH" }
+delete_statement = { detach? ~ kw_delete ~ variable_list }
+detach = { kw_detach }
 variable_list = { identifier ~ ("," ~ identifier)* }
 
 // === Pattern Matching ===
@@ -64,7 +89,7 @@ node_pattern = {
 
 relationship_pattern = {
     left_arrow? ~ dash ~ "[" ~ rel_detail? ~ "]" ~ dash ~ right_arrow?
-  | left_arrow? ~ dash ~ right_arrow?
+  | left_arrow? ~ dash ~ dash ~ right_arrow?
 }
 
 rel_detail = { identifier? ~ rel_type_list? ~ path_length? ~ properties? }
@@ -87,46 +112,57 @@ properties = { "{" ~ property_list? ~ "}" }
 property_list = { property ~ ("," ~ property)* }
 property = { identifier ~ ":" ~ expression }
 
-// === Expressions ===
+// === Expressions (loosest binding first) ===
 
 expression = { or_expr }
-
-// Keywords with word boundary check (not followed by alphanumeric)
-// Using @ for atomic to prevent whitespace inside the keyword match
-kw_or = @{ ^"OR" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_xor = @{ ^"XOR" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_and = @{ ^"AND" ~ !(ASCII_ALPHANUMERIC | "_") }
-kw_not = @{ ^"NOT" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 or_expr = { xor_expr ~ (kw_or ~ xor_expr)* }
 xor_expr = { and_expr ~ (kw_xor ~ and_expr)* }
 and_expr = { not_expr ~ (kw_and ~ not_expr)* }
 not_expr = { kw_not* ~ comparison }
 
-comparison = { addition ~ (comparison_op ~ addition)* }
-comparison_op = {
-    "=" | "<>" | "!=" | "<=" | ">=" | "<" | ">"
-  | ^"STARTS" ~ ^"WITH"
-  | ^"ENDS" ~ ^"WITH"
-  | ^"CONTAINS"
-  | ^"IN"
-  | ^"IS" ~ ^"NOT"? ~ ^"NULL"
+// a < b < c chains (openCypher: a < b AND b < c)
+comparison = { predicate_expr ~ (comparison_op ~ predicate_expr)* }
+comparison_op = { "=~" | "<>" | "!=" | "<=" | ">=" | "=" | "<" | ">" }
+
+// String, list and null predicates bind tighter than comparisons
+predicate_expr = { addition ~ predicate_tail* }
+predicate_tail = _{
+    is_not_null
+  | is_null
+  | starts_with ~ addition
+  | ends_with ~ addition
+  | contains_op ~ addition
+  | in_op ~ addition
 }
+is_not_null = { kw_is ~ kw_not ~ kw_null }
+is_null = { kw_is ~ kw_null }
+starts_with = { kw_starts ~ kw_with }
+ends_with = { kw_ends ~ kw_with }
+contains_op = { kw_contains }
+in_op = { kw_in }
 
-addition = { multiplication ~ (("+"|"-") ~ multiplication)* }
-multiplication = { power ~ (("*"|"/"|"%") ~ power)* }
+addition = { multiplication ~ (add_op ~ multiplication)* }
+add_op = { "+" | "-" }
+multiplication = { power ~ (mul_op ~ power)* }
+mul_op = { "*" | "/" | "%" }
 power = { unary ~ ("^" ~ unary)* }
+unary = { sign_op* ~ postfix }
+sign_op = { "-" | "+" }
 
-unary = { ("-"|"+"|^"NOT")? ~ property_or_atom }
-
-property_or_atom = { atom ~ property_access* }
+postfix = { atom ~ postfix_op* ~ label_list? }
+postfix_op = _{ property_access | slice | index }
 property_access = { "." ~ identifier }
+slice = { "[" ~ slice_from? ~ ".." ~ slice_to? ~ "]" }
+slice_from = { expression }
+slice_to = { expression }
+index = { "[" ~ expression ~ "]" }
 
 atom = {
     literal
   | parameter
-  | function_call
   | case_expr
+  | function_call
   | list_literal
   | map_literal
   | "(" ~ expression ~ ")"
@@ -135,24 +171,19 @@ atom = {
 
 // === Literals ===
 
-literal = {
-    null_literal
-  | boolean_literal
-  | number_literal
-  | string_literal
-}
+literal = { null_literal | boolean_literal | number_literal | string_literal }
 
-null_literal = { ^"NULL" }
-boolean_literal = { ^"TRUE" | ^"FALSE" }
+null_literal = { kw_null }
+boolean_literal = @{ (^"TRUE" | ^"FALSE") ~ !ident_char }
 
 number_literal = { float | integer }
-float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ exponent? }
-integer = @{ "-"? ~ ASCII_DIGIT+ }
+float = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+ ~ exponent? | exponent) }
+integer = @{ ASCII_DIGIT+ ~ !ident_char }
 exponent = @{ ("e"|"E") ~ ("+"|"-")? ~ ASCII_DIGIT+ }
 
 string_literal = { single_quoted | double_quoted }
-single_quoted = @{ "'" ~ (!"'" ~ ANY | "\\'" | "\\\\")* ~ "'" }
-double_quoted = @{ "\"" ~ (!"\"" ~ ANY | "\\\"" | "\\\\")* ~ "\"" }
+single_quoted = @{ "'" ~ ("\\" ~ ANY | !"'" ~ ANY)* ~ "'" }
+double_quoted = @{ "\"" ~ ("\\" ~ ANY | !"\"" ~ ANY)* ~ "\"" }
 
 list_literal = { "[" ~ (expression ~ ("," ~ expression)*)? ~ "]" }
 map_literal = { "{" ~ (map_entry ~ ("," ~ map_entry)*)? ~ "}" }
@@ -164,20 +195,21 @@ parameter = { "$" ~ identifier }
 
 // === Function Calls ===
 
-function_call = { identifier ~ "(" ~ distinct? ~ (expression ~ ("," ~ expression)*)? ~ ")" }
+function_call = { function_name ~ "(" ~ (count_star | distinct? ~ (expression ~ ("," ~ expression)*)?) ~ ")" }
+function_name = @{ (ASCII_ALPHA | "_") ~ ident_char* ~ ("." ~ (ASCII_ALPHA | "_") ~ ident_char*)* }
+count_star = { "*" }
 
 // === Case Expression ===
 
-case_expr = {
-    ^"CASE" ~ expression? ~ when_clause+ ~ else_clause? ~ ^"END"
-}
-when_clause = { ^"WHEN" ~ expression ~ ^"THEN" ~ expression }
-else_clause = { ^"ELSE" ~ expression }
+case_expr = { kw_case ~ case_operand? ~ when_clause+ ~ else_clause? ~ kw_end }
+case_operand = { !kw_when ~ expression }
+when_clause = { kw_when ~ expression ~ kw_then ~ expression }
+else_clause = { kw_else ~ expression }
 
 // === Identifiers ===
 
 identifier = @{
-    (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
+    (ASCII_ALPHA | "_") ~ ident_char*
   | backtick_identifier
 }
 backtick_identifier = @{ "`" ~ (!"`" ~ ANY | "``")* ~ "`" }

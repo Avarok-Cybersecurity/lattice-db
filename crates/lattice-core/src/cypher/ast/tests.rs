@@ -50,17 +50,25 @@ fn test_query_builder() {
         Expr::property(Expr::variable("n"), "name"),
     )
     .with_alias("name")]))
-    .with_match(MatchClause::new(Pattern::node(
-        NodePattern::with_variable("n").with_label("Person"),
-    )))
-    .with_where(WhereClause::new(
-        Expr::property(Expr::variable("n"), "age").gt(Expr::literal(25i64)),
-    ))
+    .with_match(
+        MatchClause::new(Pattern::node(
+            NodePattern::with_variable("n").with_label("Person"),
+        ))
+        .with_where(WhereClause::new(
+            Expr::property(Expr::variable("n"), "age").gt(Expr::literal(25i64)),
+        )),
+    )
     .with_limit(10);
 
-    assert!(query.match_clause.is_some());
-    assert!(query.where_clause.is_some());
-    assert_eq!(query.limit, Some(10));
+    assert!(matches!(
+        query.clauses.as_slice(),
+        [Clause::Match(MatchClause {
+            optional: false,
+            where_clause: Some(_),
+            ..
+        })]
+    ));
+    assert_eq!(query.return_clause.limit, Some(10));
 }
 
 #[test]

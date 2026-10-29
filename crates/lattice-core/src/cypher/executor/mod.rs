@@ -3,18 +3,23 @@
 //! The executor traverses the logical operation tree and produces results
 //! by interacting with the CollectionEngine.
 
+mod access;
+mod aggregate;
+mod arith;
+mod compare;
 mod context;
 mod evaluation;
 mod expand;
-mod hashing;
+mod functions;
+mod canon;
+mod join;
 mod json;
 mod mutate;
 mod operations;
 mod sort;
 
-pub use context::{ExecutionContext, LabelRegistry};
+pub use context::{ExecutionContext, LabelRegistry, RelRecord};
 
-use crate::cypher::ast::Expr;
 use crate::cypher::error::CypherResult;
 use crate::cypher::planner::LogicalOp;
 use crate::cypher::row::ExecutorRow;
@@ -114,32 +119,19 @@ impl QueryExecutor {
         })
     }
 
-    /// Extract column names from a plan
+    /// Column names of a plan: the names of its final projection
     fn extract_columns(&self, plan: &LogicalOp) -> Vec<String> {
         match plan {
-            LogicalOp::Project { items, .. } => items
+            LogicalOp::Project { items, .. } | LogicalOp::Aggregate { items, .. } => items
                 .iter()
-                .enumerate()
-                .map(|(i, item)| {
-                    item.alias
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| self.expr_to_column_name(&item.expr, i))
-                })
+                .map(|item| item.alias.clone().unwrap_or_else(|| item.expr.to_string()))
                 .collect(),
+            LogicalOp::Sort { input, .. }
+            | LogicalOp::Skip { input, .. }
+            | LogicalOp::Limit { input, .. }
+            | LogicalOp::Distinct { input }
+            | LogicalOp::Filter { input, .. } => self.extract_columns(input),
             _ => Vec::new(),
-        }
-    }
-
-    /// Convert expression to column name
-    fn expr_to_column_name(&self, expr: &Expr, index: usize) -> String {
-        match expr {
-            Expr::Variable(name) => name.to_string(),
-            Expr::Property { expr, property } => {
-                format!("{}.{}", self.expr_to_column_name(expr, index), property)
-            }
-            Expr::Star => "*".to_string(),
-            _ => format!("column_{}", index),
         }
     }
 }
@@ -153,6 +145,7 @@ impl Default for QueryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cypher::ast::Expr;
     use crate::cypher::ast::MapLiteral;
     use crate::cypher::planner::LogicalOp;
     use crate::engine::collection::CollectionEngine;

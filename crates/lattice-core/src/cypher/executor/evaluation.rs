@@ -1,195 +1,258 @@
-//! Expression evaluation for Cypher queries
+//! Expression evaluation for Cypher queries.
+//!
+//! Every `Expr` variant the planner can hand over is evaluated here or in `functions` /
+//! `access`; nothing falls through to a catch-all. Semantics follow openCypher: null
+//! propagates, comparisons and boolean operators are three-valued, and a WHERE keeps a row
+//! only when its predicate is `true`.
 
+use super::compare::{and3, compare, equals, or3, order_cmp, tri, xor3};
 use super::{ExecutionContext, QueryExecutor};
-use crate::cypher::ast::{BinaryOp, Expr, UnaryOp};
+use crate::cypher::ast::{BinaryOp, Expr, StringPredicateType, UnaryOp};
 use crate::cypher::error::{CypherError, CypherResult};
-use crate::types::point::Point;
 use crate::types::value::CypherValue;
 use crate::types::SharedStr;
 
+/// A boolean operand: true/false/null, anything else is a type error naming the operator
+pub(crate) fn as_bool(v: &CypherValue, operator: &str) -> CypherResult<Option<bool>> {
+    match v {
+        CypherValue::Bool(b) => Ok(Some(*b)),
+        CypherValue::Null => Ok(None),
+        other => Err(CypherError::type_mismatch(
+            format!("BOOLEAN operands for {operator}"),
+            other.type_name(),
+        )),
+    }
+}
+
 impl QueryExecutor {
-    /// Evaluate a predicate expression
+    /// Evaluate a WHERE-style predicate: only `true` keeps the row
     pub(crate) fn evaluate_predicate(
         &self,
         predicate: &Expr,
         row: &[CypherValue],
         ctx: &ExecutionContext,
     ) -> CypherResult<bool> {
-        let value = self.evaluate_expr(predicate, row, ctx)?;
-        Ok(value.is_truthy())
+        match self.evaluate_expr(predicate, row, ctx)? {
+            CypherValue::Bool(b) => Ok(b),
+            CypherValue::Null => Ok(false),
+            other => Err(CypherError::type_mismatch(
+                "a BOOLEAN predicate in WHERE",
+                other.type_name(),
+            )),
+        }
     }
 
-    /// Evaluate an expression
+    /// Evaluate an expression against one row
     pub(crate) fn evaluate_expr(
         &self,
         expr: &Expr,
         row: &[CypherValue],
         ctx: &ExecutionContext,
     ) -> CypherResult<CypherValue> {
+        let eval = |e: &Expr| self.evaluate_expr(e, row, ctx);
         match expr {
             Expr::Literal(value) => Ok(value.clone()),
 
-            Expr::Variable(name) => {
-                // Check parameters first
-                if let Some(value) = ctx.parameters.get(name.as_str()) {
-                    return Ok(value.clone());
+            Expr::Variable(name) => match ctx.get_variable_column(name.as_str()) {
+                Some(column) => row.get(column).cloned().ok_or_else(|| {
+                    CypherError::internal(format!(
+                        "Variable '{name}' bound to column {column} but row has only {} columns",
+                        row.len()
+                    ))
+                }),
+                // CREATE property values may still name a parameter without `$`.
+                None => ctx
+                    .parameters
+                    .get(name.as_str())
+                    .cloned()
+                    .ok_or_else(|| CypherError::unknown_variable(name.as_str())),
+            },
+
+            Expr::Parameter(name) => ctx.parameters.get(name.as_str()).cloned().ok_or_else(|| {
+                CypherError::MissingParameter {
+                    name: name.to_string(),
                 }
+            }),
 
-                // Look up variable binding to get correct column index
-                if let Some(column_index) = ctx.get_variable_column(name.as_str()) {
-                    row.get(column_index)
-                        .cloned()
-                        .ok_or_else(|| CypherError::Internal {
-                            message: format!(
-                                "Variable '{}' bound to column {} but row has only {} columns",
-                                name,
-                                column_index,
-                                row.len()
-                            ),
-                        })
-                } else {
-                    // Variable not bound - return error with clear message
-                    Err(CypherError::unknown_variable(name.as_str()))
+            Expr::Property { expr, property } => self.property_of(&eval(expr)?, property, ctx),
+
+            Expr::List(items) => Ok(CypherValue::List(
+                items.iter().map(eval).collect::<CypherResult<_>>()?,
+            )),
+
+            Expr::Map(map) => Ok(CypherValue::Map(
+                map.entries
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), eval(v)?)))
+                    .collect::<CypherResult<_>>()?,
+            )),
+
+            Expr::BinaryOp { left, op, right } => match op {
+                BinaryOp::And => {
+                    let l = as_bool(&eval(left)?, "AND")?;
+                    if l == Some(false) {
+                        return Ok(CypherValue::Bool(false));
+                    }
+                    Ok(tri(and3(l, as_bool(&eval(right)?, "AND")?)))
                 }
-            }
-
-            Expr::Property { expr, property } => {
-                let base = self.evaluate_expr(expr, row, ctx)?;
-
-                match base {
-                    CypherValue::NodeRef(id) => {
-                        // Check property cache first to avoid JSON deserialization
-                        if let Some(cached) = ctx.get_property_cached(id, property) {
-                            return Ok(cached);
-                        }
-
-                        // Get the point using point cache and extract property
-                        if let Some(point) = ctx.get_point_cached(id) {
-                            let value = self.get_point_property(&point, property)?;
-                            // Cache the extracted property value
-                            ctx.cache_property(id, property, value.clone());
-                            Ok(value)
-                        } else {
-                            Ok(CypherValue::Null)
-                        }
+                BinaryOp::Or => {
+                    let l = as_bool(&eval(left)?, "OR")?;
+                    if l == Some(true) {
+                        return Ok(CypherValue::Bool(true));
                     }
-                    CypherValue::Map(entries) => {
-                        // Find property in map
-                        entries
-                            .iter()
-                            .find(|(k, _)| k.as_str() == property.as_str())
-                            .map(|(_, v)| v.clone())
-                            .ok_or_else(|| CypherError::UnknownProperty {
-                                variable: "map".to_string(),
-                                property: property.to_string(),
-                            })
-                    }
-                    _ => Err(CypherError::InvalidOperation {
-                        operation: "property access".to_string(),
-                        value_type: base.type_name().to_string(),
-                    }),
+                    Ok(tri(or3(l, as_bool(&eval(right)?, "OR")?)))
                 }
-            }
+                _ => self.evaluate_binary_op(*op, &eval(left)?, &eval(right)?),
+            },
 
-            Expr::Parameter(name) => ctx
-                .parameters
-                .get(name.as_str())
-                .cloned()
-                .ok_or_else(|| CypherError::unknown_variable(name.as_str())),
-
-            Expr::BinaryOp { left, op, right } => {
-                // Short-circuit evaluation for AND and OR
-                match op {
-                    BinaryOp::And => {
-                        let left_val = self.evaluate_expr(left, row, ctx)?;
-                        if !left_val.is_truthy() {
-                            return Ok(CypherValue::Bool(false));
-                        }
-                        let right_val = self.evaluate_expr(right, row, ctx)?;
-                        Ok(CypherValue::Bool(right_val.is_truthy()))
-                    }
-                    BinaryOp::Or => {
-                        let left_val = self.evaluate_expr(left, row, ctx)?;
-                        if left_val.is_truthy() {
-                            return Ok(CypherValue::Bool(true));
-                        }
-                        let right_val = self.evaluate_expr(right, row, ctx)?;
-                        Ok(CypherValue::Bool(right_val.is_truthy()))
-                    }
-                    _ => {
-                        // Non-logical operators: evaluate both sides
-                        let left_val = self.evaluate_expr(left, row, ctx)?;
-                        let right_val = self.evaluate_expr(right, row, ctx)?;
-                        self.evaluate_binary_op(*op, &left_val, &right_val)
-                    }
-                }
-            }
-
-            Expr::UnaryOp { op, expr } => {
-                let val = self.evaluate_expr(expr, row, ctx)?;
-                self.evaluate_unary_op(*op, &val)
-            }
+            Expr::UnaryOp { op, expr } => self.evaluate_unary_op(*op, &eval(expr)?),
 
             Expr::IsNull { expr, negated } => {
-                let val = self.evaluate_expr(expr, row, ctx)?;
-                let is_null = val.is_null();
-                Ok(CypherValue::Bool(if *negated { !is_null } else { is_null }))
+                Ok(CypherValue::Bool(eval(expr)?.is_null() != *negated))
             }
 
-            Expr::List(items) => {
-                let values: CypherResult<Vec<_>> = items
-                    .iter()
-                    .map(|item| self.evaluate_expr(item, row, ctx))
-                    .collect();
-                Ok(CypherValue::list(values?))
+            Expr::In {
+                expr,
+                list,
+                negated,
+            } => {
+                let found = self.in_list(&eval(expr)?, &eval(list)?)?;
+                Ok(tri(if *negated { found.map(|b| !b) } else { found }))
             }
 
-            Expr::Star => {
-                // Return all values as a list
-                Ok(CypherValue::list(row.to_vec()))
+            Expr::StringPredicate {
+                expr,
+                predicate,
+                pattern,
+            } => Ok(match (eval(expr)?, eval(pattern)?) {
+                (CypherValue::String(s), CypherValue::String(p)) => {
+                    CypherValue::Bool(match predicate {
+                        StringPredicateType::StartsWith => s.starts_with(&*p),
+                        StringPredicateType::EndsWith => s.ends_with(&*p),
+                        StringPredicateType::Contains => s.contains(&*p),
+                    })
+                }
+                // Null, or a non-string operand: the predicate is undefined.
+                _ => CypherValue::Null,
+            }),
+
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => {
+                let subject = operand.as_deref().map(eval).transpose()?;
+                for (when, then) in when_clauses {
+                    let w = eval(when)?;
+                    let hit = match &subject {
+                        Some(s) => equals(s, &w) == Some(true),
+                        None => as_bool(&w, "CASE WHEN")? == Some(true),
+                    };
+                    if hit {
+                        return eval(then);
+                    }
+                }
+                else_clause.as_deref().map_or(Ok(CypherValue::Null), eval)
             }
 
-            _ => Err(CypherError::unsupported("Complex expression evaluation")),
+            Expr::HasLabels { expr, labels } => match eval(expr)? {
+                CypherValue::Null => Ok(CypherValue::Null),
+                CypherValue::NodeRef(id) => {
+                    for label in labels {
+                        if !ctx.node_has_label(id, label)? {
+                            return Ok(CypherValue::Bool(false));
+                        }
+                    }
+                    Ok(CypherValue::Bool(true))
+                }
+                other => Err(CypherError::invalid("label predicate", other.type_name())),
+            },
+
+            Expr::Index { expr, index } => self.index_value(&eval(expr)?, &eval(index)?, ctx),
+
+            Expr::Slice { expr, from, to } => {
+                let from = from.as_deref().map(eval).transpose()?;
+                let to = to.as_deref().map(eval).transpose()?;
+                self.slice_value(&eval(expr)?, from.as_ref(), to.as_ref())
+            }
+
+            Expr::Scalar { func, args } => {
+                let args = args.iter().map(eval).collect::<CypherResult<Vec<_>>>()?;
+                self.call_scalar(*func, &args, ctx)
+            }
+
+            Expr::FunctionCall { name, .. } => Err(CypherError::unsupported(format!(
+                "function {name}() outside a planned read query"
+            ))),
+
+            Expr::Star => Err(CypherError::internal("`*` reached the evaluator")),
+
+            Expr::Exists { .. } => Err(CypherError::unsupported("EXISTS { … } subquery")),
         }
     }
 
-    /// Evaluate a binary operation
+    /// `x IN list`: true if an element equals x, null if none does but some comparison was null
+    fn in_list(&self, x: &CypherValue, list: &CypherValue) -> CypherResult<Option<bool>> {
+        let items = match list {
+            CypherValue::Null => return Ok(None),
+            CypherValue::List(items) => items,
+            other => {
+                return Err(CypherError::type_mismatch(
+                    "a LIST after IN",
+                    other.type_name(),
+                ))
+            }
+        };
+        let mut saw_null = false;
+        for item in items {
+            match equals(x, item) {
+                Some(true) => return Ok(Some(true)),
+                None => saw_null = true,
+                Some(false) => {}
+            }
+        }
+        Ok(if saw_null { None } else { Some(false) })
+    }
+
+    /// Evaluate a binary operation (AND/OR here are the strict, non-short-circuit forms)
     pub(crate) fn evaluate_binary_op(
         &self,
         op: BinaryOp,
         left: &CypherValue,
         right: &CypherValue,
     ) -> CypherResult<CypherValue> {
+        let cmp = |test: fn(std::cmp::Ordering) -> bool| match compare(left, right) {
+            Ok(Some(ord)) => CypherValue::Bool(test(ord)),
+            Ok(None) => CypherValue::Bool(false),
+            Err(()) => CypherValue::Null,
+        };
         match op {
-            // Arithmetic
+            BinaryOp::And => Ok(tri(and3(as_bool(left, "AND")?, as_bool(right, "AND")?))),
+            BinaryOp::Or => Ok(tri(or3(as_bool(left, "OR")?, as_bool(right, "OR")?))),
+            BinaryOp::Xor => Ok(tri(xor3(as_bool(left, "XOR")?, as_bool(right, "XOR")?))),
+            BinaryOp::Eq => Ok(tri(equals(left, right))),
+            BinaryOp::Neq => Ok(tri(equals(left, right).map(|b| !b))),
+            _ if left.is_null() || right.is_null() => Ok(CypherValue::Null),
+            BinaryOp::Lt => Ok(cmp(|o| o.is_lt())),
+            BinaryOp::Lte => Ok(cmp(|o| o.is_le())),
+            BinaryOp::Gt => Ok(cmp(|o| o.is_gt())),
+            BinaryOp::Gte => Ok(cmp(|o| o.is_ge())),
             BinaryOp::Add => self.add_values(left, right),
             BinaryOp::Sub => self.sub_values(left, right),
             BinaryOp::Mul => self.mul_values(left, right),
             BinaryOp::Div => self.div_values(left, right),
             BinaryOp::Mod => self.mod_values(left, right),
-
-            // Comparison
-            BinaryOp::Eq => Ok(CypherValue::Bool(left == right)),
-            BinaryOp::Neq => Ok(CypherValue::Bool(left != right)),
-            BinaryOp::Lt => Ok(CypherValue::Bool(self.compare_values(left, right).is_lt())),
-            BinaryOp::Lte => Ok(CypherValue::Bool(self.compare_values(left, right).is_le())),
-            BinaryOp::Gt => Ok(CypherValue::Bool(self.compare_values(left, right).is_gt())),
-            BinaryOp::Gte => Ok(CypherValue::Bool(self.compare_values(left, right).is_ge())),
-
-            // Logical
-            BinaryOp::And => Ok(CypherValue::Bool(left.is_truthy() && right.is_truthy())),
-            BinaryOp::Or => Ok(CypherValue::Bool(left.is_truthy() || right.is_truthy())),
-            BinaryOp::Xor => Ok(CypherValue::Bool(left.is_truthy() ^ right.is_truthy())),
-
-            // String concatenation - creates new Rc<str>
-            BinaryOp::Concat => {
-                let left_str = left.as_str().unwrap_or("");
-                let right_str = right.as_str().unwrap_or("");
-                let result = format!("{}{}", left_str, right_str);
-                Ok(CypherValue::String(SharedStr::from(result)))
-            }
-
-            _ => Err(CypherError::unsupported("Unsupported binary operation")),
+            BinaryOp::Pow => self.pow_values(left, right),
+            BinaryOp::Concat => match (left, right) {
+                (CypherValue::String(a), CypherValue::String(b)) => {
+                    Ok(CypherValue::String(SharedStr::from(format!("{a}{b}"))))
+                }
+                _ => Err(CypherError::invalid(
+                    "string concatenation",
+                    format!("{} and {}", left.type_name(), right.type_name()),
+                )),
+            },
+            BinaryOp::RegexMatch => Err(CypherError::unsupported("regular expression match (=~)")),
         }
     }
 
@@ -200,240 +263,23 @@ impl QueryExecutor {
         value: &CypherValue,
     ) -> CypherResult<CypherValue> {
         match op {
-            UnaryOp::Not => Ok(CypherValue::Bool(!value.is_truthy())),
-            UnaryOp::Neg => match value {
-                CypherValue::Int(i) => i.checked_neg().map(CypherValue::Int).ok_or_else(|| {
-                    CypherError::ArithmeticOverflow {
-                        operation: "negation".to_string(),
-                    }
-                }),
-                CypherValue::Float(f) => Ok(CypherValue::Float(-f)),
-                _ => Err(CypherError::InvalidOperation {
-                    operation: "negation".to_string(),
-                    value_type: value.type_name().to_string(),
-                }),
+            UnaryOp::Not => Ok(tri(as_bool(value, "NOT")?.map(|b| !b))),
+            UnaryOp::Neg => self.neg_value(value),
+            UnaryOp::Pos => match value {
+                CypherValue::Null | CypherValue::Int(_) | CypherValue::Float(_) => {
+                    Ok(value.clone())
+                }
+                other => Err(CypherError::invalid("unary plus", other.type_name())),
             },
-            UnaryOp::Pos => Ok(value.clone()),
         }
     }
 
-    /// Add two values with overflow checking
-    pub(crate) fn add_values(
-        &self,
-        left: &CypherValue,
-        right: &CypherValue,
-    ) -> CypherResult<CypherValue> {
-        match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => a
-                .checked_add(*b)
-                .map(CypherValue::Int)
-                .ok_or_else(|| CypherError::ArithmeticOverflow {
-                    operation: "addition".to_string(),
-                }),
-            (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a + b)),
-            (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 + b)),
-            (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a + *b as f64)),
-            (CypherValue::String(a), CypherValue::String(b)) => {
-                let result = format!("{}{}", a, b);
-                Ok(CypherValue::String(SharedStr::from(result)))
-            }
-            _ => Err(CypherError::IncomparableTypes {
-                left_type: left.type_name().to_string(),
-                right_type: right.type_name().to_string(),
-            }),
-        }
-    }
-
-    /// Subtract two values with overflow checking
-    pub(crate) fn sub_values(
-        &self,
-        left: &CypherValue,
-        right: &CypherValue,
-    ) -> CypherResult<CypherValue> {
-        match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => a
-                .checked_sub(*b)
-                .map(CypherValue::Int)
-                .ok_or_else(|| CypherError::ArithmeticOverflow {
-                    operation: "subtraction".to_string(),
-                }),
-            (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a - b)),
-            (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 - b)),
-            (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a - *b as f64)),
-            _ => Err(CypherError::IncomparableTypes {
-                left_type: left.type_name().to_string(),
-                right_type: right.type_name().to_string(),
-            }),
-        }
-    }
-
-    /// Multiply two values with overflow checking
-    pub(crate) fn mul_values(
-        &self,
-        left: &CypherValue,
-        right: &CypherValue,
-    ) -> CypherResult<CypherValue> {
-        match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => a
-                .checked_mul(*b)
-                .map(CypherValue::Int)
-                .ok_or_else(|| CypherError::ArithmeticOverflow {
-                    operation: "multiplication".to_string(),
-                }),
-            (CypherValue::Float(a), CypherValue::Float(b)) => Ok(CypherValue::Float(a * b)),
-            (CypherValue::Int(a), CypherValue::Float(b)) => Ok(CypherValue::Float(*a as f64 * b)),
-            (CypherValue::Float(a), CypherValue::Int(b)) => Ok(CypherValue::Float(a * *b as f64)),
-            _ => Err(CypherError::IncomparableTypes {
-                left_type: left.type_name().to_string(),
-                right_type: right.type_name().to_string(),
-            }),
-        }
-    }
-
-    /// Divide two values
-    pub(crate) fn div_values(
-        &self,
-        left: &CypherValue,
-        right: &CypherValue,
-    ) -> CypherResult<CypherValue> {
-        match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => {
-                if *b == 0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Int(a / b))
-                }
-            }
-            (CypherValue::Float(a), CypherValue::Float(b)) => {
-                if *b == 0.0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Float(a / b))
-                }
-            }
-            (CypherValue::Int(a), CypherValue::Float(b)) => {
-                if *b == 0.0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Float(*a as f64 / b))
-                }
-            }
-            (CypherValue::Float(a), CypherValue::Int(b)) => {
-                if *b == 0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Float(a / *b as f64))
-                }
-            }
-            _ => Err(CypherError::IncomparableTypes {
-                left_type: left.type_name().to_string(),
-                right_type: right.type_name().to_string(),
-            }),
-        }
-    }
-
-    /// Modulo two values
-    pub(crate) fn mod_values(
-        &self,
-        left: &CypherValue,
-        right: &CypherValue,
-    ) -> CypherResult<CypherValue> {
-        match (left, right) {
-            (CypherValue::Int(a), CypherValue::Int(b)) => {
-                if *b == 0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Int(a % b))
-                }
-            }
-            (CypherValue::Float(a), CypherValue::Float(b)) => {
-                if *b == 0.0 {
-                    Err(CypherError::DivisionByZero)
-                } else {
-                    Ok(CypherValue::Float(a % b))
-                }
-            }
-            _ => Err(CypherError::IncomparableTypes {
-                left_type: left.type_name().to_string(),
-                right_type: right.type_name().to_string(),
-            }),
-        }
-    }
-
-    /// Compare two values
+    /// The ORDER BY total order (see `compare::order_cmp`)
     pub(crate) fn compare_values(
         &self,
         left: &CypherValue,
         right: &CypherValue,
     ) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-
-        match (left, right) {
-            (CypherValue::Null, CypherValue::Null) => Ordering::Equal,
-            (CypherValue::Null, _) => Ordering::Less,
-            (_, CypherValue::Null) => Ordering::Greater,
-
-            (CypherValue::Bool(a), CypherValue::Bool(b)) => a.cmp(b),
-            (CypherValue::Int(a), CypherValue::Int(b)) => a.cmp(b),
-            (CypherValue::Float(a), CypherValue::Float(b)) => {
-                a.partial_cmp(b).unwrap_or(Ordering::Equal)
-            }
-            (CypherValue::Int(a), CypherValue::Float(b)) => {
-                (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
-            }
-            (CypherValue::Float(a), CypherValue::Int(b)) => {
-                a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
-            }
-            (CypherValue::String(a), CypherValue::String(b)) => a.cmp(b),
-
-            _ => Ordering::Equal, // Default for incompatible types
-        }
-    }
-
-    /// Get a property from a point
-    ///
-    /// # Security
-    /// Properties starting with `_` (except `_labels`) are internal and blocked
-    /// to prevent access to internal metadata.
-    pub(crate) fn get_point_property(
-        &self,
-        point: &Point,
-        property: &str,
-    ) -> CypherResult<CypherValue> {
-        // Check for special properties
-        match property {
-            "id" => return Ok(CypherValue::Int(point.id as i64)),
-            "_labels" => {
-                // _labels is allowed for label queries
-                if let Some(labels_bytes) = point.payload.get("_labels") {
-                    if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
-                        return Ok(CypherValue::list(
-                            labels
-                                .into_iter()
-                                .map(CypherValue::from)
-                                .collect::<Vec<_>>(),
-                        ));
-                    }
-                }
-                return Ok(CypherValue::list(vec![]));
-            }
-            _ => {}
-        }
-
-        // Block access to other internal properties (starting with _)
-        // This prevents access to internal metadata
-        if property.starts_with('_') {
-            return Err(CypherError::UnknownProperty {
-                variable: "node".to_string(),
-                property: property.to_string(),
-            });
-        }
-
-        // Get from payload
-        if let Some(value_bytes) = point.payload.get(property) {
-            self.json_bytes_to_cypher_value(value_bytes)
-        } else {
-            Ok(CypherValue::Null)
-        }
+        order_cmp(left, right)
     }
 }

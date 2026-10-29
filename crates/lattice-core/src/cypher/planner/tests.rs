@@ -45,12 +45,14 @@ fn test_plan_with_filter() {
     let query = Query::new(ReturnClause::new(vec![ProjectionItem::new(
         Expr::variable("n"),
     )]))
-    .with_match(MatchClause::new(Pattern::node(
-        NodePattern::with_variable("n").with_label("Person"),
-    )))
-    .with_where(WhereClause::new(
-        Expr::property(Expr::variable("n"), "age").gt(Expr::literal(25i64)),
-    ));
+    .with_match(
+        MatchClause::new(Pattern::node(
+            NodePattern::with_variable("n").with_label("Person"),
+        ))
+        .with_where(WhereClause::new(
+            Expr::property(Expr::variable("n"), "age").gt(Expr::literal(25i64)),
+        )),
+    );
 
     let plan = planner.plan(&Statement::Query(query)).unwrap();
 
@@ -82,15 +84,13 @@ fn test_plan_with_limit() {
 
     let plan = planner.plan(&Statement::Query(query)).unwrap();
 
-    // Verify there's a limit in the plan
-    if let LogicalOp::Project { input, .. } = plan {
-        if let LogicalOp::Limit { count, .. } = *input {
-            assert_eq!(count, 10);
-        } else {
-            panic!("Expected Limit");
-        }
+    // LIMIT applies after the projection (openCypher order: project, DISTINCT, ORDER BY,
+    // SKIP, LIMIT)
+    if let LogicalOp::Limit { input, count } = plan {
+        assert_eq!(count, 10);
+        assert!(matches!(*input, LogicalOp::Project { .. }));
     } else {
-        panic!("Expected Project");
+        panic!("Expected Limit over Project, got {plan:?}");
     }
 }
 

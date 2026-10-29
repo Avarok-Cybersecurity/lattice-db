@@ -1,6 +1,6 @@
-//! Clause parsing: WHERE, RETURN, ORDER BY, SKIP, LIMIT, CREATE, DELETE.
+//! Clause parsing: WHERE, WITH, UNWIND, RETURN projection bodies, CREATE, DELETE.
 
-use super::{CypherParser, Rule};
+use super::{ident, CypherParser, Rule};
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
 use pest::iterators::Pair;
@@ -18,26 +18,74 @@ impl CypherParser {
 
     /// Parse RETURN clause
     pub(super) fn parse_return_clause(&self, pair: Pair<Rule>) -> CypherResult<ReturnClause> {
-        let mut distinct = false;
-        let mut items = Vec::new();
+        for inner in pair.into_inner() {
+            if inner.as_rule() == Rule::projection_body {
+                return self.parse_projection_body(inner);
+            }
+        }
+        Err(CypherError::syntax(0, 0, "Empty RETURN clause"))
+    }
+
+    /// Parse WITH clause: a projection body and an optional WHERE
+    pub(super) fn parse_with(&self, pair: Pair<Rule>) -> CypherResult<WithClause> {
+        let mut projection = None;
+        let mut where_clause = None;
+        for inner in pair.into_inner() {
+            match inner.as_rule() {
+                Rule::projection_body => projection = Some(self.parse_projection_body(inner)?),
+                Rule::where_clause => where_clause = Some(self.parse_where_clause(inner)?),
+                _ => {}
+            }
+        }
+        Ok(WithClause {
+            projection: projection.ok_or_else(|| CypherError::syntax(0, 0, "Empty WITH clause"))?,
+            where_clause,
+        })
+    }
+
+    /// Parse UNWIND clause
+    pub(super) fn parse_unwind(&self, pair: Pair<Rule>) -> CypherResult<UnwindClause> {
+        let mut expr = None;
+        let mut variable = None;
+        for inner in pair.into_inner() {
+            match inner.as_rule() {
+                Rule::expression => expr = Some(self.parse_expression(inner)?),
+                Rule::identifier => variable = Some(ident(&inner)),
+                _ => {}
+            }
+        }
+        match (expr, variable) {
+            (Some(expr), Some(variable)) => Ok(UnwindClause { expr, variable }),
+            _ => Err(CypherError::syntax(
+                0,
+                0,
+                "UNWIND requires `expression AS variable`",
+            )),
+        }
+    }
+
+    /// Parse the projection body shared by RETURN and WITH
+    fn parse_projection_body(&self, pair: Pair<Rule>) -> CypherResult<ReturnClause> {
+        let mut body = ReturnClause::new(Vec::new());
 
         for inner in pair.into_inner() {
             match inner.as_rule() {
-                Rule::distinct => {
-                    distinct = true;
-                }
+                Rule::distinct => body.distinct = true,
                 Rule::return_items => {
                     for item in inner.into_inner() {
                         if item.as_rule() == Rule::return_item {
-                            items.push(self.parse_return_item(item)?);
+                            body.items.push(self.parse_return_item(item)?);
                         }
                     }
                 }
+                Rule::order_by_clause => body.order_by = Some(self.parse_order_by_clause(inner)?),
+                Rule::skip_clause => body.skip = Some(self.parse_skip_clause(inner)?),
+                Rule::limit_clause => body.limit = Some(self.parse_limit_clause(inner)?),
                 _ => {}
             }
         }
 
-        Ok(ReturnClause { distinct, items })
+        Ok(body)
     }
 
     /// Parse return item
@@ -45,20 +93,14 @@ impl CypherParser {
         let mut expr = None;
         let mut alias = None;
 
-        let content = pair.as_str().trim();
-        if content == "*" {
-            return Ok(ProjectionItem::all());
-        }
-
         for inner in pair.into_inner() {
             match inner.as_rule() {
-                Rule::expression => {
-                    expr = Some(self.parse_expression(inner)?);
-                }
+                Rule::star => return Ok(ProjectionItem::all()),
+                Rule::expression => expr = Some(self.parse_expression(inner)?),
                 Rule::alias => {
                     for alias_inner in inner.into_inner() {
                         if alias_inner.as_rule() == Rule::identifier {
-                            alias = Some(String::from(alias_inner.as_str()));
+                            alias = Some(ident(&alias_inner));
                         }
                     }
                 }
@@ -67,7 +109,7 @@ impl CypherParser {
         }
 
         Ok(ProjectionItem {
-            expr: expr.unwrap_or(Expr::Star),
+            expr: expr.ok_or_else(|| CypherError::syntax(0, 0, "Empty projection item"))?,
             alias,
         })
     }
@@ -161,7 +203,7 @@ impl CypherParser {
                 Rule::variable_list => {
                     for var in inner.into_inner() {
                         if var.as_rule() == Rule::identifier {
-                            variables.push(String::from(var.as_str()));
+                            variables.push(ident(&var));
                         }
                     }
                 }

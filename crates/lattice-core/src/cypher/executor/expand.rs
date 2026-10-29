@@ -1,14 +1,35 @@
 //! Expand execution: relationship traversal from bound nodes.
-
-//! Query operation execution
+//!
+//! Single hop: every matching relationship gives a row (parallel relationships and self-loops
+//! included), in any direction; the relationship is bound so `type(r)`, `r.weight` and
+//! relationship uniqueness work. Variable length keeps LatticeDB's reachability semantics:
+//! each node reachable in `min..=max` hops (by its shortest distance) once, start excluded
+//! unless `min` is 0.
 
 use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats};
 use crate::cypher::ast::Direction;
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::cypher::planner::LogicalOp;
-use crate::cypher::row::Row;
+use crate::cypher::row::{ExecutorRow, Row};
 use crate::types::value::CypherValue;
-use smallvec::SmallVec;
+use crate::types::SharedStr;
+use rustc_hash::FxHashSet;
+use std::collections::VecDeque;
+
+/// One expansion step: (relationship start, end, type, weight), seen from the source node
+type Step = (u64, u64, SharedStr, f32);
+
+/// Where the bound variables of an expansion live in the input row
+struct Columns {
+    from: usize,
+    /// `to` was bound before this expansion: keep rows whose target equals it
+    to_bound: Option<usize>,
+    /// `rel_variable` was bound before: keep rows whose relationship equals it
+    rel_bound: Option<usize>,
+    push_to: bool,
+    push_rel: bool,
+    distinct_from: Vec<usize>,
+}
 
 impl QueryExecutor {
     /// Execute Expand operation
@@ -16,91 +37,192 @@ impl QueryExecutor {
     pub(crate) fn execute_expand(
         &self,
         input: &LogicalOp,
-        from: &String,
+        from: &str,
         rel_variable: Option<&String>,
-        to: &String,
-        rel_types: &Vec<String>,
-        _direction: Direction,
+        to: &str,
+        rel_types: &[String],
+        direction: Direction,
         min_hops: u32,
         max_hops: u32,
+        distinct_from: &[String],
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
 
-        // Register target variable binding (adds new column)
-        // Note: rel_variable would also add a column if we were returning relationship refs
-        let to_column_index = ctx.column_count();
-        ctx.bind_variable(to, to_column_index);
+        let from_col = ctx.get_variable_column(from).ok_or_else(|| {
+            CypherError::internal(format!("Source variable '{from}' not bound in expand"))
+        })?;
+        let to_bound = ctx.get_variable_column(to);
+        let rel_bound = rel_variable.and_then(|r| ctx.get_variable_column(r));
+        if to_bound.is_none() {
+            ctx.bind_variable(to, ctx.column_count());
+        }
+        let push_rel = rel_variable.is_some() && rel_bound.is_none();
+        if let (Some(r), true) = (rel_variable, push_rel) {
+            ctx.bind_variable(r, ctx.column_count());
+        }
+        let cols = Columns {
+            from: from_col,
+            to_bound,
+            rel_bound,
+            push_to: to_bound.is_none(),
+            push_rel,
+            distinct_from: distinct_from
+                .iter()
+                .filter_map(|r| ctx.get_variable_column(r))
+                .collect(),
+        };
+        let single_hop = rel_variable.is_some();
 
-        // Note: We don't add rel_variable binding yet since we don't return RelationshipRef
-        // in the current implementation. When we do, add:
-        // if let Some(rel_var) = rel_variable {
-        //     ctx.bind_variable(rel_var, ctx.column_count());
-        // }
-        let _ = rel_variable; // Suppress unused warning
-
-        // Get the source column index from bindings
-        let from_column = ctx
-            .get_variable_column(from)
-            .ok_or_else(|| CypherError::Internal {
-                message: format!("Source variable '{}' not bound in expand", from),
-            })?;
-
-        let mut result_rows = Vec::new();
-
-        for mut row in input_rows {
-            // Get the source node ID from the correct column
-            if let Some(CypherValue::NodeRef(source_id)) = row.get(from_column) {
-                // Use collection traverse for multi-hop
-                let relations: Option<Vec<&str>> = if rel_types.is_empty() {
-                    None
-                } else {
-                    Some(rel_types.iter().map(|s| s.as_str()).collect())
-                };
-
-                let traverse_result = ctx
-                    .collection
-                    .traverse(*source_id, max_hops as usize, relations.as_deref())
-                    .map_err(|e| CypherError::Internal {
-                        message: e.to_string(),
-                    })?;
-
-                // Filter paths first to enable last-path optimization
-                let valid_paths: SmallVec<[_; 8]> = traverse_result
-                    .paths
-                    .into_iter()
-                    .filter(|path| path.depth >= min_hops as usize)
-                    .collect();
-
-                // Limitation: direction filtering assumes outgoing edges only.
-                // Incoming and bidirectional edge traversal not yet implemented.
-
-                // Optimization: fast paths for common cases
-                let paths_len = valid_paths.len();
-                if paths_len == 0 {
-                    continue; // No valid paths, skip this row
-                } else if paths_len == 1 {
-                    // Single path - move row directly (no clone needed)
-                    // SAFETY: We just verified paths_len == 1, so next() yields Some
-                    if let Some(path) = valid_paths.into_iter().next() {
-                        Row::push(&mut row, CypherValue::NodeRef(path.target_id));
-                        result_rows.push(row);
+        let mut out = InternalRows::new();
+        for row in input_rows {
+            let source = match row.get(cols.from) {
+                Some(CypherValue::NodeRef(id)) => *id,
+                // A null from OPTIONAL MATCH expands to nothing.
+                Some(CypherValue::Null) => continue,
+                Some(other) => {
+                    return Err(CypherError::invalid(
+                        "relationship expansion from",
+                        other.type_name(),
+                    ))
+                }
+                None => return Err(CypherError::internal("expand source column missing")),
+            };
+            if single_hop {
+                for (src, dst, rel_type, weight) in self.steps(source, rel_types, direction, ctx)? {
+                    let target = if src == source { dst } else { src };
+                    let handle =
+                        CypherValue::RelationshipRef(ctx.rel_handle(src, dst, &rel_type, weight));
+                    if cols
+                        .distinct_from
+                        .iter()
+                        .any(|c| row.get(*c) == Some(&handle))
+                    {
+                        continue;
                     }
-                } else {
-                    // Multiple paths - clone all but last
-                    for (i, path) in valid_paths.into_iter().enumerate() {
-                        let mut new_row = if i == paths_len - 1 {
-                            Row::take(&mut row) // Move last one (avoids clone)
-                        } else {
-                            row.clone()
-                        };
-                        Row::push(&mut new_row, CypherValue::NodeRef(path.target_id));
-                        result_rows.push(new_row);
-                    }
+                    self.emit(&mut out, &row, &cols, target, Some(handle));
+                }
+            } else {
+                for target in
+                    self.reachable(source, rel_types, direction, min_hops, max_hops, ctx)?
+                {
+                    self.emit(&mut out, &row, &cols, target, None);
                 }
             }
         }
 
-        Ok((result_rows, stats))
+        Ok((out, stats))
+    }
+
+    /// Append `row` extended by the target (and relationship) unless a bound column disagrees
+    fn emit(
+        &self,
+        out: &mut InternalRows,
+        row: &ExecutorRow,
+        cols: &Columns,
+        target: u64,
+        rel: Option<CypherValue>,
+    ) {
+        let node = CypherValue::NodeRef(target);
+        if cols.to_bound.is_some_and(|c| row.get(c) != Some(&node)) {
+            return;
+        }
+        if let (Some(c), Some(r)) = (cols.rel_bound, &rel) {
+            if row.get(c) != Some(r) {
+                return;
+            }
+        }
+        let mut new_row = row.clone();
+        if cols.push_to {
+            Row::push(&mut new_row, node);
+        }
+        if let (true, Some(r)) = (cols.push_rel, rel) {
+            Row::push(&mut new_row, r);
+        }
+        out.push(new_row);
+    }
+
+    /// The relationships one hop from `node` in `direction` with one of `rel_types` (any when
+    /// empty), as (start, end, type, weight). An undirected self-loop is reported once.
+    fn steps(
+        &self,
+        node: u64,
+        rel_types: &[String],
+        direction: Direction,
+        ctx: &mut ExecutionContext,
+    ) -> CypherResult<Vec<Step>> {
+        let wanted = |t: &str| rel_types.is_empty() || rel_types.iter().any(|r| r == t);
+        let mut steps = Vec::new();
+        if matches!(direction, Direction::Outgoing | Direction::Both) {
+            for e in ctx.collection.get_edges(node)? {
+                if wanted(&e.relation) {
+                    steps.push((
+                        node,
+                        e.target_id,
+                        SharedStr::from(e.relation.as_str()),
+                        e.weight,
+                    ));
+                }
+            }
+        }
+        if matches!(direction, Direction::Incoming | Direction::Both) {
+            for (src, rel_type, weight) in ctx.incoming(node)? {
+                let self_loop_seen = direction == Direction::Both && src == node;
+                if wanted(&rel_type) && !self_loop_seen {
+                    steps.push((src, node, rel_type, weight));
+                }
+            }
+        }
+        Ok(steps)
+    }
+
+    /// Nodes reachable from `start` in `min..=max` hops, each once at its shortest distance
+    fn reachable(
+        &self,
+        start: u64,
+        rel_types: &[String],
+        direction: Direction,
+        min: u32,
+        max: u32,
+        ctx: &mut ExecutionContext,
+    ) -> CypherResult<Vec<u64>> {
+        let mut found = Vec::new();
+        if min == 0 {
+            found.push(start);
+        }
+        if direction == Direction::Outgoing {
+            // The engine's own BFS (same semantics, one storage lock).
+            let relations: Option<Vec<&str>> =
+                (!rel_types.is_empty()).then(|| rel_types.iter().map(String::as_str).collect());
+            let result = ctx
+                .collection
+                .traverse(start, max as usize, relations.as_deref())?;
+            found.extend(
+                result
+                    .paths
+                    .into_iter()
+                    .filter(|p| p.depth >= min.max(1) as usize)
+                    .map(|p| p.target_id),
+            );
+            return Ok(found);
+        }
+        let mut visited: FxHashSet<u64> = FxHashSet::default();
+        visited.insert(start);
+        let mut queue = VecDeque::from([(start, 0u32)]);
+        while let Some((node, depth)) = queue.pop_front() {
+            if depth >= max {
+                continue;
+            }
+            for (src, dst, _, _) in self.steps(node, rel_types, direction, ctx)? {
+                let next = if src == node { dst } else { src };
+                if visited.insert(next) {
+                    if depth + 1 >= min {
+                        found.push(next);
+                    }
+                    queue.push_back((next, depth + 1));
+                }
+            }
+        }
+        Ok(found)
     }
 }

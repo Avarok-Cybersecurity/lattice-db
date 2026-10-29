@@ -4,16 +4,17 @@
 //! They are produced by the parser and consumed by the planner.
 
 use serde::{Deserialize, Serialize};
-mod display;
-mod function;
-pub use function::{AggregateKind, ScalarFn};
 
+mod display;
 mod expr;
+mod function;
 mod pattern;
 #[cfg(test)]
 mod tests;
+pub(crate) mod walk;
 
 pub use expr::*;
+pub use function::{AggregateKind, ScalarFn};
 pub use pattern::*;
 
 /// Top-level Cypher statement
@@ -40,86 +41,101 @@ pub enum Mutation {
     Set(SetClause),
 }
 
-/// Read query structure
+/// Read query: reading and projection clauses in order, then the final RETURN.
+///
+/// openCypher evaluates clauses left to right; each clause consumes the rows (and the variables
+/// in scope) the previous one produced. `WITH` replaces the scope with its projection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Query {
-    /// MATCH clause (optional for pure CREATE queries)
-    pub match_clause: Option<MatchClause>,
-    /// Optional MATCH (left outer join semantics)
-    pub optional_matches: Vec<MatchClause>,
-    /// WHERE clause for filtering
-    pub where_clause: Option<WhereClause>,
-    /// WITH clause for subquery chaining
-    pub with_clause: Option<WithClause>,
-    /// RETURN clause (required)
+    /// MATCH, OPTIONAL MATCH, UNWIND and WITH clauses before the RETURN
+    pub clauses: Vec<Clause>,
+    /// RETURN clause (required), with its ORDER BY / SKIP / LIMIT
     pub return_clause: ReturnClause,
-    /// ORDER BY clause
-    pub order_by: Option<OrderByClause>,
-    /// SKIP clause
-    pub skip: Option<u64>,
-    /// LIMIT clause
-    pub limit: Option<u64>,
 }
 
 impl Query {
     /// Create a new query with just a RETURN clause
     pub fn new(return_clause: ReturnClause) -> Self {
         Self {
-            match_clause: None,
-            optional_matches: Vec::new(),
-            where_clause: None,
-            with_clause: None,
+            clauses: Vec::new(),
             return_clause,
-            order_by: None,
-            skip: None,
-            limit: None,
         }
     }
 
-    /// Add a MATCH clause
+    /// Append a MATCH (or OPTIONAL MATCH) clause
     pub fn with_match(mut self, match_clause: MatchClause) -> Self {
-        self.match_clause = Some(match_clause);
+        self.clauses.push(Clause::Match(match_clause));
         self
     }
 
-    /// Add a WHERE clause
-    pub fn with_where(mut self, where_clause: WhereClause) -> Self {
-        self.where_clause = Some(where_clause);
-        self
-    }
-
-    /// Add a LIMIT clause
+    /// Set the RETURN clause's LIMIT
     pub fn with_limit(mut self, limit: u64) -> Self {
-        self.limit = Some(limit);
+        self.return_clause.limit = Some(limit);
         self
     }
 
-    /// Add an ORDER BY clause
+    /// Set the RETURN clause's ORDER BY
     pub fn with_order_by(mut self, order_by: OrderByClause) -> Self {
-        self.order_by = Some(order_by);
+        self.return_clause.order_by = Some(order_by);
         self
     }
+}
+
+/// A clause that precedes the final RETURN
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Clause {
+    /// `MATCH` or `OPTIONAL MATCH`, with its own WHERE
+    Match(MatchClause),
+    /// `UNWIND expr AS variable`
+    Unwind(UnwindClause),
+    /// `WITH projection [WHERE predicate]`
+    With(WithClause),
 }
 
 /// MATCH clause - pattern matching
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchClause {
-    /// Patterns to match
+    /// `OPTIONAL MATCH`: rows without a match are kept, extended with nulls
+    pub optional: bool,
+    /// Patterns to match (comma-separated patterns join on shared variables)
     pub patterns: Vec<Pattern>,
+    /// The WHERE that belongs to this MATCH (for OPTIONAL MATCH it is part of the pattern)
+    pub where_clause: Option<WhereClause>,
 }
 
 impl MatchClause {
     /// Create a new MATCH clause with a single pattern
     pub fn new(pattern: Pattern) -> Self {
-        Self {
-            patterns: vec![pattern],
-        }
+        Self::with_patterns(vec![pattern])
     }
 
     /// Create a MATCH clause with multiple patterns
     pub fn with_patterns(patterns: Vec<Pattern>) -> Self {
-        Self { patterns }
+        Self {
+            optional: false,
+            patterns,
+            where_clause: None,
+        }
     }
+
+    /// Attach this MATCH's WHERE clause
+    pub fn with_where(mut self, where_clause: WhereClause) -> Self {
+        self.where_clause = Some(where_clause);
+        self
+    }
+
+    /// Make this an OPTIONAL MATCH
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
+    }
+}
+
+/// UNWIND clause: one row per element of a list
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnwindClause {
+    pub expr: Expr,
+    pub variable: String,
 }
 
 /// WHERE clause
@@ -134,20 +150,28 @@ impl WhereClause {
     }
 }
 
-/// WITH clause for subquery chaining
+/// WITH clause: an intermediate projection, optionally filtered
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WithClause {
-    pub items: Vec<ProjectionItem>,
-    pub where_clause: Option<Box<WhereClause>>,
+    /// Same projection body as RETURN (DISTINCT, items, ORDER BY, SKIP, LIMIT)
+    pub projection: ReturnClause,
+    /// WHERE over the projected variables
+    pub where_clause: Option<WhereClause>,
 }
 
-/// RETURN clause
+/// Projection body of RETURN (and of WITH)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReturnClause {
-    /// Whether RETURN DISTINCT was used
+    /// Whether DISTINCT was used
     pub distinct: bool,
     /// Projection items
     pub items: Vec<ProjectionItem>,
+    /// ORDER BY, applied after projection (and aggregation)
+    pub order_by: Option<OrderByClause>,
+    /// SKIP, applied after ORDER BY
+    pub skip: Option<u64>,
+    /// LIMIT, applied after SKIP
+    pub limit: Option<u64>,
 }
 
 impl ReturnClause {
@@ -156,15 +180,15 @@ impl ReturnClause {
         Self {
             distinct: false,
             items,
+            order_by: None,
+            skip: None,
+            limit: None,
         }
     }
 
     /// Return all columns (RETURN *)
     pub fn all() -> Self {
-        Self {
-            distinct: false,
-            items: vec![ProjectionItem::all()],
-        }
+        Self::new(vec![ProjectionItem::all()])
     }
 
     /// Make this RETURN DISTINCT

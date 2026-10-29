@@ -4,17 +4,18 @@
 
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
-// compact_str removed - using standard String for simplicity
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
-// smallvec removed - AST now uses Vec for simplicity
 
 /// Maximum allowed query string length (100KB) - prevents OOM from huge queries
 const MAX_QUERY_LENGTH: usize = 100 * 1024;
 
 /// Maximum allowed path traversal depth - prevents DoS via graph explosion
 const MAX_PATH_LENGTH: u32 = 100;
+
+/// Maximum bracket nesting depth - bounds parser and evaluator recursion
+const MAX_NESTING_DEPTH: usize = 128;
 
 #[derive(Parser)]
 #[grammar = "cypher/cypher.pest"]
@@ -35,6 +36,7 @@ impl CypherParser {
     ///
     /// # Security
     /// - Enforces maximum query length to prevent OOM attacks
+    /// - Enforces a maximum bracket nesting depth so recursive descent cannot exhaust the stack
     /// - Validates path lengths to prevent graph traversal DoS
     pub fn parse(&self, input: &str) -> CypherResult<Statement> {
         // Validate query size (DoS protection)
@@ -49,9 +51,25 @@ impl CypherParser {
                 ),
             ));
         }
+        let depth = unsupported::nesting_depth(input);
+        if depth > MAX_NESTING_DEPTH {
+            return Err(CypherError::QueryTooComplex {
+                message: format!(
+                    "bracket nesting depth {depth} exceeds the maximum of {MAX_NESTING_DEPTH}"
+                ),
+            });
+        }
 
-        let pairs = CypherPestParser::parse(Rule::statement, input)
-            .map_err(|e| self.pest_error_to_cypher(e))?;
+        let pairs = match CypherPestParser::parse(Rule::statement, input) {
+            Ok(pairs) => pairs,
+            // A construct outside the grammar is named, rather than reported as a bare
+            // syntax error at some column.
+            Err(e) => {
+                return Err(
+                    unsupported::diagnose(input).unwrap_or_else(|| self.pest_error_to_cypher(e))
+                )
+            }
+        };
 
         self.parse_statement(pairs)
     }
@@ -67,89 +85,54 @@ impl CypherParser {
                 Rule::delete_statement => {
                     return Ok(Statement::Delete(self.parse_delete_statement(pair)?))
                 }
-                Rule::EOI => continue,
                 _ => continue,
             }
         }
         Err(CypherError::UnexpectedEof)
     }
 
-    /// Parse a query
+    /// Parse a query: reading clauses in order, then RETURN
     fn parse_query(&self, pair: Pair<Rule>) -> CypherResult<Query> {
-        let mut match_clause = None;
-        let mut optional_matches = Vec::new();
-        let mut where_clause = None;
+        let mut clauses = Vec::new();
         let mut return_clause = None;
-        let mut order_by = None;
-        let mut skip = None;
-        let mut limit = None;
 
         for inner in pair.into_inner() {
             match inner.as_rule() {
-                Rule::match_clause => {
-                    match_clause = Some(self.parse_match_clause(inner)?);
-                }
-                Rule::optional_match => {
-                    optional_matches.push(self.parse_optional_match(inner)?);
-                }
-                Rule::where_clause => {
-                    where_clause = Some(self.parse_where_clause(inner)?);
-                }
-                Rule::return_clause => {
-                    return_clause = Some(self.parse_return_clause(inner)?);
-                }
-                Rule::order_by_clause => {
-                    order_by = Some(self.parse_order_by_clause(inner)?);
-                }
-                Rule::skip_clause => {
-                    skip = Some(self.parse_skip_clause(inner)?);
-                }
-                Rule::limit_clause => {
-                    limit = Some(self.parse_limit_clause(inner)?);
-                }
+                Rule::match_clause => clauses.push(Clause::Match(self.parse_match(inner, false)?)),
+                Rule::optional_match => clauses.push(Clause::Match(self.parse_match(inner, true)?)),
+                Rule::unwind_clause => clauses.push(Clause::Unwind(self.parse_unwind(inner)?)),
+                Rule::with_clause => clauses.push(Clause::With(self.parse_with(inner)?)),
+                Rule::return_clause => return_clause = Some(self.parse_return_clause(inner)?),
                 _ => {}
             }
         }
 
         let return_clause =
             return_clause.ok_or_else(|| CypherError::syntax(0, 0, "Missing RETURN clause"))?;
-
         Ok(Query {
-            match_clause,
-            optional_matches,
-            where_clause,
-            with_clause: None,
+            clauses,
             return_clause,
-            order_by,
-            skip,
-            limit,
         })
     }
 
-    /// Parse MATCH clause
-    fn parse_match_clause(&self, pair: Pair<Rule>) -> CypherResult<MatchClause> {
+    /// Parse MATCH / OPTIONAL MATCH with its WHERE
+    fn parse_match(&self, pair: Pair<Rule>, optional: bool) -> CypherResult<MatchClause> {
         let mut patterns = Vec::new();
+        let mut where_clause = None;
 
         for inner in pair.into_inner() {
-            if inner.as_rule() == Rule::pattern_list {
-                patterns = self.parse_pattern_list(inner)?;
+            match inner.as_rule() {
+                Rule::pattern_list => patterns = self.parse_pattern_list(inner)?,
+                Rule::where_clause => where_clause = Some(self.parse_where_clause(inner)?),
+                _ => {}
             }
         }
 
-        Ok(MatchClause { patterns })
-    }
-
-    /// Parse OPTIONAL MATCH
-    fn parse_optional_match(&self, pair: Pair<Rule>) -> CypherResult<MatchClause> {
-        let mut patterns = Vec::new();
-
-        for inner in pair.into_inner() {
-            if inner.as_rule() == Rule::pattern_list {
-                patterns = self.parse_pattern_list(inner)?;
-            }
-        }
-
-        Ok(MatchClause { patterns })
+        Ok(MatchClause {
+            optional,
+            patterns,
+            where_clause,
+        })
     }
 
     /// Convert pest error to CypherError
@@ -179,3 +162,13 @@ mod literal;
 mod pattern;
 #[cfg(test)]
 mod tests;
+mod unsupported;
+
+/// The name an identifier token denotes: backticks removed, doubled backticks unescaped.
+pub(super) fn ident(pair: &Pair<Rule>) -> String {
+    let s = pair.as_str();
+    match s.strip_prefix('`').and_then(|x| x.strip_suffix('`')) {
+        Some(quoted) => quoted.replace("``", "`"),
+        None => s.to_string(),
+    }
+}

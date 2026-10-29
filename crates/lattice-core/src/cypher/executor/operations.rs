@@ -1,13 +1,13 @@
 //! Query operation execution
 
+use super::canon::Canon;
 use super::{ExecutionContext, InternalRows, QueryExecutor, QueryStats};
 use crate::cypher::ast::{Expr, ProjectionItem};
 use crate::cypher::error::{CypherError, CypherResult};
 use crate::cypher::planner::LogicalOp;
 use crate::cypher::row::{ExecutorRow, Row};
 use crate::types::value::CypherValue;
-use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Safely convert u64 to usize with bounds checking.
 ///
@@ -47,6 +47,7 @@ impl QueryExecutor {
                 direction,
                 min_hops,
                 max_hops,
+                distinct_from,
             } => self.execute_expand(
                 input,
                 from,
@@ -56,10 +57,31 @@ impl QueryExecutor {
                 *direction,
                 *min_hops,
                 *max_hops,
+                distinct_from,
                 ctx,
             ),
+            LogicalOp::Cartesian { left, right } => self.execute_cartesian(left, right, ctx),
+            LogicalOp::Argument => Ok((ctx.take_argument()?, QueryStats::default())),
+            LogicalOp::OptionalMatch { input, inner } => {
+                self.execute_optional_match(input, inner, ctx)
+            }
+            LogicalOp::Unwind {
+                input,
+                expr,
+                variable,
+            } => self.execute_unwind(input, expr, variable, ctx),
             LogicalOp::Filter { input, predicate } => self.execute_filter(input, predicate, ctx),
-            LogicalOp::Project { input, items } => self.execute_project(input, items, ctx),
+            LogicalOp::Project {
+                input,
+                items,
+                carry,
+            } => self.execute_project(input, items, *carry, ctx),
+            LogicalOp::Aggregate {
+                input,
+                keys,
+                aggregates,
+                items,
+            } => self.execute_aggregate(input, keys, aggregates, items, ctx),
             LogicalOp::Sort {
                 input,
                 items,
@@ -97,7 +119,12 @@ impl QueryExecutor {
                 // Return a single row with no columns
                 Ok((vec![ExecutorRow::new()], QueryStats::default()))
             }
-            _ => Err(CypherError::unsupported("Unsupported operation")),
+            LogicalOp::DeleteRelationship { .. } => {
+                Err(CypherError::unsupported("deleting a relationship"))
+            }
+            LogicalOp::NodeByPropertySeek { .. } => {
+                Err(CypherError::unsupported("NodeByPropertySeek operator"))
+            }
         }
     }
 
@@ -139,21 +166,15 @@ impl QueryExecutor {
         // Pre-allocate caches based on expected row count (Phase 2 optimization)
         ctx.prepare_cache_for_rows(ids.len());
 
-        // If predicate pushdown is enabled, filter during scan
+        // If predicate pushdown is enabled, filter during scan. The node sits at its bound
+        // column (earlier columns are absent here; a pushed predicate only reads this node).
         let rows = if let Some(pred) = predicate {
-            // With predicate pushdown, evaluate predicate for each node
             let mut filtered = Vec::with_capacity(ids.len() / 2); // estimate 50% match rate
-
+            let mut probe: Vec<CypherValue> = vec![CypherValue::Null; column_index + 1];
             for id in ids {
-                let row = ExecutorRow::single(CypherValue::NodeRef(id));
-                match self.evaluate_predicate(pred, &row, ctx) {
-                    Ok(true) => filtered.push(row),
-                    Ok(false) => continue,
-                    Err(e) => {
-                        return Err(CypherError::Internal {
-                            message: format!("Predicate evaluation failed for node {}: {}", id, e),
-                        })
-                    }
+                probe[column_index] = CypherValue::NodeRef(id);
+                if self.evaluate_predicate(pred, &probe, ctx)? {
+                    filtered.push(ExecutorRow::single(CypherValue::NodeRef(id)));
                 }
             }
             filtered
@@ -217,34 +238,44 @@ impl QueryExecutor {
         Ok((result_rows, stats))
     }
 
-    /// Execute Project operation
+    /// Execute Project operation; every item carries its output name as `alias`
     pub(crate) fn execute_project(
         &self,
         input: &LogicalOp,
         items: &[ProjectionItem],
+        carry: bool,
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
         let (input_rows, stats) = self.execute_op(input, ctx)?;
+        let names: Vec<String> = items
+            .iter()
+            .map(|i| i.alias.clone().unwrap_or_else(|| i.expr.to_string()))
+            .collect();
 
-        let mut result_rows = Vec::new();
-
+        let mut result_rows = Vec::with_capacity(input_rows.len());
         for row in input_rows {
-            let mut new_row: ExecutorRow = ExecutorRow::with_capacity(items.len());
-
+            let mut new_row =
+                ExecutorRow::with_capacity(items.len() + if carry { row.len() } else { 0 });
             for item in items {
-                if matches!(item.expr, Expr::Star) {
-                    // Return all columns
-                    Row::extend_from_iter(&mut new_row, row.iter().cloned());
-                } else {
-                    // Evaluate expression
-                    let value = self.evaluate_expr(&item.expr, &row, ctx)?;
-                    Row::push(&mut new_row, value);
-                }
+                Row::push(&mut new_row, self.evaluate_expr(&item.expr, &row, ctx)?);
             }
-
+            if carry {
+                Row::extend_from_iter(&mut new_row, row.into_iter());
+            }
             result_rows.push(new_row);
         }
 
+        let carried = if carry {
+            ctx.bindings_in_order()
+        } else {
+            Vec::new()
+        };
+        ctx.rebind(&names);
+        for (name, column) in carried {
+            if !names.contains(&name) {
+                ctx.bind_variable(&name, names.len() + column);
+            }
+        }
         Ok((result_rows, stats))
     }
 
@@ -276,49 +307,18 @@ impl QueryExecutor {
         Ok((result_rows, stats))
     }
 
-    /// Execute Distinct operation
-    ///
-    /// Uses index collection to avoid cloning rows during deduplication.
-    /// Only the final unique rows are moved into the result.
+    /// Execute Distinct operation (openCypher equivalence: null = null, 1 = 1.0)
     pub(crate) fn execute_distinct(
         &self,
         input: &LogicalOp,
         ctx: &mut ExecutionContext,
     ) -> CypherResult<(InternalRows, QueryStats)> {
-        let (mut input_rows, stats) = self.execute_op(input, ctx)?;
-
-        // Use HashMap with collision detection to avoid hash collision bugs
-        // Key: hash, Value: indices of rows with that hash
-        let mut seen: HashMap<u64, SmallVec<[usize; 1]>> = HashMap::with_capacity(input_rows.len());
-        let mut unique_indices: Vec<usize> = Vec::with_capacity(input_rows.len());
-
-        for (idx, row) in input_rows.iter().enumerate() {
-            let hash = self.hash_row(row);
-            let entry = seen.entry(hash).or_default();
-
-            // Check for collision: verify row is actually different from all rows with same hash
-            let is_duplicate = entry
-                .iter()
-                .any(|&prev_idx| self.rows_equal(&input_rows[prev_idx], row));
-
-            if !is_duplicate {
-                entry.push(idx);
-                unique_indices.push(idx);
-            }
-        }
-
-        // Extract unique rows by moving (not cloning) from input_rows
-        // Process in reverse order to avoid index invalidation
-        unique_indices.sort_unstable();
-        let result_rows: Vec<_> = unique_indices
+        let (input_rows, stats) = self.execute_op(input, ctx)?;
+        let mut seen: HashSet<Vec<Canon>> = HashSet::with_capacity(input_rows.len());
+        let rows = input_rows
             .into_iter()
-            .rev()
-            .map(|idx| input_rows.swap_remove(idx))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
+            .filter(|row| seen.insert(Canon::row(row)))
             .collect();
-
-        Ok((result_rows, stats))
+        Ok((rows, stats))
     }
 }

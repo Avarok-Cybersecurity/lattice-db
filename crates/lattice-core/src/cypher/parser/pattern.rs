@@ -1,6 +1,6 @@
 //! Pattern parsing: node and relationship patterns, path lengths.
 
-use super::{CypherParser, Rule, MAX_PATH_LENGTH};
+use super::{ident, CypherParser, Rule, MAX_PATH_LENGTH};
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
 use pest::iterators::Pair;
@@ -49,17 +49,17 @@ impl CypherParser {
         for inner in pair.into_inner() {
             match inner.as_rule() {
                 Rule::identifier => {
-                    variable = Some(String::from(inner.as_str()));
+                    variable = Some(ident(&inner));
                 }
                 Rule::label_list => {
                     for label_inner in inner.into_inner() {
                         if label_inner.as_rule() == Rule::identifier {
-                            labels.push(String::from(label_inner.as_str()));
+                            labels.push(ident(&label_inner));
                         }
                     }
                 }
                 Rule::properties => {
-                    properties = Some(self.parse_map_literal(inner)?);
+                    properties = Some(self.parse_properties(inner)?);
                 }
                 _ => {}
             }
@@ -94,12 +94,12 @@ impl CypherParser {
                     for detail in inner.into_inner() {
                         match detail.as_rule() {
                             Rule::identifier => {
-                                variable = Some(String::from(detail.as_str()));
+                                variable = Some(ident(&detail));
                             }
                             Rule::rel_type_list => {
                                 for type_inner in detail.into_inner() {
                                     if type_inner.as_rule() == Rule::identifier {
-                                        rel_types.push(String::from(type_inner.as_str()));
+                                        rel_types.push(ident(&type_inner));
                                     }
                                 }
                             }
@@ -107,7 +107,7 @@ impl CypherParser {
                                 length = Some(self.parse_path_length(detail)?);
                             }
                             Rule::properties => {
-                                properties = Some(self.parse_map_literal(detail)?);
+                                properties = Some(self.parse_properties(detail)?);
                             }
                             _ => {}
                         }
@@ -139,7 +139,8 @@ impl CypherParser {
 
         for inner in pair.into_inner() {
             if inner.as_rule() == Rule::path_range {
-                let range_str = inner.as_str();
+                let range_str: String = inner.as_str().split_whitespace().collect();
+                let range_str = range_str.as_str();
                 if range_str.contains("..") {
                     let parts: Vec<&str> = range_str.split("..").collect();
                     // Validate exactly 2 parts for range syntax

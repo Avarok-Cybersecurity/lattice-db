@@ -1,295 +1,177 @@
-//! Pattern planning: node scans, expansions and inline property/label filters.
+//! Pattern planning: node scans, expansions and inline label/property constraints.
+//!
+//! A pattern's first node is scanned (by its first label) unless it is already bound; a scan
+//! after other rows joins them as a cartesian product. Each relationship becomes an `Expand`
+//! from the previous node. Labels and inline properties become a `Filter` right after the
+//! operator that binds the node, so a filter directly over a label scan is pushed into it.
 
-use super::{LogicalOp, QueryPlanner};
+use super::resolve::{resolve, Site};
+use super::{LogicalOp, QueryPlanner, MAX_PATH_LENGTH};
 use crate::cypher::ast::*;
 use crate::cypher::error::{CypherError, CypherResult};
 
-use super::MAX_PATH_LENGTH;
+/// Planning state shared by the patterns of one MATCH clause
+pub(super) struct MatchState<'a> {
+    /// Variables bound so far (binding order)
+    pub scope: &'a mut Vec<String>,
+    /// The plan is still the query's initial single empty row
+    pub unit: bool,
+    /// Counter for hidden names of anonymous nodes and relationships
+    pub anon: &'a mut u32,
+    /// Single-hop relationships of this MATCH: each must bind a different relationship
+    pub rels: Vec<String>,
+}
+
+impl MatchState<'_> {
+    fn fresh(&mut self, kind: &str) -> String {
+        *self.anon += 1;
+        format!("#{kind}{}", self.anon)
+    }
+
+    fn bind(&mut self, var: &str) {
+        if !self.scope.iter().any(|v| v == var) {
+            self.scope.push(var.to_string());
+        }
+    }
+
+    fn is_bound(&self, var: &str) -> bool {
+        self.scope.iter().any(|v| v == var)
+    }
+}
+
+/// `var:labels AND var.k = v ...` for the given constraints (empty when there are none)
+fn constraints(
+    var: &str,
+    labels: &[String],
+    props: Option<&MapLiteral>,
+    scope: &[String],
+) -> CypherResult<Vec<Expr>> {
+    let mut preds = Vec::new();
+    if !labels.is_empty() {
+        preds.push(Expr::HasLabels {
+            expr: Box::new(Expr::variable(var)),
+            labels: labels.to_vec(),
+        });
+    }
+    for (key, value) in props.map(|p| p.entries.as_slice()).unwrap_or_default() {
+        let value = resolve(value, scope, Site::Pattern)?;
+        preds.push(Expr::property(Expr::variable(var), key.as_str()).eq(value));
+    }
+    Ok(preds)
+}
+
+fn filtered(plan: LogicalOp, preds: Vec<Expr>) -> LogicalOp {
+    match preds.into_iter().reduce(|a, b| a.and(b)) {
+        Some(predicate) => LogicalOp::Filter {
+            input: Box::new(plan),
+            predicate,
+        },
+        None => plan,
+    }
+}
 
 impl QueryPlanner {
-    /// Plan a single pattern
-    pub(super) fn plan_pattern(&self, pattern: &Pattern) -> CypherResult<LogicalOp> {
-        if pattern.elements.is_empty() {
-            return Err(CypherError::syntax(0, 0, "Empty pattern"));
-        }
-
-        // Get the first node
-        let first_node = match &pattern.elements[0] {
-            PatternElement::Node(n) => n,
+    /// Plan one pattern on top of `plan`
+    pub(super) fn plan_pattern(
+        &self,
+        mut plan: LogicalOp,
+        st: &mut MatchState,
+        pattern: &Pattern,
+    ) -> CypherResult<LogicalOp> {
+        let mut elements = pattern.elements.iter();
+        let first = match elements.next() {
+            Some(PatternElement::Node(n)) => n,
             _ => return Err(CypherError::syntax(0, 0, "Pattern must start with a node")),
         };
 
-        // Plan the initial scan
-        let mut plan = self.plan_node_scan(first_node)?;
-
-        // Process remaining elements (rel-node pairs)
-        let mut i = 1;
-        while i < pattern.elements.len() {
-            if i + 1 >= pattern.elements.len() {
-                return Err(CypherError::syntax(
-                    0,
-                    0,
-                    "Incomplete pattern: relationship without target node",
-                ));
-            }
-
-            let rel = match &pattern.elements[i] {
-                PatternElement::Relationship(r) => r,
-                _ => {
-                    return Err(CypherError::syntax(
-                        0,
-                        0,
-                        "Expected relationship after node",
-                    ))
-                }
+        let mut prev = first.variable.clone().unwrap_or_else(|| st.fresh("anon"));
+        if st.is_bound(&prev) {
+            let preds = constraints(&prev, &first.labels, first.properties.as_ref(), st.scope)?;
+            plan = filtered(plan, preds);
+        } else {
+            let scan = match first.labels.first() {
+                Some(label) => LogicalOp::NodeByLabelScan {
+                    variable: prev.clone(),
+                    label: label.clone(),
+                    predicate: None,
+                },
+                None => LogicalOp::AllNodesScan {
+                    variable: prev.clone(),
+                },
             };
-
-            let target_node = match &pattern.elements[i + 1] {
-                PatternElement::Node(n) => n,
-                _ => {
-                    return Err(CypherError::syntax(
-                        0,
-                        0,
-                        "Expected node after relationship",
-                    ))
-                }
-            };
-
-            // Get the source variable name
-            let from_var = self.get_last_node_variable(&plan)?;
-
-            // Get or generate target variable
-            let to_var = target_node
-                .variable
-                .clone()
-                .unwrap_or_else(|| String::from(format!("_anon_{}", i)));
-
-            // Determine hop range (capped at MAX_PATH_LENGTH for DoS protection)
-            let (min_hops, max_hops) = if let Some(len) = &rel.length {
-                let min = len.min.unwrap_or(1);
-                let max = len.max.unwrap_or(MAX_PATH_LENGTH).min(MAX_PATH_LENGTH);
-                (min, max)
+            plan = if st.unit {
+                scan
             } else {
-                (1, 1)
+                LogicalOp::Cartesian {
+                    left: Box::new(plan),
+                    right: Box::new(scan),
+                }
             };
+            st.unit = false;
+            st.bind(&prev);
+            let rest = first.labels.get(1..).unwrap_or_default();
+            let preds = constraints(&prev, rest, first.properties.as_ref(), st.scope)?;
+            plan = filtered(plan, preds);
+        }
 
-            // Create expand operation
+        while let Some(element) = elements.next() {
+            let (rel, node) = match (element, elements.next()) {
+                (PatternElement::Relationship(r), Some(PatternElement::Node(n))) => (r, n),
+                _ => {
+                    return Err(CypherError::syntax(
+                        0,
+                        0,
+                        "Incomplete pattern: relationship without target node",
+                    ))
+                }
+            };
+            let to = node.variable.clone().unwrap_or_else(|| st.fresh("anon"));
+            let (min_hops, max_hops, rel_variable) = match &rel.length {
+                Some(len) => {
+                    if let Some(r) = &rel.variable {
+                        return Err(CypherError::unsupported(format!(
+                            "binding a variable-length relationship to a variable ('{r}')"
+                        )));
+                    }
+                    if rel.properties.is_some() {
+                        return Err(CypherError::unsupported(
+                            "properties on a variable-length relationship",
+                        ));
+                    }
+                    let min = len.min.unwrap_or(1);
+                    let max = len.max.unwrap_or(MAX_PATH_LENGTH).min(MAX_PATH_LENGTH);
+                    (min, max, None)
+                }
+                None => {
+                    let r = rel.variable.clone().unwrap_or_else(|| st.fresh("rel"));
+                    (1, 1, Some(r))
+                }
+            };
             plan = LogicalOp::Expand {
                 input: Box::new(plan),
-                from: from_var,
-                rel_variable: rel.variable.clone(),
-                to: to_var.clone(),
+                from: prev,
+                rel_variable: rel_variable.clone(),
+                to: to.clone(),
                 rel_types: rel.rel_types.clone(),
                 direction: rel.direction,
                 min_hops,
                 max_hops,
+                distinct_from: match rel_variable {
+                    Some(_) => st.rels.clone(),
+                    None => Vec::new(),
+                },
             };
-
-            // Apply target node constraints (labels, properties)
-            if !target_node.labels.is_empty() || target_node.properties.is_some() {
-                let filter = self.build_node_filter(&to_var, target_node)?;
-                plan = LogicalOp::Filter {
-                    input: Box::new(plan),
-                    predicate: filter,
-                };
+            st.bind(&to);
+            let mut preds = constraints(&to, &node.labels, node.properties.as_ref(), st.scope)?;
+            if let Some(r) = &rel_variable {
+                st.bind(r);
+                st.rels.push(r.clone());
+                preds.extend(constraints(r, &[], rel.properties.as_ref(), st.scope)?);
             }
-
-            i += 2;
+            plan = filtered(plan, preds);
+            prev = to;
         }
 
         Ok(plan)
-    }
-
-    /// Plan pattern expansion from existing input
-    pub(super) fn plan_pattern_expansion(
-        &self,
-        input: LogicalOp,
-        pattern: &Pattern,
-    ) -> CypherResult<LogicalOp> {
-        // Similar to plan_pattern but starts from existing input
-        // Skip the first node if it's a variable reference
-
-        if pattern.elements.len() < 3 {
-            return Ok(input);
-        }
-
-        let first_node = match &pattern.elements[0] {
-            PatternElement::Node(n) => n,
-            _ => return Err(CypherError::syntax(0, 0, "Pattern must start with a node")),
-        };
-
-        let from_var = first_node
-            .variable
-            .clone()
-            .ok_or_else(|| CypherError::syntax(0, 0, "OPTIONAL MATCH requires bound variable"))?;
-
-        let mut plan = input;
-        let mut i = 1;
-
-        while i < pattern.elements.len() {
-            if i + 1 >= pattern.elements.len() {
-                break;
-            }
-
-            let rel = match &pattern.elements[i] {
-                PatternElement::Relationship(r) => r,
-                _ => break,
-            };
-
-            let target_node = match &pattern.elements[i + 1] {
-                PatternElement::Node(n) => n,
-                _ => break,
-            };
-
-            let to_var = target_node
-                .variable
-                .clone()
-                .unwrap_or_else(|| String::from(format!("_anon_{}", i)));
-
-            // Compute from variable before moving plan
-            let from = if i == 1 {
-                from_var.clone()
-            } else {
-                self.get_last_node_variable(&plan)?
-            };
-
-            plan = LogicalOp::OptionalExpand {
-                input: Box::new(plan),
-                from,
-                rel_variable: rel.variable.clone(),
-                to: to_var.clone(),
-                rel_types: rel.rel_types.clone(),
-                direction: rel.direction,
-            };
-
-            i += 2;
-        }
-
-        Ok(plan)
-    }
-
-    /// Plan a node scan
-    pub(super) fn plan_node_scan(&self, node: &NodePattern) -> CypherResult<LogicalOp> {
-        let variable = node
-            .variable
-            .clone()
-            .unwrap_or_else(|| String::from("_anon_0"));
-
-        // Choose scan type based on constraints
-        let mut plan = if node.labels.is_empty() {
-            LogicalOp::AllNodesScan {
-                variable: variable.clone(),
-            }
-        } else {
-            // Use label scan for first label
-            LogicalOp::NodeByLabelScan {
-                variable: variable.clone(),
-                label: node.labels[0].clone(),
-                predicate: None,
-            }
-        };
-
-        // Add filter for additional labels
-        if node.labels.len() > 1 {
-            let mut predicates = Vec::new();
-            for label in node.labels.iter().skip(1) {
-                // Check if node has this label
-                predicates.push(Expr::function(
-                    "hasLabel",
-                    vec![
-                        Expr::variable(variable.clone()),
-                        Expr::literal(label.as_str()),
-                    ],
-                ));
-            }
-            // SAFETY: predicates is non-empty because labels.len() > 1 and skip(1) yields at least 1
-            if let Some(combined) = predicates.into_iter().reduce(|a, b| a.and(b)) {
-                plan = LogicalOp::Filter {
-                    input: Box::new(plan),
-                    predicate: combined,
-                };
-            }
-        }
-
-        // Add property filter
-        if let Some(props) = &node.properties {
-            let filter = self.build_property_filter(&variable, props)?;
-            plan = LogicalOp::Filter {
-                input: Box::new(plan),
-                predicate: filter,
-            };
-        }
-
-        Ok(plan)
-    }
-
-    /// Build a filter expression for node constraints
-    pub(super) fn build_node_filter(
-        &self,
-        variable: &str,
-        node: &NodePattern,
-    ) -> CypherResult<Expr> {
-        let mut predicates = Vec::new();
-
-        // Label checks
-        for label in &node.labels {
-            predicates.push(Expr::function(
-                "hasLabel",
-                vec![Expr::variable(variable), Expr::literal(label.as_str())],
-            ));
-        }
-
-        // Property checks
-        if let Some(props) = &node.properties {
-            for (key, value) in &props.entries {
-                predicates.push(
-                    Expr::property(Expr::variable(variable), key.as_str()).eq((**value).clone()),
-                );
-            }
-        }
-
-        // Combine predicates with AND
-        predicates
-            .into_iter()
-            .reduce(|a, b| a.and(b))
-            .ok_or_else(|| CypherError::internal("Empty filter"))
-    }
-
-    /// Build a filter expression for property constraints
-    pub(super) fn build_property_filter(
-        &self,
-        variable: &str,
-        props: &MapLiteral,
-    ) -> CypherResult<Expr> {
-        let mut predicates = Vec::new();
-
-        for (key, value) in &props.entries {
-            predicates
-                .push(Expr::property(Expr::variable(variable), key.as_str()).eq((**value).clone()));
-        }
-
-        predicates
-            .into_iter()
-            .reduce(|a, b| a.and(b))
-            .ok_or_else(|| CypherError::internal("Empty property filter"))
-    }
-
-    /// Get the variable name of the last node in a plan
-    pub(super) fn get_last_node_variable(&self, plan: &LogicalOp) -> CypherResult<String> {
-        match plan {
-            LogicalOp::AllNodesScan { variable } => Ok(variable.clone()),
-            LogicalOp::NodeByLabelScan { variable, .. } => Ok(variable.clone()),
-            LogicalOp::NodeByIdSeek { variable, .. } => Ok(variable.clone()),
-            LogicalOp::NodeByPropertySeek { variable, .. } => Ok(variable.clone()),
-            LogicalOp::Expand { to, .. } => Ok(to.clone()),
-            LogicalOp::OptionalExpand { to, .. } => Ok(to.clone()),
-            LogicalOp::Filter { input, .. } => self.get_last_node_variable(input),
-            LogicalOp::Project { input, .. } => self.get_last_node_variable(input),
-            LogicalOp::Sort { input, .. } => self.get_last_node_variable(input),
-            LogicalOp::Skip { input, .. } => self.get_last_node_variable(input),
-            LogicalOp::Limit { input, .. } => self.get_last_node_variable(input),
-            LogicalOp::Distinct { input } => self.get_last_node_variable(input),
-            _ => Err(CypherError::internal("Cannot determine node variable")),
-        }
     }
 }

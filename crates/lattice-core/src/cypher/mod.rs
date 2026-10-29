@@ -67,6 +67,7 @@
 pub mod ast;
 pub mod error;
 pub mod executor;
+mod explain;
 pub mod handler;
 pub mod parser;
 pub mod planner;
