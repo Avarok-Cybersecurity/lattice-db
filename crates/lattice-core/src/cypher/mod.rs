@@ -49,7 +49,7 @@
 //! | DELETE | Single element | `DELETE n` |
 //!
 //! Expressions: arithmetic, string/list `+`, comparisons (chained), AND/OR/XOR/NOT, IN,
-//! STARTS WITH / ENDS WITH / CONTAINS, IS [NOT] NULL, label predicates, CASE, list and map
+//! STARTS WITH / ENDS WITH / CONTAINS, IS \[NOT\] NULL, label predicates, CASE, list and map
 //! literals, indexing and slicing, parameters, the scalar functions of `ast::ScalarFn` and the
 //! aggregates of `ast::AggregateKind`.
 //!
