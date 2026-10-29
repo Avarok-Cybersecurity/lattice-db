@@ -60,6 +60,40 @@ fn constraints(
     Ok(preds)
 }
 
+/// The same pattern read from its other end (relationship directions flipped)
+fn reversed(pattern: &Pattern) -> Pattern {
+    Pattern {
+        elements: pattern
+            .elements
+            .iter()
+            .rev()
+            .map(|e| match e {
+                PatternElement::Relationship(r) => {
+                    let mut r = r.clone();
+                    r.direction = match r.direction {
+                        Direction::Outgoing => Direction::Incoming,
+                        Direction::Incoming => Direction::Outgoing,
+                        Direction::Both => Direction::Both,
+                    };
+                    PatternElement::Relationship(r)
+                }
+                node => node.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// A pattern whose first node is unbound but whose last node is bound is planned from the
+/// bound end: the same matches, without a scan joined against every input row
+fn oriented<'p>(pattern: &'p Pattern, scope: &[String]) -> std::borrow::Cow<'p, Pattern> {
+    let bound = |e: Option<&PatternElement>| matches!(e, Some(PatternElement::Node(NodePattern { variable: Some(v), .. })) if scope.contains(v));
+    if !bound(pattern.elements.first()) && bound(pattern.elements.last()) {
+        std::borrow::Cow::Owned(reversed(pattern))
+    } else {
+        std::borrow::Cow::Borrowed(pattern)
+    }
+}
+
 fn filtered(plan: LogicalOp, preds: Vec<Expr>) -> LogicalOp {
     match preds.into_iter().reduce(|a, b| a.and(b)) {
         Some(predicate) => LogicalOp::Filter {
@@ -78,6 +112,7 @@ impl QueryPlanner {
         st: &mut MatchState,
         pattern: &Pattern,
     ) -> CypherResult<LogicalOp> {
+        let pattern = oriented(pattern, st.scope);
         let mut elements = pattern.elements.iter();
         let first = match elements.next() {
             Some(PatternElement::Node(n)) => n,

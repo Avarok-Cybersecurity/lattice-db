@@ -144,3 +144,14 @@ fn test_plan_expand() {
 
     assert!(has_expand(&plan), "Expected Expand in plan");
 }
+
+#[test]
+fn a_pattern_ending_at_a_bound_node_is_planned_from_that_node() {
+    // `k` is bound by the first MATCH; expanding from it avoids joining every Measurement
+    // against every Kernel row and filtering afterwards.
+    let plan = crate::cypher::handler::DefaultCypherHandler::new()
+        .explain("MATCH (k:Kernel) OPTIONAL MATCH (m:Measurement)-[:MEASURES]->(k) RETURN k, m")
+        .unwrap();
+    assert!(!plan.contains("Cartesian"), "{plan}");
+    assert!(plan.contains("Expand((k)<-[MEASURES]<-(m))"), "{plan}");
+}
