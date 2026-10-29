@@ -1,6 +1,6 @@
 //! Expression AST.
 
-use super::{MapLiteral, Pattern};
+use super::{MapLiteral, Pattern, ScalarFn};
 use crate::types::value::CypherValue;
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +71,26 @@ pub enum Expr {
 
     /// EXISTS subquery (Phase 2)
     Exists { pattern: Pattern },
+
+    /// Label predicate: `n:Label1:Label2` (true when the node has every label)
+    HasLabels {
+        expr: Box<Expr>,
+        labels: Vec<String>,
+    },
+
+    /// Subscript: `list[i]`, `map['key']`, `node['prop']`
+    Index { expr: Box<Expr>, index: Box<Expr> },
+
+    /// List slice: `list[from..to]` (either bound may be omitted)
+    Slice {
+        expr: Box<Expr>,
+        from: Option<Box<Expr>>,
+        to: Option<Box<Expr>>,
+    },
+
+    /// A scalar function call the planner resolved against the function catalogue.
+    /// The parser never produces it; it replaces `FunctionCall` in planned expressions.
+    Scalar { func: ScalarFn, args: Vec<Expr> },
 }
 
 impl Expr {

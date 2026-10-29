@@ -4,7 +4,9 @@
 //! They are produced by the parser and consumed by the planner.
 
 use serde::{Deserialize, Serialize};
-// smallvec removed - using standard Vec
+mod display;
+mod function;
+pub use function::{AggregateKind, ScalarFn};
 
 mod expr;
 mod pattern;
