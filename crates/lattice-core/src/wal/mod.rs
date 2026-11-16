@@ -74,8 +74,9 @@ pub struct WriteAheadLog<S: LatticeStorage> {
 /// WAL page start ID (reserved range)
 const WAL_PAGE_START: u64 = 0;
 
-/// Metadata key for WAL header
-const WAL_HEADER_KEY: &str = "wal_header";
+/// Metadata key holding the WAL header: a commit is durable once this one
+/// key is written, so storage must write a single key all-or-nothing
+pub const WAL_HEADER_KEY: &str = "wal_header";
 
 /// Maximum entries before automatic checkpoint suggestion
 const CHECKPOINT_THRESHOLD: u64 = 10000;
@@ -84,7 +85,11 @@ const CHECKPOINT_THRESHOLD: u64 = 10000;
 ///
 /// Smaller pages reduce copy overhead on sync but increase page rotation frequency.
 /// 256KB balances copy overhead vs rotation overhead for typical workloads.
-const WAL_PAGE_MAX_BYTES: u64 = 256 * 1024;
+///
+/// A page rotates before a commit would take it past this size, so pages stay
+/// within it, except that a single commit larger than this is written as one
+/// page of its own size. Storage must accept pages of at least this size.
+pub const WAL_PAGE_MAX_BYTES: u64 = 256 * 1024;
 
 impl<S: LatticeStorage> WriteAheadLog<S> {
     /// Create or open a WAL with the given storage backend

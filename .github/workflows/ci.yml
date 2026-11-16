@@ -119,6 +119,13 @@ jobs:
       - name: Run WASM tests
         run: wasm-pack test --headless --chrome crates/lattice-core
 
+      # The LatticeStorage conformance suite on wasm32: against the harness's
+      # store (with the suite's negative control), and against MemStorage.
+      - name: Run WASM storage conformance
+        run: |
+          wasm-pack test --headless --chrome crates/lattice-test-harness
+          wasm-pack test --headless --chrome crates/lattice-storage --no-default-features
+
   test-js:
     name: Test (JavaScript)
     runs-on: ubuntu-latest

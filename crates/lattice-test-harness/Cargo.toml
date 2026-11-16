@@ -8,9 +8,21 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# Same library name as the workspace alias, so `use lattice_test_harness::…`
+# reads alike in this crate's own tests and in every dependent.
+[lib]
+name = "lattice_test_harness"
+
 [dependencies]
 lattice-core.workspace = true
 async-trait.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["sync", "rt"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test.workspace = true
+getrandom.workspace = true
