@@ -38,6 +38,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dense vector operations now return `Option`/`Result` instead of panicking
 
+## [0.5.0] - Unreleased
+
+Durable collections on wasm32, for Cloudflare Durable Objects, on a WAL whose commits are now
+all-or-nothing. A minor bump: `WalEntry` gains a variant and the test harness's storage doubles
+change behaviour.
+
+### Added
+
+- **wasm32 `DurableEngine<W, D>`**: the wasm collection engine over any `LatticeStorage`, with the
+  native engine's constructors (`open_durable`, `open_durable_unified`) and `*_async` writes. Each
+  write appends, syncs and only then applies, so `Ok` means durable. `checkpoint()` stores the
+  collection as 64 KiB snapshot chunks in two alternating slots behind a one-key manifest; opening
+  loads the snapshot and replays the WAL from its LSN. No clock, thread or runtime is used, so it
+  runs inside a Durable Object; call `checkpoint()` from an alarm when `should_checkpoint()` says so.
+- **`WalEntry::DefineRelation`**: a relation first used by `add_edge_async` is logged with the edge
+  in one commit, so edges keep their relation name across restarts. It is the last variant, so
+  existing tags and the 32-byte archived size are unchanged; an older build skips the entry as
+  undecodable.
+- **`wal::replay`**: one replay core over a `WalApply` trait, used by both engines.
+- **`LatticeStorage` conformance suite** in `latticedb-test-harness`
+  (`lattice_test_harness::conformance`): a backend implements `StorageFixture` and runs
+  `run_conformance`, which checks metadata blobs, pages (exact bytes, WAL-sized, any `u64` id),
+  sync and reopen, and the WAL's crash consistency over the backend (acknowledged commits survive
+  a restart; a commit whose page or header write failed never appears after one). `MemStorage`
+  (native and wasm32), `DiskStorage` and the harness's `SharedState` run it; a store that drops
+  its last page on `sync` is a negative control that must fail it. The harness is not on
+  crates.io; depend on it by git tag.
+- `wal::WAL_PAGE_MAX_BYTES` and `wal::WAL_HEADER_KEY` are public, and the `LatticeStorage` docs
+  state the contract the WAL relies on, the wasm32 `?Send` form of the trait, and how to back it
+  with a SQLite-backed Durable Object.
+
+### Fixed
+
+- **A failed commit could be persisted by the next one**: a failed `sync` kept its entry in the
+  write buffer, page cache and header, so the next successful commit wrote it out. `sync` now
+  restores the last durable state on error and gives the LSNs back.
+- **A page written without its header was replayed**: reads now stop at the header's committed
+  length, and a page shorter than the header records is reported as corruption.
+- **LSNs after truncation were renumbered from 0**, so replay from a checkpoint skipped surviving
+  entries. Each page is numbered from the first LSN the header records for it. Truncation persists
+  the shortened page list before deleting pages; a missing listed page is an error, not empty.
+
+### Changed
+
+- `lattice_test_harness::MockStorage::read_page` returns `StorageError::PageNotFound` for a page
+  never written, as every real backend does, instead of empty bytes. `FailingStorage` is generic
+  over the backend it wraps (`FailingStorage::wrap`); `FailingStorage::new(&SharedState)` is
+  unchanged.
+
 ## [0.4.0] - 2026-10-28
 
 Cypher read queries now evaluate full expressions. This is a minor bump rather than a
