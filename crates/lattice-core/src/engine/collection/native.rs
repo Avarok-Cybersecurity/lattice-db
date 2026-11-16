@@ -20,7 +20,8 @@ use crate::transaction::TransactionManager;
 use crate::types::collection::{CollectionConfig, DurabilityMode};
 use crate::types::point::{Edge, Point, PointId};
 use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, SearchResult};
-use crate::wal::{Lsn, WalEntry};
+use crate::wal::relations::{define_relation, plan_relation};
+use crate::wal::WalEntry;
 use rayon::prelude::*;
 use rkyv::rancor::Error as RkyvError;
 use rustc_hash::FxHashSet;
@@ -32,6 +33,8 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use tokio::sync::Mutex as TokioMutex;
 
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
+
+mod wal_apply;
 
 /// Marker type for no storage (ephemeral mode)
 ///
@@ -452,47 +455,7 @@ where
         let entries = txn_guard.read_entries_from(start_lsn).await?;
         drop(txn_guard); // Release lock before mutating
 
-        // Collect aborted LSNs first
-        let aborted_lsns: std::collections::HashSet<Lsn> = entries
-            .iter()
-            .filter_map(|(_, entry)| match entry {
-                WalEntry::Abort { aborted_lsn } => Some(*aborted_lsn),
-                _ => None,
-            })
-            .collect();
-
-        let mut replayed = 0;
-        for (lsn, entry) in entries {
-            if aborted_lsns.contains(&lsn) {
-                continue;
-            }
-
-            match entry {
-                WalEntry::Upsert { points } => {
-                    self.apply_upsert_internal(points)?;
-                    replayed += 1;
-                }
-                WalEntry::Delete { ids } => {
-                    self.apply_delete_internal(&ids)?;
-                    replayed += 1;
-                }
-                WalEntry::AddEdge { from_id, edge } => {
-                    self.apply_add_edge_internal(from_id, edge)?;
-                    replayed += 1;
-                }
-                WalEntry::RemoveEdge {
-                    from_id,
-                    to_id,
-                    relation_id,
-                } => {
-                    self.apply_remove_edge_internal(from_id, to_id, relation_id)?;
-                    replayed += 1;
-                }
-                WalEntry::Checkpoint { .. } | WalEntry::Abort { .. } => { /* skip */ }
-            }
-        }
-
-        Ok(replayed)
+        crate::wal::replay::replay(self, entries)
     }
 
     // --- Public Mutation Methods (Async, Durable Mode) ---
@@ -605,22 +568,38 @@ where
         relation: &str,
         weight: f32,
     ) -> LatticeResult<()> {
-        let relation_id = self.get_or_create_relation_id(relation);
-        let edge = Edge::new(to_id, weight, relation_id);
+        let Some(txn_arc) = self.txn_manager.clone() else {
+            let relation_id = self.get_or_create_relation_id(relation);
+            return self.apply_add_edge_internal(from_id, Edge::new(to_id, weight, relation_id));
+        };
 
-        if let Some(txn_arc) = self.txn_manager.clone() {
-            let mut txn = txn_arc.lock().await;
-            let lsn = txn.log_add_edge(from_id, edge.clone()).await?;
-            match self.apply_add_edge_internal(from_id, edge) {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    let _ = txn.log_abort(lsn).await;
-                    return Err(e);
-                }
+        // A relation first seen here is logged with the edge, in one commit,
+        // and registered only once that commit is durable.
+        let (relation_id, is_new) = plan_relation(&self.config, relation)?;
+        let edge = Edge::new(to_id, weight, relation_id);
+        let mut txn = txn_arc.lock().await;
+        let lsn = if is_new {
+            let define = WalEntry::DefineRelation {
+                name: relation.to_string(),
+                relation_id,
+            };
+            let add = WalEntry::AddEdge {
+                from_id,
+                edge: edge.clone(),
+            };
+            let lsns = txn.log_entries(&[define, add]).await?;
+            define_relation(&mut self.config, relation, relation_id)?;
+            lsns[1]
+        } else {
+            txn.log_add_edge(from_id, edge.clone()).await?
+        };
+        match self.apply_add_edge_internal(from_id, edge) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let _ = txn.log_abort(lsn).await;
+                Err(e)
             }
         }
-
-        self.apply_add_edge_internal(from_id, edge)
     }
 
     /// Remove an edge with WAL durability (async, durable mode)

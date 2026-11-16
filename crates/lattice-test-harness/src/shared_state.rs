@@ -38,8 +38,8 @@ pub struct MockStorage {
     pub meta: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait::async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl LatticeStorage for MockStorage {
     async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         Ok(self.meta.read().unwrap().get(key).cloned())

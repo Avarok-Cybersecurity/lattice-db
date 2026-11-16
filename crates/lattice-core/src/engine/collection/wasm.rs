@@ -19,6 +19,8 @@ use std::ops::Bound;
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 use super::PAGE_POINTS_START;
 
+mod apply;
+
 /// Collection engine - manages a single collection (WASM implementation)
 ///
 /// Synchronous indexing with direct ownership (no Arc/RwLock needed).
@@ -417,10 +419,22 @@ impl CollectionEngine {
 
         // Get or create relation ID
         let relation_id = self.get_or_create_relation_id(relation);
+        self.insert_edge(from_id, Edge::new(to_id, weight, relation_id))
+    }
+
+    /// Add an edge whose relation id is already registered
+    fn insert_edge(&mut self, from_id: PointId, edge: Edge) -> LatticeResult<()> {
+        if !self.points.contains_key(&edge.target_id) {
+            return Err(LatticeError::PointNotFound { id: edge.target_id });
+        }
+        let to_id = edge.target_id;
+        let relation_id = edge.relation_id;
 
         // Add edge to source point
-        let point = self.points.get_mut(&from_id).unwrap();
-        let edge = Edge::new(to_id, weight, relation_id);
+        let point = self
+            .points
+            .get_mut(&from_id)
+            .ok_or(LatticeError::PointNotFound { id: from_id })?;
 
         match &mut point.outgoing_edges {
             Some(edges) => {
@@ -457,7 +471,7 @@ impl CollectionEngine {
 
             if let Some(rel) = relation {
                 if let Some(rel_id) = self.config.relation_id(rel) {
-                    edges.retain(|e| !(e.target_id == to_id && e.relation_id == rel_id));
+                    return self.remove_edge_by_id(from_id, to_id, rel_id);
                 }
             } else {
                 edges.retain(|e| e.target_id != to_id);
@@ -469,6 +483,28 @@ impl CollectionEngine {
         };
 
         Ok(removed)
+    }
+
+    /// Remove the edge `from_id -> to_id` with `relation_id`
+    fn remove_edge_by_id(
+        &mut self,
+        from_id: PointId,
+        to_id: PointId,
+        relation_id: u16,
+    ) -> LatticeResult<bool> {
+        let point = self
+            .points
+            .get_mut(&from_id)
+            .ok_or(LatticeError::PointNotFound { id: from_id })?;
+
+        Ok(match &mut point.outgoing_edges {
+            Some(edges) => {
+                let original_len = edges.len();
+                edges.retain(|e| !(e.target_id == to_id && e.relation_id == relation_id));
+                edges.len() < original_len
+            }
+            None => false,
+        })
     }
 
     /// Get outgoing edges from a point

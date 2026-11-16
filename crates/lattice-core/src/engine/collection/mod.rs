@@ -13,10 +13,10 @@
 
 mod types;
 
-/// Starting page ID for point storage (reserved for Phase 2: point-level persistence)
+/// Starting page ID for collection data: checkpoint snapshots
 ///
-/// Pages 0..999_999 are used by the WAL. Point data pages start at 1_000_000
-/// to avoid collisions.
+/// Pages 0..999_999 are used by the WAL. Data pages start at 1_000_000
+/// to avoid collisions (see `wal::snapshot`).
 pub(crate) const PAGE_POINTS_START: u64 = 1_000_000;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,6 +27,9 @@ mod builder;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+
+#[cfg(target_arch = "wasm32")]
+mod durable_wasm;
 
 // Re-export types
 pub use types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
@@ -40,6 +43,9 @@ pub use builder::CollectionEngineBuilder;
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm::CollectionEngine;
+
+#[cfg(target_arch = "wasm32")]
+pub use durable_wasm::DurableEngine;
 
 #[cfg(test)]
 mod tests {
