@@ -49,8 +49,8 @@ impl FailingStorage {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait::async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl LatticeStorage for FailingStorage {
     async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         self.inner.get_meta(key).await

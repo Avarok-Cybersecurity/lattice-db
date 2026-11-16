@@ -44,6 +44,24 @@ impl<S: LatticeStorage> TransactionManager<S> {
         Ok(lsn)
     }
 
+    /// Log several entries as one commit: a single sync, all or none
+    ///
+    /// On error none of the entries is durable or will become durable later.
+    pub async fn log_entries(&mut self, entries: &[WalEntry]) -> LatticeResult<Vec<Lsn>> {
+        let mut lsns = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match self.wal.append(entry).await {
+                Ok(lsn) => lsns.push(lsn),
+                Err(e) => {
+                    self.wal.discard_unsynced();
+                    return Err(e);
+                }
+            }
+        }
+        self.wal.sync().await?;
+        Ok(lsns)
+    }
+
     /// Log an upsert operation WITHOUT syncing (for batch operations)
     ///
     /// Call `sync()` after all operations to ensure durability.
@@ -139,75 +157,18 @@ impl<S: LatticeStorage> TransactionManager<S> {
 pub mod recovery {
     use super::*;
     use crate::engine::collection::CollectionEngine;
-    use std::collections::HashSet;
 
     /// Replay WAL entries to restore engine state
     ///
     /// This is called during engine startup when durability mode is enabled.
-    /// Aborted operations are collected first, then skipped during replay.
+    /// Aborted operations are skipped; see [`crate::wal::replay::replay`].
     pub async fn replay_wal<S: LatticeStorage>(
         engine: &mut CollectionEngine,
         txn_manager: &TransactionManager<S>,
     ) -> LatticeResult<usize> {
         let start_lsn = txn_manager.last_checkpoint_lsn();
         let entries = txn_manager.read_entries_from(start_lsn).await?;
-
-        // First pass: collect aborted LSNs
-        let aborted_lsns: HashSet<Lsn> = entries
-            .iter()
-            .filter_map(|(_, entry)| match entry {
-                WalEntry::Abort { aborted_lsn } => Some(*aborted_lsn),
-                _ => None,
-            })
-            .collect();
-
-        // Second pass: replay non-aborted entries
-        let mut replayed = 0;
-
-        for (lsn, entry) in entries {
-            if aborted_lsns.contains(&lsn) {
-                continue;
-            }
-
-            match entry {
-                WalEntry::Upsert { points } => {
-                    engine.upsert_points(points)?;
-                    replayed += 1;
-                }
-                WalEntry::Delete { ids } => {
-                    engine.delete_points(&ids)?;
-                    replayed += 1;
-                }
-                WalEntry::AddEdge { from_id, edge } => {
-                    let relation_name = engine
-                        .config()
-                        .relation_name(edge.relation_id)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("relation_{}", edge.relation_id));
-
-                    engine.add_edge(from_id, edge.target_id, &relation_name, edge.weight)?;
-                    replayed += 1;
-                }
-                WalEntry::RemoveEdge {
-                    from_id,
-                    to_id,
-                    relation_id,
-                } => {
-                    let relation_name = engine
-                        .config()
-                        .relation_name(relation_id)
-                        .map(|s| s.to_string());
-
-                    engine.remove_edge(from_id, to_id, relation_name.as_deref())?;
-                    replayed += 1;
-                }
-                WalEntry::Checkpoint { .. } | WalEntry::Abort { .. } => {
-                    // Skip control entries during replay
-                }
-            }
-        }
-
-        Ok(replayed)
+        crate::wal::replay::replay(engine, entries)
     }
 }
 
