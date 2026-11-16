@@ -6,12 +6,15 @@ use lattice_core::LatticeStorage;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// Storage that delegates to MockStorage but can inject failures
+/// Storage that delegates to another backend but can inject failures
 ///
 /// Set `*_fail_at` to a call count to trigger an I/O error on that call.
 /// Set to 0 to disable failure (default). Use `clear_failures()` to reset.
-pub struct FailingStorage {
-    inner: MockStorage,
+///
+/// An injected failure returns before the call reaches the wrapped backend,
+/// so a failed call never takes effect.
+pub struct FailingStorage<S = MockStorage> {
+    inner: S,
     /// Fail write_page on this call number (0 = never)
     pub write_page_fail_at: Arc<AtomicU64>,
     /// Fail set_meta on this call number (0 = never)
@@ -23,10 +26,17 @@ pub struct FailingStorage {
     sync_count: Arc<AtomicU64>,
 }
 
-impl FailingStorage {
+impl FailingStorage<MockStorage> {
     pub fn new(state: &SharedState) -> Self {
+        Self::wrap(state.mock())
+    }
+}
+
+impl<S> FailingStorage<S> {
+    /// Inject failures into any backend
+    pub fn wrap(inner: S) -> Self {
         Self {
-            inner: state.mock(),
+            inner,
             write_page_fail_at: Arc::new(AtomicU64::new(0)),
             set_meta_fail_at: Arc::new(AtomicU64::new(0)),
             sync_fail_at: Arc::new(AtomicU64::new(0)),
@@ -51,7 +61,7 @@ impl FailingStorage {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-impl LatticeStorage for FailingStorage {
+impl<S: LatticeStorage> LatticeStorage for FailingStorage<S> {
     async fn get_meta(&self, key: &str) -> StorageResult<Option<Vec<u8>>> {
         self.inner.get_meta(key).await
     }

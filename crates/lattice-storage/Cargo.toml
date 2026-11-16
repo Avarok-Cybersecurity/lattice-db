@@ -44,6 +44,9 @@ features = [
     "Window",
 ]
 
+[dev-dependencies]
+lattice-test-harness.workspace = true
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
 rand.workspace = true

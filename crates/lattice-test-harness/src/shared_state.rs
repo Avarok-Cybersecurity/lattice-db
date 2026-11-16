@@ -1,6 +1,6 @@
 //! Shared storage state that survives WAL drops (simulating durable storage)
 
-use lattice_core::storage::StorageResult;
+use lattice_core::storage::{StorageError, StorageResult};
 use lattice_core::LatticeStorage;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -59,13 +59,12 @@ impl LatticeStorage for MockStorage {
     }
 
     async fn read_page(&self, page_id: u64) -> StorageResult<Vec<u8>> {
-        Ok(self
-            .pages
+        self.pages
             .read()
             .unwrap()
             .get(&page_id)
             .cloned()
-            .unwrap_or_default())
+            .ok_or(StorageError::PageNotFound { page_id })
     }
 
     async fn write_page(&self, page_id: u64, data: &[u8]) -> StorageResult<()> {
