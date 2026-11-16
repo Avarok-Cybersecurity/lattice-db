@@ -32,6 +32,7 @@ mod read;
 mod record;
 pub mod relations;
 pub mod replay;
+pub mod snapshot;
 
 #[cfg(test)]
 mod tests;
