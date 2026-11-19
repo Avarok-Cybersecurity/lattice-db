@@ -43,6 +43,7 @@ import type {
   UpsertResult,
   ApiResponse,
 } from './types';
+import { loadWasm } from './wasm-loader';
 
 // Type for the WASM module
 interface WasmLatticeDB {
@@ -87,7 +88,6 @@ interface WasmLatticeDB {
 }
 
 interface WasmModule {
-  default: (wasmPath?: string) => Promise<unknown>;
   LatticeDB: { new (): WasmLatticeDB };
 }
 
@@ -125,9 +125,8 @@ export class LatticeDB {
    */
   static async init(wasmPath?: string): Promise<LatticeDB> {
     if (!initialized) {
-      // Dynamic import for the WASM module (cast through unknown for wasm-bindgen compatibility)
-      wasmModule = (await import('../wasm/lattice_server.js')) as unknown as WasmModule;
-      await wasmModule.default(wasmPath);
+      // Shared loader; cast through unknown for this wrapper's narrower view of the glue
+      wasmModule = (await loadWasm(wasmPath)) as unknown as WasmModule;
       initialized = true;
     }
 

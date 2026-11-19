@@ -64,6 +64,10 @@ features = [
     "Headers",
     "ServiceWorkerGlobalScope",
     "ExtendableEvent",
+    "EventTarget",
+    "WorkerGlobalScope",
+    "Url",
+    "RequestInit",
 ]
 
 # WASM builds use tokio's runtime-agnostic sync primitives (async RwLock) so
