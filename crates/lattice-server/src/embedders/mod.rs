@@ -2,7 +2,7 @@
 //!
 //! Embedders are the I/O edge of text search: `lattice_core::text::Embedder`
 //! is the pure seam, and implementations are registered here at startup
-//! (native: [`openai`], feature `openai-embedder`) or from JavaScript
+//! (native: `openai`, feature `openai-embedder`) or from JavaScript
 //! (wasm: `wasm_embedder`). The registry never invents an embedder — a text
 //! query naming an unregistered model fails with a clear error.
 
