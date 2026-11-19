@@ -7,9 +7,10 @@ use crate::dto::{
     DeletePointsRequest, GetPointsRequest, QueryRequest, ScrollRequest, SearchRequest,
     TraverseRequest, UpsertPointsRequest,
 };
+use crate::embedders::EmbedderRegistry;
 #[cfg(feature = "native")]
 use crate::engine_wrapper::AnyEngine;
-use crate::handlers::{collections, export_import, points, search};
+use crate::handlers::{collections, export_import, points, query, search};
 use lattice_core::{LatticeRequest, LatticeResponse};
 use parking_lot::RwLock;
 use std::path::PathBuf;
@@ -108,6 +109,8 @@ pub struct AppStateInner {
     pub collections: RwLock<std::collections::HashMap<String, CollectionHandle>>,
     /// Server configuration
     pub config: ServerConfig,
+    /// Text embedders by model name (empty unless registered explicitly)
+    pub embedders: EmbedderRegistry,
 }
 
 impl AppStateInner {
@@ -116,6 +119,7 @@ impl AppStateInner {
         Self {
             collections: RwLock::new(std::collections::HashMap::new()),
             config: ServerConfig::production(),
+            embedders: EmbedderRegistry::new(),
         }
     }
 
@@ -124,6 +128,7 @@ impl AppStateInner {
         Self {
             collections: RwLock::new(std::collections::HashMap::new()),
             config,
+            embedders: EmbedderRegistry::new(),
         }
     }
 
@@ -188,11 +193,17 @@ impl Default for AppStateInner {
 }
 
 /// Create new shared application state with production defaults
+// On wasm32 the embedder registry holds JS callbacks (not Send/Sync); the
+// browser runtime is single-threaded, so the Arc never crosses a thread.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 pub fn new_app_state() -> AppState {
     Arc::new(AppStateInner::new())
 }
 
 /// Create new shared application state with custom config
+// On wasm32 the embedder registry holds JS callbacks (not Send/Sync); the
+// browser runtime is single-threaded, so the Arc never crosses a thread.
+#[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 pub fn new_app_state_with_config(config: ServerConfig) -> AppState {
     Arc::new(AppStateInner::with_config(config))
 }
@@ -306,7 +317,7 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
         // POST /collections/{name}/points/query - Query (Qdrant v1.16+)
         ("POST", ["collections", name, "points", "query"]) => {
             match parse_body::<QueryRequest>(&mut request.body) {
-                Ok(req) => search::query_points(&state, name, req.into()).await,
+                Ok(req) => query::query_points(&state, name, req).await,
                 Err(e) => e,
             }
         }

@@ -16,6 +16,7 @@ use crate::error::{ConfigError, LatticeError, LatticeResult};
 use crate::index::hnsw::HnswIndex;
 use crate::storage::{LatticeStorage, StorageError, StorageResult};
 use crate::sync::{LockExt, MutexExt};
+use crate::text::PayloadTextIndex;
 use crate::transaction::TransactionManager;
 use crate::types::collection::{CollectionConfig, DurabilityMode};
 use crate::types::point::{Edge, Point, PointId};
@@ -34,6 +35,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 
+mod text_search;
 mod wal_apply;
 
 /// Marker type for no storage (ephemeral mode)
@@ -151,6 +153,8 @@ pub struct CollectionEngine<W: LatticeStorage = NoStorage, D: LatticeStorage = W
     label_index: Arc<RwLock<HashMap<String, FxHashSet<PointId>>>>,
     /// Signal for backpressure coordination with async indexer
     backpressure_signal: BackpressureSignal,
+    /// BM25 index over the configured payload text field (None = not configured)
+    text_index: Option<PayloadTextIndex>,
     /// Next available page ID for storage (reserved for Phase 2: point-level persistence)
     _next_page_id: u64,
 
@@ -196,6 +200,7 @@ impl CollectionEngine<NoStorage, NoStorage> {
             Arc::clone(&backpressure_signal),
         );
 
+        let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
         Ok(Self {
             config,
             index,
@@ -204,6 +209,7 @@ impl CollectionEngine<NoStorage, NoStorage> {
             indexer,
             label_index,
             backpressure_signal,
+            text_index,
             _next_page_id: PAGE_POINTS_START,
             txn_manager: None,
             _data_storage: None,
@@ -422,6 +428,7 @@ where
 
         let txn_arc = Arc::new(TokioMutex::new(txn_manager));
 
+        let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
         let mut engine = Self {
             config,
             index,
@@ -430,6 +437,7 @@ where
             indexer,
             label_index,
             backpressure_signal,
+            text_index,
             _next_page_id: PAGE_POINTS_START,
             txn_manager: Some(txn_arc),
             _data_storage: Some(data_storage),
@@ -821,6 +829,10 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                     }
                 }
 
+                if let Some(text_index) = &mut self.text_index {
+                    text_index.upsert_point(&point);
+                }
+
                 // Store point (move, no clone — id is Copy)
                 let point_id = point.id;
                 pts.insert(point_id, point);
@@ -1021,6 +1033,9 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
             if let Some(point) = pts.remove(&id) {
                 // Remove from label index
                 Self::remove_point_labels_from_index(&point, &mut label_idx);
+                if let Some(text_index) = &mut self.text_index {
+                    text_index.remove_point(id);
+                }
                 // Queue deletion from HNSW index (background)
                 self.indexer.queue_delete(id);
                 // Remove from pending if it was there

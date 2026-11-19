@@ -413,6 +413,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         let response = create_collection(&state, "test", request).await;
         assert_eq!(response.status, 200);
@@ -465,6 +467,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(&state, "test", request).await;
 
@@ -488,6 +492,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(&state, "test", request).await;
 
@@ -538,6 +544,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(&state, "test", request.clone()).await;
 

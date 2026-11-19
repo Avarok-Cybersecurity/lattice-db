@@ -7,6 +7,7 @@
 
 use crate::error::{LatticeError, LatticeResult};
 use crate::index::hnsw::HnswIndex;
+use crate::text::PayloadTextIndex;
 use crate::types::collection::CollectionConfig;
 use crate::types::point::{Edge, Point, PointId};
 use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, SearchResult};
@@ -20,6 +21,7 @@ use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 use super::PAGE_POINTS_START;
 
 mod apply;
+mod text_search;
 
 /// Collection engine - manages a single collection (WASM implementation)
 ///
@@ -33,6 +35,8 @@ pub struct CollectionEngine {
     points: BTreeMap<PointId, Point>,
     /// Label index: label -> set of point IDs (for O(1) label lookups)
     label_index: HashMap<String, FxHashSet<PointId>>,
+    /// BM25 index over the configured payload text field (None = not configured)
+    text_index: Option<PayloadTextIndex>,
     /// Next available page ID for storage (reserved for Phase 2: point-level persistence)
     _next_page_id: u64,
 }
@@ -43,6 +47,7 @@ impl CollectionEngine {
         config.validate()?;
 
         let index = HnswIndex::new(config.hnsw.clone(), config.vectors.distance);
+        let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
 
         Ok(Self {
             config,
@@ -50,6 +55,7 @@ impl CollectionEngine {
             points: BTreeMap::new(),
             // Pre-allocate for typical number of unique labels in a graph
             label_index: HashMap::with_capacity(64),
+            text_index,
             _next_page_id: PAGE_POINTS_START,
         })
     }
@@ -123,6 +129,10 @@ impl CollectionEngine {
 
             // Insert into HNSW index
             self.index.insert(&point)?;
+
+            if let Some(text_index) = &mut self.text_index {
+                text_index.upsert_point(&point);
+            }
 
             // Store point
             self.points.insert(point.id, point);
@@ -273,6 +283,9 @@ impl CollectionEngine {
                 // Remove from label index
                 Self::remove_point_labels_from_index(&point, &mut self.label_index);
                 self.index.delete(id);
+                if let Some(text_index) = &mut self.text_index {
+                    text_index.remove_point(id);
+                }
                 deleted += 1;
             }
         }

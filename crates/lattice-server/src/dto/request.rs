@@ -2,6 +2,7 @@
 //!
 //! These structures match the Qdrant JSON schema for API compatibility.
 
+use lattice_core::{EmbeddingConfig, TextIndexConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -55,6 +56,16 @@ pub struct CreateCollectionRequest {
     /// - `durable`: ACID mode with WAL, crash recovery, fsync
     #[serde(default)]
     pub durability: Option<String>,
+    /// BM25 lexical index (LatticeDB extension):
+    /// `{"field": "text", "k1": 1.2, "b": 0.75}`
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
+    pub text_index: Option<TextIndexConfig>,
+    /// Embedding model that produced the vectors (LatticeDB extension):
+    /// `{"model": "text-embedding-3-small"}`; its dimension is `vectors.size`
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<Object>))]
+    pub embedding: Option<EmbeddingConfig>,
 }
 
 /// Single point for upsert
@@ -147,7 +158,7 @@ pub struct BatchSearchRequest {
     pub searches: Vec<SearchRequest>,
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 
@@ -169,7 +180,7 @@ pub struct ScrollRequest {
     pub with_vector: bool,
 }
 
-fn default_limit() -> usize {
+pub(crate) fn default_limit() -> usize {
     10
 }
 
@@ -227,178 +238,6 @@ pub struct TraverseRequest {
     /// Filter by relation types (optional)
     #[serde(default)]
     pub relations: Option<Vec<String>>,
-}
-
-// === Qdrant v1.16+ Query API ===
-
-/// Query request for /points/query endpoint (Qdrant v1.16+)
-///
-/// This is the newer unified search endpoint that supports multiple query types.
-/// The `query` field can be a raw vector or a query object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub struct QueryRequest {
-    /// Query - can be a raw vector or a query object with "nearest" field
-    pub query: QueryVector,
-    /// Number of results to return
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-    /// Include payload in results
-    #[serde(default = "default_true")]
-    pub with_payload: bool,
-    /// Include vector in results
-    #[serde(default)]
-    pub with_vector: bool,
-    /// Override search ef parameter
-    #[serde(default)]
-    pub params: Option<SearchParams>,
-    /// Filter results by score threshold
-    #[serde(default)]
-    pub score_threshold: Option<f32>,
-}
-
-/// Query vector - supports multiple formats from qdrant-client
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-pub enum QueryVector {
-    /// Raw vector array
-    Vector(Vec<f32>),
-}
-
-impl QueryVector {
-    /// Extract the vector from any query format
-    pub fn into_vector(self) -> Vec<f32> {
-        match self {
-            QueryVector::Vector(v) => v,
-        }
-    }
-}
-
-impl Serialize for QueryVector {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            QueryVector::Vector(v) => v.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for QueryVector {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::{self, MapAccess, SeqAccess, Visitor};
-
-        struct QueryVectorVisitor;
-
-        impl<'de> Visitor<'de> for QueryVectorVisitor {
-            type Value = QueryVector;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a vector array or a query object")
-            }
-
-            // Handle raw vector array: [0.1, 0.2, ...]
-            fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
-            where
-                S: SeqAccess<'de>,
-            {
-                let mut vec = Vec::new();
-                while let Some(val) = seq.next_element()? {
-                    vec.push(val);
-                }
-                Ok(QueryVector::Vector(vec))
-            }
-
-            // Handle query object: {"nearest": [...]} or {"nearest": {"vector": [...]}}
-            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
-            where
-                M: MapAccess<'de>,
-            {
-                let mut vector: Option<Vec<f32>> = None;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "nearest" => {
-                            // Can be array or object with "vector" field
-                            let value: serde_json::Value = map.next_value()?;
-                            vector =
-                                Some(extract_vector_from_value(&value).map_err(de::Error::custom)?);
-                        }
-                        _ => {
-                            // Skip unknown fields
-                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
-                        }
-                    }
-                }
-
-                vector
-                    .map(QueryVector::Vector)
-                    .ok_or_else(|| de::Error::custom("expected 'nearest' field in query object"))
-            }
-        }
-
-        deserializer.deserialize_any(QueryVectorVisitor)
-    }
-}
-
-/// Extract vector from a JSON value (handles both array and object formats)
-///
-/// Validates that f64 values are within f32 range and are finite to prevent
-/// silent precision loss or NaN/Infinity corruption.
-fn extract_vector_from_value(value: &serde_json::Value) -> Result<Vec<f32>, String> {
-    match value {
-        // Direct array: [0.1, 0.2, ...]
-        serde_json::Value::Array(arr) => arr
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                v.as_f64()
-                    .and_then(|f| {
-                        // Validate the value is finite and within f32 range
-                        if !f.is_finite() {
-                            return None;
-                        }
-                        // f32::MAX is ~3.4e38, check f64 value is in range
-                        if f > f32::MAX as f64 || f < f32::MIN as f64 {
-                            return None;
-                        }
-                        Some(f as f32)
-                    })
-                    .ok_or_else(|| {
-                        format!(
-                            "vector element {} must be a finite number within f32 range",
-                            i
-                        )
-                    })
-            })
-            .collect(),
-        // Object with vector field: {"vector": [0.1, 0.2, ...]}
-        serde_json::Value::Object(obj) => {
-            if let Some(vec_val) = obj.get("vector") {
-                extract_vector_from_value(vec_val)
-            } else {
-                Err("expected 'vector' field in query object".to_string())
-            }
-        }
-        _ => Err("expected array or object for vector".to_string()),
-    }
-}
-
-impl From<QueryRequest> for SearchRequest {
-    fn from(req: QueryRequest) -> Self {
-        SearchRequest {
-            vector: req.query.into_vector(),
-            limit: req.limit,
-            with_payload: req.with_payload,
-            with_vector: req.with_vector,
-            params: req.params,
-            score_threshold: req.score_threshold,
-        }
-    }
 }
 
 // === Cypher Query API (LatticeDB extension) ===

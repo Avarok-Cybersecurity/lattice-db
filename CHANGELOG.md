@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Text search without embeddings (BM25)**: collections accept
+  `"text_index": {"field": "text", "k1": 1.2, "b": 0.75}`; the index is kept
+  current on upsert/delete and rebuilt on snapshot, WAL and JSONL load.
+  `POST /collections/{name}/points/query` answers `{"query": {"text": "...", "model": "bm25"}}`.
+- **Hybrid search**: `prefetch` + `{"fusion": "rrf"}` / `{"rrf": {"k": n}}`
+  (Reciprocal Rank Fusion, k = 60 unless given).
+- **Text embedding**: `"embedding": {"model": "..."}` records the model behind a
+  collection's vectors; text queries naming another model are rejected. Native
+  OpenAI-compatible client behind the `openai-embedder` feature
+  (`LATTICE_EMBEDDER_*`), and `LatticeDB.setEmbedder` / `queryPoints` in wasm.
+- Error response bodies are now valid JSON when the message contains quotes.
 - **Import/Export Endpoints**: Binary collection backup and restore
   - `GET /collections/{name}/export` - Export to rkyv binary format
   - `POST /collections/{name}/import?mode={create|replace|merge}` - Import with mode selection

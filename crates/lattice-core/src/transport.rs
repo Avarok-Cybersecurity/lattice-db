@@ -77,7 +77,9 @@ impl LatticeResponse {
 
     /// Create an error response
     pub fn error(status: u16, message: &str) -> Self {
-        let body = format!(r#"{{"status":"error","message":"{}"}}"#, message);
+        // Serialized, not formatted: a message carrying quotes or backslashes
+        // (often echoing user input) must not break or inject into the JSON.
+        let body = serde_json::json!({ "status": "error", "message": message }).to_string();
         let mut headers = HashMap::new();
         headers.insert("Content-Type".into(), "application/json".into());
         Self {

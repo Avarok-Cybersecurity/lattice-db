@@ -9,7 +9,7 @@ use lattice_core::engine::collection::{
 };
 use lattice_core::{
     CollectionConfig, CollectionEngine, EngineOps, LatticeResult, Point, PointId, ScrollQuery,
-    ScrollResult, SearchQuery, SearchResult,
+    ScrollResult, SearchQuery, SearchResult, TextSearchQuery,
 };
 use lattice_storage::DiskStorage;
 
@@ -95,6 +95,13 @@ impl AnyEngine {
         match self {
             Self::Ephemeral(e) => e.search(query),
             Self::Durable(e) => e.search(query),
+        }
+    }
+
+    pub fn search_text(&self, query: &TextSearchQuery) -> LatticeResult<Vec<SearchResult>> {
+        match self {
+            Self::Ephemeral(e) => e.search_text(query),
+            Self::Durable(e) => e.search_text(query),
         }
     }
 

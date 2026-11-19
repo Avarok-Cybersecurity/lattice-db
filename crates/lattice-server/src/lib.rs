@@ -38,6 +38,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 pub mod auth;
 pub mod dto;
+pub mod embedders;
 #[cfg(feature = "native")]
 pub mod engine_wrapper;
 pub mod handlers;
@@ -58,6 +59,9 @@ pub mod service_worker;
 
 #[cfg(feature = "wasm")]
 pub mod wasm_bindings;
+
+#[cfg(feature = "wasm")]
+pub mod wasm_embedder;
 
 #[cfg(feature = "openapi")]
 pub mod openapi;

@@ -214,12 +214,21 @@ pub async fn create_collection(
     };
 
     // Create collection config
-    let config = CollectionConfig::new(
+    let mut config = CollectionConfig::new(
         name,
         VectorConfig::new(request.vectors.size, distance),
         hnsw_config,
     )
     .with_durability(durability);
+    if let Some(text_index) = request.text_index {
+        config = config.with_text_index(text_index);
+    }
+    if let Some(embedding) = request.embedding {
+        config = config.with_embedding(embedding);
+    }
+    if let Err(e) = config.validate() {
+        return LatticeResponse::bad_request(&format!("Invalid collection config: {}", e));
+    }
 
     // Create engine: durable if data_dir is set and durability=durable, else ephemeral
     #[cfg(feature = "native")]
@@ -457,6 +466,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         let response = create_collection(&state, "test", request).await;
@@ -481,6 +492,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         // First create succeeds
@@ -509,6 +522,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(&state, "test", request).await;
 
@@ -531,6 +546,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         let response = create_collection(&state, "test", request).await;
@@ -573,6 +590,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         // Path traversal attempt

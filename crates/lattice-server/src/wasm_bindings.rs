@@ -40,7 +40,8 @@ use wasm_bindgen::prelude::*;
 /// and provides a JavaScript-friendly API.
 #[wasm_bindgen]
 pub struct LatticeDB {
-    state: AppState,
+    /// Shared with the async/text-query bindings in `wasm_embedder`.
+    pub(crate) state: AppState,
 }
 
 #[wasm_bindgen]
@@ -425,7 +426,7 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 }
 
 /// Convert LatticeResponse to JsValue
-fn response_to_js(response: lattice_core::LatticeResponse) -> Result<JsValue, JsValue> {
+pub(crate) fn response_to_js(response: lattice_core::LatticeResponse) -> Result<JsValue, JsValue> {
     if response.status >= 200 && response.status < 300 {
         // Convert body to string and use JS JSON.parse for reliable conversion
         let json_str = String::from_utf8_lossy(&response.body);

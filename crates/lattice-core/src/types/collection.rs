@@ -6,6 +6,7 @@
 //! This prevents production surprises from unexpected default values.
 
 use crate::error::ConfigError;
+use crate::text::{EmbeddingConfig, TextIndexConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -228,6 +229,15 @@ pub struct CollectionConfig {
     /// - `Durable`: ACID mode with WAL, crash recovery, fsync
     #[serde(default)]
     pub durability: DurabilityMode,
+
+    /// BM25 lexical index over a payload text field (None = no lexical index)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_index: Option<TextIndexConfig>,
+
+    /// Embedding model that produced this collection's vectors (None = text
+    /// queries may only use the lexical model)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<EmbeddingConfig>,
 }
 
 impl CollectionConfig {
@@ -239,7 +249,21 @@ impl CollectionConfig {
             hnsw,
             relations: HashMap::new(),
             durability: DurabilityMode::default(),
+            text_index: None,
+            embedding: None,
         }
+    }
+
+    /// Maintain a BM25 index over a payload text field
+    pub fn with_text_index(mut self, text_index: TextIndexConfig) -> Self {
+        self.text_index = Some(text_index);
+        self
+    }
+
+    /// Record the embedding model that produces this collection's vectors
+    pub fn with_embedding(mut self, embedding: EmbeddingConfig) -> Self {
+        self.embedding = Some(embedding);
+        self
     }
 
     /// Add a relation type
@@ -270,6 +294,12 @@ impl CollectionConfig {
 
         self.vectors.validate()?;
         self.hnsw.validate()?;
+        if let Some(text_index) = &self.text_index {
+            text_index.validate()?;
+        }
+        if let Some(embedding) = &self.embedding {
+            embedding.validate()?;
+        }
 
         Ok(())
     }

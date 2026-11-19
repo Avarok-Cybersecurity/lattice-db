@@ -417,6 +417,8 @@ mod tests {
             },
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(state, "test", request).await;
     }

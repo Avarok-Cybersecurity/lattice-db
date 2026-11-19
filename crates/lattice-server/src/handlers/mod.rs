@@ -5,4 +5,5 @@
 pub mod collections;
 pub mod export_import;
 pub mod points;
+pub mod query;
 pub mod search;
