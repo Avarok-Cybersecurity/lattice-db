@@ -43,6 +43,7 @@ pub mod embedders;
 pub mod engine_wrapper;
 pub mod handlers;
 pub mod rate_limit;
+pub mod read_only;
 pub mod router;
 
 #[cfg(feature = "native")]
@@ -54,6 +55,8 @@ pub mod tls;
 #[cfg(feature = "axum-transport")]
 pub mod axum_transport;
 
+pub mod fetch_mapping;
+
 #[cfg(feature = "wasm")]
 pub mod service_worker;
 
@@ -62,6 +65,18 @@ pub mod wasm_bindings;
 
 #[cfg(feature = "wasm")]
 pub mod wasm_embedder;
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod wasm_bytes;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod wasm_fetch;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod wasm_import;
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod wasm_route;
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32", test))]
+mod wasm_hosts_tests;
 
 #[cfg(feature = "openapi")]
 pub mod openapi;

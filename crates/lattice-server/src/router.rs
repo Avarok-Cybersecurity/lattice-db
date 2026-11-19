@@ -58,6 +58,8 @@ pub struct ServerConfig {
     pub max_collections: usize,
     /// Optional data directory for durable collections (None = ephemeral only)
     pub data_dir: Option<PathBuf>,
+    /// Refuse every non-read endpoint with 403 (see [`crate::read_only`])
+    pub read_only: bool,
 }
 
 impl ServerConfig {
@@ -76,12 +78,19 @@ impl ServerConfig {
             max_search_batch_size: 100,
             max_collections: 1_000,
             data_dir: None,
+            read_only: false,
         }
     }
 
     /// Set the data directory for durable collections
     pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
         self.data_dir = Some(dir);
+        self
+    }
+
+    /// Set read-only serving mode explicitly
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
     }
 
@@ -95,6 +104,7 @@ impl ServerConfig {
             max_search_batch_size: usize::MAX,
             max_collections: usize::MAX,
             data_dir: None,
+            read_only: false,
         }
     }
 }
@@ -245,6 +255,13 @@ pub async fn route(state: AppState, mut request: LatticeRequest) -> LatticeRespo
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
     debug!(method = %method, path = %path, "Processing request");
+
+    if state.config.read_only {
+        if let Some(denied) = crate::read_only::deny_unless_read(method, &segments, &request.body) {
+            warn!(method = %method, path = %path, "Refused in read-only mode");
+            return denied;
+        }
+    }
 
     let response = match (method.as_str(), segments.as_slice()) {
         // === Health/Diagnostics ===

@@ -28,6 +28,26 @@
 // Main database class
 export { LatticeDB, LatticeDB as default } from './lattice';
 
+// Hosts: page / service worker / Cloudflare Worker serving the REST API
+export { LatticeHost } from './host';
+export type { LatticeHostOptions, FetchHandlerOptions, LatticeFetchHandler } from './host';
+export { createLatticeHandler } from './worker';
+export type {
+  LatticeWorkerEnv,
+  LatticeWorkerOptions,
+  LatticeWorkerHandler,
+  SnapshotFromAssets,
+  SnapshotFromBytes,
+} from './worker';
+export type { Embedder } from './text-query';
+export type {
+  ByteInput,
+  ImportMode,
+  ImportResult,
+  RouteResponse,
+  WasmInput,
+} from './wasm-types';
+
 // All type definitions
 export type {
   // Configuration types

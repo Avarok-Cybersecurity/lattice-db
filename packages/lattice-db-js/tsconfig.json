@@ -18,5 +18,5 @@
     "emitDeclarationOnly": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "wasm", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "wasm", "**/*.test.ts", "**/__tests__/**"]
 }

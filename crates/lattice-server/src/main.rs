@@ -8,6 +8,7 @@
 //! - `RUST_LOG` - Log level (default: info)
 //! - `LATTICE_DATA_DIR` - Data directory for durable collections (enables persistence)
 //! - `LATTICE_RATE_LIMIT` - Enable rate limiting (any value)
+//! - `LATTICE_READ_ONLY` - `true` refuses every mutating endpoint with 403 (`true`/`false`; unset = writable)
 //! - `LATTICE_API_KEYS` - Comma-separated API keys for authentication
 //! - `LATTICE_BEARER_TOKENS` - Comma-separated Bearer tokens for authentication
 //! - `LATTICE_TLS_CERT` - Path to TLS certificate PEM (requires `tls` feature)
@@ -20,6 +21,7 @@ use lattice_server::{
     engine_wrapper::AnyEngine,
     hyper_transport::HyperTransport,
     rate_limit::RateLimitConfig,
+    read_only::{parse_read_only_flag, READ_ONLY_ENV},
     router::{new_app_state_with_config, route, AppState, ServerConfig},
     LatticeTransport,
 };
@@ -207,6 +209,18 @@ async fn main() {
         info!(data_dir = %dir.display(), "Durable mode enabled");
     } else {
         info!("Ephemeral mode (no LATTICE_DATA_DIR set)");
+    }
+
+    let read_only = match parse_read_only_flag(env::var(READ_ONLY_ENV).ok().as_deref()) {
+        Ok(flag) => flag,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    config = config.with_read_only(read_only);
+    if read_only {
+        info!("Read-only mode: mutating endpoints return 403");
     }
 
     // Create shared application state

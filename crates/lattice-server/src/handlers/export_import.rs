@@ -90,15 +90,41 @@ pub async fn import_collection(
         return LatticeResponse::bad_request("Invalid import data: too small");
     }
 
+    let load = || {
+        CollectionEngine::from_bytes(&data).map_err(|e| {
+            warn!(collection = name, error = %e, "Import deserialization failed");
+            LatticeResponse::bad_request(&format!("Invalid import data: {}", e))
+        })
+    };
+    install_collection(state, name, mode, load).await
+}
+
+/// Install an already-decoded collection under `name` according to `mode`.
+///
+/// `load` is invoked only after the mode's existence preconditions pass, so a
+/// conflicting or missing target is reported before any decoding work is done.
+/// Shared by the binary (rkyv) and logical (JSONL) import paths.
+pub async fn install_collection<L>(
+    state: &AppState,
+    name: &str,
+    mode: ImportMode,
+    load: L,
+) -> LatticeResponse
+where
+    L: FnOnce() -> Result<CollectionEngine, LatticeResponse>,
+{
     match mode {
-        ImportMode::Create => import_create(state, name, &data).await,
-        ImportMode::Replace => import_replace(state, name, &data).await,
-        ImportMode::Merge => import_merge(state, name, &data).await,
+        ImportMode::Create => import_create(state, name, load).await,
+        ImportMode::Replace => import_replace(state, name, load).await,
+        ImportMode::Merge => import_merge(state, name, load).await,
     }
 }
 
 /// Import in create mode: fail if collection exists
-async fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
+async fn import_create<L>(state: &AppState, name: &str, load: L) -> LatticeResponse
+where
+    L: FnOnce() -> Result<CollectionEngine, LatticeResponse>,
+{
     // Check if collection already exists
     if state.get_collection(name).is_some() {
         return LatticeResponse::error(
@@ -111,12 +137,9 @@ async fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResp
     }
 
     // Deserialize the collection (always creates ephemeral engine)
-    let raw_engine = match CollectionEngine::from_bytes(data) {
+    let raw_engine = match load() {
         Ok(e) => e,
-        Err(e) => {
-            warn!(collection = name, error = %e, "Import deserialization failed");
-            return LatticeResponse::bad_request(&format!("Invalid import data: {}", e));
-        }
+        Err(response) => return response,
     };
 
     let point_count = raw_engine.point_count();
@@ -156,18 +179,19 @@ async fn import_create(state: &AppState, name: &str, data: &[u8]) -> LatticeResp
 }
 
 /// Import in replace mode: drop existing and create new
-async fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
-    // Remove existing collection if present
-    let _ = state.remove_collection(name);
-
-    // Deserialize the collection (always creates ephemeral engine)
-    let raw_engine = match CollectionEngine::from_bytes(data) {
+async fn import_replace<L>(state: &AppState, name: &str, load: L) -> LatticeResponse
+where
+    L: FnOnce() -> Result<CollectionEngine, LatticeResponse>,
+{
+    // Decode first: a malformed payload must not destroy the collection it
+    // was meant to replace.
+    let raw_engine = match load() {
         Ok(e) => e,
-        Err(e) => {
-            warn!(collection = name, error = %e, "Import deserialization failed");
-            return LatticeResponse::bad_request(&format!("Invalid import data: {}", e));
-        }
+        Err(response) => return response,
     };
+
+    // Remove existing collection if present (absence is fine for replace)
+    let _ = state.remove_collection(name);
 
     let point_count = raw_engine.point_count();
     let dimension = raw_engine.config().vectors.size;
@@ -209,7 +233,10 @@ async fn import_replace(state: &AppState, name: &str, data: &[u8]) -> LatticeRes
 }
 
 /// Import in merge mode: add new points to existing collection
-async fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeResponse {
+async fn import_merge<L>(state: &AppState, name: &str, load: L) -> LatticeResponse
+where
+    L: FnOnce() -> Result<CollectionEngine, LatticeResponse>,
+{
     // Get existing collection
     let handle = match state.get_collection(name) {
         Some(h) => h,
@@ -222,12 +249,9 @@ async fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeRespo
     };
 
     // Deserialize the import data
-    let import_engine = match CollectionEngine::from_bytes(data) {
+    let import_engine = match load() {
         Ok(e) => e,
-        Err(e) => {
-            warn!(collection = name, error = %e, "Import deserialization failed");
-            return LatticeResponse::bad_request(&format!("Invalid import data: {}", e));
-        }
+        Err(response) => return response,
     };
 
     let import_dimension = import_engine.config().vectors.size;
@@ -314,6 +338,19 @@ async fn import_merge(state: &AppState, name: &str, data: &[u8]) -> LatticeRespo
     }))
 }
 
+/// Parse an import mode name (`create`, `replace` or `merge`, case-insensitive).
+pub fn import_mode_from_str(value: &str) -> Result<ImportMode, LatticeResponse> {
+    match value.to_lowercase().as_str() {
+        "create" => Ok(ImportMode::Create),
+        "replace" => Ok(ImportMode::Replace),
+        "merge" => Ok(ImportMode::Merge),
+        other => Err(LatticeResponse::bad_request(&format!(
+            "Invalid import mode '{}'. Use 'create', 'replace', or 'merge'",
+            other
+        ))),
+    }
+}
+
 /// Parse import mode from query string
 ///
 /// Returns `None` if mode parameter is missing (PCND: required parameter).
@@ -325,15 +362,7 @@ pub fn parse_import_mode(query: &str) -> Result<ImportMode, LatticeResponse> {
         let mut kv = pair.splitn(2, '=');
         if let (Some(key), Some(value)) = (kv.next(), kv.next()) {
             if key == "mode" {
-                return match value.to_lowercase().as_str() {
-                    "create" => Ok(ImportMode::Create),
-                    "replace" => Ok(ImportMode::Replace),
-                    "merge" => Ok(ImportMode::Merge),
-                    other => Err(LatticeResponse::bad_request(&format!(
-                        "Invalid import mode '{}'. Use 'create', 'replace', or 'merge'",
-                        other
-                    ))),
-                };
+                return import_mode_from_str(value);
             }
         }
     }

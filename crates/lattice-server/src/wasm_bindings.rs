@@ -29,7 +29,7 @@ use crate::dto::{
     UpsertPointsRequest,
 };
 use crate::handlers::{collections, points, search};
-use crate::router::{new_app_state, AppState};
+use crate::router::{new_app_state_with_config, AppState, ServerConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -44,18 +44,31 @@ pub struct LatticeDB {
     pub(crate) state: AppState,
 }
 
+/// Construction options: `new LatticeDB({ readOnly: true })`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LatticeDBOptions {
+    /// Refuse mutating REST endpoints reached through `route()`/fetch hosts
+    #[serde(rename = "readOnly")]
+    read_only: bool,
+}
+
 #[wasm_bindgen]
 impl LatticeDB {
-    /// Create a new LatticeDB instance
+    /// Create a new LatticeDB instance, optionally with `{ readOnly: boolean }`
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        // Initialize console_error_panic_hook for better error messages in browser
-        #[cfg(feature = "console_error_panic_hook")]
-        console_error_panic_hook::set_once();
-
-        Self {
-            state: new_app_state(),
-        }
+    pub fn new(options: Option<JsValue>) -> Result<LatticeDB, JsValue> {
+        let read_only = match options {
+            Some(js) if !js.is_undefined() && !js.is_null() => {
+                let opts: LatticeDBOptions = serde_wasm_bindgen::from_value(js)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid options: {}", e)))?;
+                opts.read_only
+            }
+            _ => false,
+        };
+        Ok(Self::with_config(
+            ServerConfig::production().with_read_only(read_only),
+        ))
     }
 
     // === Collections ===
@@ -348,9 +361,21 @@ impl LatticeDB {
     }
 }
 
+impl LatticeDB {
+    fn with_config(config: ServerConfig) -> Self {
+        // Initialize console_error_panic_hook for better error messages in browser
+        #[cfg(feature = "console_error_panic_hook")]
+        console_error_panic_hook::set_once();
+
+        Self {
+            state: new_app_state_with_config(config),
+        }
+    }
+}
+
 impl Default for LatticeDB {
     fn default() -> Self {
-        Self::new()
+        Self::with_config(ServerConfig::production())
     }
 }
 
@@ -398,7 +423,7 @@ struct ScrollOptions {
 /// uncontended (single-threaded browser runtime), so every handler future is
 /// `Ready` on the first poll. This lets the synchronous `wasm_bindgen` methods
 /// call the shared async handlers without pulling in an async runtime.
-fn block_on<F: std::future::Future>(future: F) -> F::Output {
+pub(crate) fn block_on<F: std::future::Future>(future: F) -> F::Output {
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     fn raw_waker() -> RawWaker {
@@ -446,6 +471,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_create_lattice_db() {
-        let _db = LatticeDB::new();
+        let _db = LatticeDB::default();
     }
 }
