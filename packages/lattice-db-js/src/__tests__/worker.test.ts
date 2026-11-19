@@ -123,6 +123,19 @@ describe('createLatticeHandler', () => {
     await expect(lazy.ready()).rejects.toThrow(/snapshotBytes/);
   });
 
+  it('ready() answers a warm-up query and rejects when it fails', async () => {
+    const options = { ...common, wasm: wasmBytes(), snapshotBytes: await textSnapshot() };
+    const warm = createLatticeHandler({ ...options, collection: 'warm' });
+    const bm25 = JSON.stringify({ query: { text: 'hello', model: 'bm25' } });
+    await warm.ready({ warmup: { query: bm25, runs: 3 } });
+    await expect(warm.ready({ warmup: { query: bm25, runs: 0 } })).rejects.toThrow(/positive integer/);
+    const failing = createLatticeHandler({ ...options, collection: 'cold' });
+    const dense = JSON.stringify({ query: { text: 'hello', model: 'm' } });
+    await expect(failing.ready({ warmup: { query: dense, runs: 1 } })).rejects.toThrow(
+      /warm-up query returned 503/
+    );
+  });
+
   it('registers embedders passed in the options', async () => {
     const lattice = createLatticeHandler({
       ...common,

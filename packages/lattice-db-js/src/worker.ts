@@ -1,19 +1,24 @@
 /**
  * Cloudflare Worker host: serve a read-mostly corpus from a binary snapshot.
  *
- * The snapshot is loaded once per isolate, lazily, on the first request under
- * the prefix; later requests reuse it. A failed load is answered with 503 and
- * retried on the next request rather than cached.
+ * Two ways to supply it:
+ * - `snapshotBytes` (e.g. a bundled Data module): call `ready()` at module top
+ *   level and the load happens during Worker startup, not in a request.
+ * - `snapshotUrl` (static assets): loaded once per isolate, lazily, on the
+ *   first request under the prefix. A failed load is answered with 503 and
+ *   retried on the next request rather than cached.
  *
  * @example
  * ```typescript
  * import wasm from 'lattice-db/wasm/lattice_server_bg.wasm';
+ * import corpus from './corpus.lattice'; // wrangler rule: { "type": "Data" }
  * import { createLatticeHandler } from 'lattice-db';
  *
  * const lattice = createLatticeHandler({
- *   wasm, snapshotUrl: '/corpus.lattice', collection: 'docs',
+ *   wasm, snapshotBytes: new Uint8Array(corpus), collection: 'docs',
  *   prefix: '/api/lattice', readOnly: true,
  * });
+ * await lattice.ready();
  * export default {
  *   async fetch(request: Request, env: LatticeWorkerEnv): Promise<Response> {
  *     return (await lattice.fetch(request, env)) ?? env.ASSETS!.fetch(request);
@@ -60,14 +65,25 @@ export interface SnapshotFromBytes extends CommonOptions {
 
 export type LatticeWorkerOptions = SnapshotFromAssets | SnapshotFromBytes;
 
+export interface ReadyOptions {
+  warmup?: { query: string; runs: number };
+}
+
 export interface LatticeWorkerHandler {
   /**
    * Instantiate WASM and install `snapshotBytes` now. Await it at module top
    * level so the work counts against the Worker's startup budget instead of
    * the first request's CPU time. Rejects for `snapshotUrl` (no I/O is
    * possible outside a request).
+   *
+   * `warmup` answers a `points/query` JSON body `runs` times after the load.
+   * V8 compiles WASM functions on first call and recompiles hot ones, so
+   * without it the first visitors pay that compilation; with it, startup
+   * does (measured in workerd: first query ~10 ms cold, ~3 ms after 8 runs).
+   * Every run must succeed, or `ready()` rejects. Request bodies cannot be
+   * read at global scope, so this calls the router directly, not `fetch`.
    */
-  ready(): Promise<void>;
+  ready(options?: ReadyOptions): Promise<void>;
   /**
    * Answer a request under the prefix, or resolve to `null` when the request
    * is outside it (so the Worker can fall through to its assets).
@@ -102,12 +118,26 @@ export function createLatticeHandler(options: LatticeWorkerOptions): LatticeWork
   };
 
   return {
-    async ready(): Promise<void> {
+    async ready(readyOptions?: ReadyOptions): Promise<void> {
       const bundled = options.snapshotBytes;
       if (bundled === undefined) {
         throw new Error('ready() needs snapshotBytes; snapshotUrl loads on the first request');
       }
-      await load(await mount(), async () => bundled);
+      const m = await mount();
+      await load(m, async () => bundled);
+      const warmup = readyOptions?.warmup;
+      if (warmup === undefined) return;
+      if (!Number.isInteger(warmup.runs) || warmup.runs < 1) {
+        throw new Error(`warmup.runs must be a positive integer, got ${warmup.runs}`);
+      }
+      const path = `/collections/${encodeURIComponent(options.collection)}/points/query`;
+      for (let run = 0; run < warmup.runs; run++) {
+        const response = await m.host.route('POST', path, warmup.query);
+        if (response.status !== 200) {
+          const detail = new TextDecoder().decode(response.body);
+          throw new Error(`warm-up query returned ${response.status}: ${detail}`);
+        }
+      }
     },
     async fetch(request: Request, env: LatticeWorkerEnv): Promise<Response | null> {
       const m = await mount();

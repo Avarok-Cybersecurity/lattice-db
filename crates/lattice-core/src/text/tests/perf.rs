@@ -3,7 +3,7 @@
 //! Ignored by default (timing, not correctness). Run with:
 //! `cargo test -p latticedb-core --release --lib text::tests::perf -- --ignored --nocapture`
 
-use crate::text::{Bm25Params, LexicalIndex, BM25_B, BM25_K1};
+use crate::text::{Bm25Params, LexicalIndex, LexicalParts, BM25_B, BM25_K1};
 use std::time::Instant;
 
 const VOCAB: usize = 5_000;
@@ -38,13 +38,17 @@ fn corpus(n: usize) -> Vec<String> {
         .collect()
 }
 
-fn build(docs: &[String]) -> LexicalIndex {
-    let mut idx = LexicalIndex::new(Bm25Params {
+fn idx_params() -> Bm25Params {
+    Bm25Params {
         k1: BM25_K1,
         b: BM25_B,
-    });
+    }
+}
+
+fn build(docs: &[String]) -> LexicalIndex {
+    let mut idx = LexicalIndex::new(idx_params());
     for (id, text) in docs.iter().enumerate() {
-        idx.index_document(id as u64, text);
+        idx.index_document(id as u64, text).unwrap();
     }
     idx
 }
@@ -69,16 +73,18 @@ fn bm25_perf_report() {
         }
         let query_us = t.elapsed().as_secs_f64() * 1e6 / QUERIES as f64;
 
-        let bytes = serde_json::to_vec(&idx).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&idx.to_parts()).unwrap();
         let t = Instant::now();
-        let restored: LexicalIndex = serde_json::from_slice(&bytes).unwrap();
+        let parts: LexicalParts =
+            rkyv::from_bytes::<LexicalParts, rkyv::rancor::Error>(&bytes).unwrap();
+        let restored = LexicalIndex::from_parts(idx_params(), parts).unwrap();
         let deser_ms = t.elapsed().as_secs_f64() * 1e3;
         assert_eq!(restored.doc_count(), n);
         assert!(found > 0);
 
         eprintln!(
             "BM25 n={n}: build {build_ms:.1} ms, query {query_us:.1} µs avg (top-10, 3 terms), \
-             serialized {:.1} MB, deserialize {deser_ms:.1} ms",
+             snapshot section {:.1} MB, restore {deser_ms:.1} ms",
             bytes.len() as f64 / 1e6
         );
     }
@@ -126,7 +132,7 @@ fn snapshot_load_with_and_without_text_index() {
         let load_ms = t.elapsed().as_secs_f64() * 1e3;
         assert_eq!(restored.point_count(), 10_000);
         eprintln!(
-            "snapshot load 10K points (HNSW indexed in background), text_index={with_index}: {load_ms:.1} ms"
+            "snapshot load 10K points (HNSW graph and postings restored), text_index={with_index}: {load_ms:.1} ms"
         );
     }
 }

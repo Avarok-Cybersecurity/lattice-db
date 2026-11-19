@@ -67,11 +67,12 @@ impl PayloadTextIndex {
     /// (Re-)index a point from its payload. A point whose field is missing or
     /// not text is removed from the index (Qdrant likewise skips values whose
     /// type does not match a full-text index).
-    pub fn upsert_point(&mut self, point: &Point) {
+    pub fn upsert_point(&mut self, point: &Point) -> LatticeResult<()> {
         match extract_text(&point.payload, &self.field) {
             Some(text) => self.index.index_document(point.id, &text),
             None => {
                 self.index.remove_document(point.id);
+                Ok(())
             }
         }
     }
@@ -126,14 +127,16 @@ mod tests {
     #[test]
     fn upsert_replaces_and_non_text_removes() {
         let mut idx = PayloadTextIndex::new(&TextIndexConfig::bm25("text"));
-        idx.upsert_point(&point(1, "text", r#""red apple""#));
+        idx.upsert_point(&point(1, "text", r#""red apple""#))
+            .unwrap();
         assert_eq!(idx.index().search("apple", 10).len(), 1);
-        idx.upsert_point(&point(1, "text", r#""green pear""#));
+        idx.upsert_point(&point(1, "text", r#""green pear""#))
+            .unwrap();
         assert!(idx.index().search("apple", 10).is_empty());
         assert_eq!(idx.index().search("pear", 10)[0].id, 1);
-        idx.upsert_point(&point(1, "text", "7"));
+        idx.upsert_point(&point(1, "text", "7")).unwrap();
         assert_eq!(idx.index().doc_count(), 0);
-        idx.upsert_point(&point(2, "text", r#""pear""#));
+        idx.upsert_point(&point(2, "text", r#""pear""#)).unwrap();
         idx.remove_point(2);
         assert!(idx.index().search("pear", 10).is_empty());
     }

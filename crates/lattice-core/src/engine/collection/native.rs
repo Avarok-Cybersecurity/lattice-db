@@ -759,7 +759,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                 }
 
                 if let Some(text_index) = &mut self.text_index {
-                    text_index.upsert_point(&point);
+                    text_index.upsert_point(&point)?;
                 }
 
                 // Store point (move, no clone — id is Copy)

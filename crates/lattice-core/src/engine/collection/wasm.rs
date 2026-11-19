@@ -129,7 +129,7 @@ impl CollectionEngine {
             }
 
             if let Some(text_index) = &mut self.text_index {
-                text_index.upsert_point(&point);
+                text_index.upsert_point(&point)?;
             }
 
             // Store point

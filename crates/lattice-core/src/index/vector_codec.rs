@@ -94,7 +94,7 @@ impl EncodedVectors {
             }
             EncodedVectors::F16(data) => {
                 expect(data.len(), total, "f16 vector section")?;
-                Ok(chunks(data, dim, count, |x| f16::from_bits(*x).to_f32()))
+                Ok(chunks(data, dim, count, |x| f16_bits_to_f32(*x)))
             }
             EncodedVectors::Int8 { codes, exponents } => {
                 expect(codes.len(), total, "int8 vector section")?;
@@ -111,6 +111,23 @@ impl EncodedVectors {
             }
         }
     }
+}
+
+/// Branch-light f16 -> f32 (exact for every input, including subnormals,
+/// infinities and NaN). `half`'s portable path is several times slower on
+/// wasm32, where it has no hardware conversion, and this runs once per
+/// stored value on every snapshot load.
+fn f16_bits_to_f32(bits: u16) -> f32 {
+    let sign = u32::from(bits & 0x8000) << 16;
+    let magnitude = u32::from(bits & 0x7fff);
+    if magnitude >= 0x7c00 {
+        // Infinity or NaN: all-ones exponent, payload carried over.
+        return f32::from_bits(sign | 0x7f80_0000 | ((magnitude & 0x03ff) << 13));
+    }
+    // Place exponent and mantissa in f32 position, then rebias by 2^112
+    // (127 - 15); f32 subnormal arithmetic makes f16 subnormals exact too.
+    let rebias = f32::from_bits(0x7780_0000);
+    f32::from_bits((f32::from_bits(magnitude << 13) * rebias).to_bits() | sign)
 }
 
 fn chunks<T>(data: &[T], dim: usize, count: usize, f: impl Fn(&T) -> f32) -> Vec<Vec<f32>> {
@@ -176,6 +193,19 @@ mod tests {
         };
         assert!(scales.decode(16, 2).is_err());
         assert!(EncodedVectors::F32(vec![]).decode(usize::MAX, 2).is_err());
+    }
+
+    #[test]
+    fn fast_f16_conversion_matches_half_for_every_bit_pattern() {
+        for bits in 0..=u16::MAX {
+            let reference = f16::from_bits(bits).to_f32();
+            let fast = f16_bits_to_f32(bits);
+            if reference.is_nan() {
+                assert!(fast.is_nan(), "{bits:#06x}");
+            } else {
+                assert_eq!(fast.to_bits(), reference.to_bits(), "{bits:#06x}");
+            }
+        }
     }
 
     #[test]

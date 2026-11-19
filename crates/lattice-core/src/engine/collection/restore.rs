@@ -86,8 +86,10 @@ pub(crate) fn restore(snapshot: Snapshot) -> LatticeResult<Restored> {
     config.validate()?;
     let count = snapshot.points.len();
     let mut points = BTreeMap::new();
-    for mut point in snapshot.points {
-        prepare_vector(&config, &mut point)?;
+    // Decoded vectors are already at the storage precision (format 2 stores
+    // the rounded encoding; format 1 is always f32), so only validate.
+    for point in snapshot.points {
+        check_vector(&config, &point)?;
         points.insert(point.id, point);
     }
     if points.len() != count {
@@ -98,7 +100,9 @@ pub(crate) fn restore(snapshot: Snapshot) -> LatticeResult<Restored> {
         (Some(text), Some(parts)) => Some(PayloadTextIndex::from_parts(text, parts)?),
         (Some(text), None) => {
             let mut built = PayloadTextIndex::new(text);
-            points.values().for_each(|p| built.upsert_point(p));
+            for point in points.values() {
+                built.upsert_point(point)?;
+            }
             Some(built)
         }
         (None, Some(_)) => return Err(corrupt("text section without a text_index")),

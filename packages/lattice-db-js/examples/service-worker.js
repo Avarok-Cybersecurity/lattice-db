@@ -10,7 +10,12 @@ const PREFIX = '/api/lattice';
 
 // Load once per service-worker lifetime; every fetch awaits the same promise.
 const ready = (async () => {
-  const host = await LatticeHost.create({ readOnly: true });
+  const host = await LatticeHost.create({
+    readOnly: true,
+    // BM25 queries ({"model": "bm25"}) need no embedder. Dense text queries
+    // need one per model, e.g. calling your embedding endpoint:
+    // embedders: [{ model: 'my-model', dim: 768, embed: (texts) => embedViaApi(texts) }],
+  });
   const response = await fetch('/corpus.lattice');
   if (!response.ok) throw new Error(`corpus fetch returned ${response.status}`);
   host.importSnapshot(new Uint8Array(await response.arrayBuffer()), 'docs', 'create');

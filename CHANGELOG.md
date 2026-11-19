@@ -11,7 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Text search without embeddings (BM25)**: collections accept
   `"text_index": {"field": "text", "k1": 1.2, "b": 0.75}`; the index is kept
-  current on upsert/delete and rebuilt on snapshot, WAL and JSONL load.
+  current on upsert/delete, persisted in snapshots, and rebuilt on WAL and
+  JSONL load.
+- **Lexical-only collections**: omit `vectors` for BM25 only (no HNSW). Vector
+  search/query/upsert-with-vector on them return a 400 naming the cause.
+- **Flat and compact vector indexes**: `vectors.index` = `"hnsw"` (default) |
+  `"flat"` (exact scan); `vectors.storage` = `"f32"` (default) | `"f16"` |
+  `"int8"` (vectors rounded on write, stored compactly in snapshots).
+- **Snapshot format 2**: the HNSW graph, BM25 postings and encoded vectors are
+  persisted, so loads copy arrays instead of rebuilding (1K chunks x 768-d with
+  HNSW: ~1.5 ms vs ~880 ms). Format 1 snapshots still load (indexes rebuilt);
+  newer formats fail with `Unsupported snapshot format N`.
+- **JS hosts**: `LatticeHost` (`route`, `fetchHandler` for service workers,
+  `embedders` / `setEmbedder`) and `createLatticeHandler` for Cloudflare Workers
+  (`snapshotBytes` + `ready({ warmup })` at startup, or lazy `snapshotUrl`).
+  Read-only mode answers BM25, dense-from-text and hybrid queries.
+  See `docs/edge-search.md`; benchmarks in `packages/lattice-db-js/scripts/bench`.
   `POST /collections/{name}/points/query` answers `{"query": {"text": "...", "model": "bm25"}}`.
 - **Hybrid search**: `prefetch` + `{"fusion": "rrf"}` / `{"rrf": {"k": n}}`
   (Reciprocal Rank Fusion, k = 60 unless given).

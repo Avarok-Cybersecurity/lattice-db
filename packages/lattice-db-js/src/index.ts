@@ -36,6 +36,7 @@ export type {
   LatticeWorkerEnv,
   LatticeWorkerOptions,
   LatticeWorkerHandler,
+  ReadyOptions,
   SnapshotFromAssets,
   SnapshotFromBytes,
 } from './worker';

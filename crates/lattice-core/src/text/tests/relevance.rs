@@ -37,7 +37,7 @@ fn corpus_index() -> LexicalIndex {
         b: BM25_B,
     });
     for (id, text) in CORPUS {
-        idx.index_document(*id, text);
+        idx.index_document(*id, text).unwrap();
     }
     idx
 }
@@ -63,7 +63,7 @@ fn insertion_order_does_not_change_results() {
         b: BM25_B,
     });
     for (id, text) in CORPUS.iter().rev() {
-        reverse.index_document(*id, text);
+        reverse.index_document(*id, text).unwrap();
     }
     // Term ids depend on insertion order, so the summation order of a
     // multi-term score can differ in the last ulp; rankings must not.

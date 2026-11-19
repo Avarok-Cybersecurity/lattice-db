@@ -21,7 +21,7 @@ pub mod tokenizer;
 #[cfg(test)]
 mod tests;
 
-pub use bm25::{Bm25Params, LexicalHit, LexicalIndex, LexicalParts, PostingList};
+pub use bm25::{Bm25Params, LexicalHit, LexicalIndex, LexicalParts};
 pub use config::{EmbeddingConfig, TextIndexConfig, BM25_B, BM25_K1};
 pub use embedder::{
     check_embedder_dim, is_lexical_model, route_text_model, validate_embeddings, EmbedError,
