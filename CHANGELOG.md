@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-19
+
 ### Added
 
 - **Text search without embeddings (BM25)**: collections accept
@@ -63,8 +65,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   storages, so it loads the WAL header on restart and applies that refusal.
 
 - Dense vector operations now return `Option`/`Result` instead of panicking
-
-## [0.5.0] - Unreleased
 
 Durable collections on wasm32, for Cloudflare Durable Objects, on a WAL whose commits are now
 all-or-nothing. A minor bump: `WalEntry` gains a variant and the test harness's storage doubles
