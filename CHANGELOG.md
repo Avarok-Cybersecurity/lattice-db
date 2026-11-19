@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-19
+
+### Fixed
+
+- **Native imports dropped the query string**: the Hyper and Axum transports
+  built the router's path from the URI path alone, so
+  `POST /collections/{name}/import?mode=create|replace|merge` against the
+  `lattice-server` binary (or an Axum-mounted router) always failed with
+  `Missing required 'mode'`. Both now pass path and query; the wasm `route()`
+  and `fetchHandler` paths already did and are now covered by tests.
+- **Snapshots are byte-reproducible**: exporting the same collection twice,
+  or in two processes, could yield different bytes. Payload maps are now
+  archived in key order (the archived hash table placed colliding entries in
+  `RandomState` iteration order), the configuration's `relations` are written
+  sorted, relation ids are renumbered in name order, and BM25 terms are
+  written sorted (dropping terms no live document holds). The snapshot
+  format is unchanged — still format 2, readable by 0.5.0 and reading its
+  files. A golden sha256 of a fixed fixture is checked on native and wasm32.
+  An HNSW graph still depends on insertion order, so permuting the points of
+  a vector collection rightly yields a different snapshot.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added

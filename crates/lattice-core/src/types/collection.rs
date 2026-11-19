@@ -249,7 +249,7 @@ pub struct CollectionConfig {
     ///
     /// Example: {"similar_to": 0, "related_to": 1}
     /// The u16 IDs are used in Edge.relation_id for compact storage.
-    #[serde(default)]
+    #[serde(default, serialize_with = "crate::types::sorted_map::serialize_sorted")]
     pub relations: HashMap<String, u16>,
 
     /// Durability mode (ephemeral or durable)

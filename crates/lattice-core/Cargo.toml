@@ -67,6 +67,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 rand.workspace = true
+# Golden snapshot hash (snapshot_determinism_tests)
+sha2 = "0.10"
 lattice-test-harness.workspace = true
 
 # Native-only test dependencies

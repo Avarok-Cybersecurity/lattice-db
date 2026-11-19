@@ -3,6 +3,7 @@
 pub mod collection;
 pub mod point;
 pub mod query;
+pub mod sorted_map;
 pub mod value;
 pub mod vector_index;
 

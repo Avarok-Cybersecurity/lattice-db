@@ -113,6 +113,19 @@ impl LatticeTransport for HyperTransport {
             .map_err(|e| HyperError::Server(format!("Invalid address '{}': {}", self.addr, e)))?;
 
         let listener = TcpListener::bind(addr).await?;
+        self.serve_on(listener, handler).await
+    }
+}
+
+impl HyperTransport {
+    /// Serve on an already-bound listener (e.g. one bound to port 0, whose
+    /// actual address the caller reads from the listener first).
+    pub async fn serve_on<H, Fut>(self, listener: TcpListener, handler: H) -> Result<(), HyperError>
+    where
+        H: Fn(LatticeRequest) -> Fut + Send + Sync + Clone + 'static,
+        Fut: Future<Output = LatticeResponse> + Send + 'static,
+    {
+        let addr = listener.local_addr()?;
         println!("LatticeDB server (Hyper) listening on {}", addr);
 
         if self.rate_limiter.is_some() {
@@ -358,6 +371,14 @@ static AUTH_INVALID: &[u8] = b"{\"status\":\"error\",\"result\":\"Invalid creden
 static AUTH_BLOCKED: &[u8] =
     b"{\"status\":\"error\",\"result\":\"Too many failed attempts. Try again later.\"}";
 
+/// The path and query of a request URI, as [`LatticeRequest::path`] carries
+/// them: the router splits off the query itself (e.g. an import's `mode`).
+pub(crate) fn request_target(uri: &hyper::Uri) -> String {
+    uri.path_and_query()
+        .map_or_else(|| uri.path(), |pq| pq.as_str())
+        .to_owned()
+}
+
 /// Handle incoming HTTP requests with minimal overhead
 async fn handle_request<H, Fut>(
     req: Request<Incoming>,
@@ -463,8 +484,7 @@ where
         }
     };
 
-    // Extract path - single allocation
-    let path = req.uri().path().to_owned();
+    let path = request_target(req.uri());
 
     // Check Content-Length header to reject oversized requests early
     let max_size = max_body_size();

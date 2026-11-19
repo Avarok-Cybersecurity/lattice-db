@@ -52,6 +52,9 @@ pub use durable_wasm::DurableEngine;
 mod kinds_tests;
 
 #[cfg(test)]
+mod snapshot_determinism_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::collection::{CollectionConfig, Distance, HnswConfig, VectorConfig};
