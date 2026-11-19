@@ -39,9 +39,10 @@ export type {
   SnapshotFromAssets,
   SnapshotFromBytes,
 } from './worker';
-export type { Embedder } from './text-query';
 export type {
   ByteInput,
+  EmbedFunction,
+  EmbedderRegistration,
   ImportMode,
   ImportResult,
   RouteResponse,

@@ -7,8 +7,9 @@
 //!
 //! [`remove_point`]: PayloadTextIndex::remove_point
 
-use super::bm25::{Bm25Params, LexicalIndex};
+use super::bm25::{Bm25Params, LexicalIndex, LexicalParts};
 use super::config::TextIndexConfig;
+use crate::error::LatticeResult;
 use crate::types::point::{Point, PointId};
 use std::collections::HashMap;
 
@@ -33,6 +34,26 @@ impl PayloadTextIndex {
     /// Build the index for a collection, if it configures one.
     pub fn for_config(config: Option<&TextIndexConfig>) -> Option<Self> {
         config.map(Self::new)
+    }
+
+    /// The index in persistable form (see [`LexicalParts`]).
+    pub fn to_parts(&self) -> LexicalParts {
+        self.index.to_parts()
+    }
+
+    /// Restore an index persisted with [`PayloadTextIndex::to_parts`] under
+    /// `config` (its field and BM25 parameters are the SSOT).
+    pub fn from_parts(config: &TextIndexConfig, parts: LexicalParts) -> LatticeResult<Self> {
+        Ok(Self {
+            field: config.field.clone(),
+            index: LexicalIndex::from_parts(
+                Bm25Params {
+                    k1: config.k1,
+                    b: config.b,
+                },
+                parts,
+            )?,
+        })
     }
 
     pub fn field(&self) -> &str {

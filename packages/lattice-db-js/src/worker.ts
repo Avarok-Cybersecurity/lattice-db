@@ -23,8 +23,7 @@
  */
 
 import { LatticeHost, type LatticeFetchHandler } from './host';
-import type { Embedder } from './text-query';
-import type { ByteInput, WasmInput } from './wasm-types';
+import type { ByteInput, EmbedderRegistration, WasmInput } from './wasm-types';
 
 /** The bindings this handler reads from a Worker's `env`. */
 export interface LatticeWorkerEnv {
@@ -43,8 +42,8 @@ interface CommonOptions {
   readOnly: boolean;
   /** `Access-Control-Allow-Origin` value; omit for same-origin use. */
   corsOrigin?: string;
-  /** Embeds text queries; without it they are answered with 501. */
-  embed?: Embedder;
+  /** Text embedders for dense text queries; `bm25` queries need none. */
+  embedders?: readonly EmbedderRegistration[];
 }
 
 /** Load the snapshot from the Worker's static assets (resolved against the request URL). */
@@ -62,6 +61,13 @@ export interface SnapshotFromBytes extends CommonOptions {
 export type LatticeWorkerOptions = SnapshotFromAssets | SnapshotFromBytes;
 
 export interface LatticeWorkerHandler {
+  /**
+   * Instantiate WASM and install `snapshotBytes` now. Await it at module top
+   * level so the work counts against the Worker's startup budget instead of
+   * the first request's CPU time. Rejects for `snapshotUrl` (no I/O is
+   * possible outside a request).
+   */
+  ready(): Promise<void>;
   /**
    * Answer a request under the prefix, or resolve to `null` when the request
    * is outside it (so the Worker can fall through to its assets).
@@ -83,20 +89,31 @@ export function createLatticeHandler(options: LatticeWorkerOptions): LatticeWork
   };
 
   // Phase 2 (once): load the corpus into the same database.
-  const load = (m: Mounted, request: Request, env: LatticeWorkerEnv): Promise<void> => {
-    corpus ??= loadCorpus(options, m.host, request, env).catch((error: unknown) => {
-      corpus = null;
-      throw error;
-    });
+  const load = (m: Mounted, bytes: () => Promise<ByteInput>): Promise<void> => {
+    corpus ??= bytes()
+      .then((b) => {
+        m.host.importSnapshot(b, options.collection, 'create');
+      })
+      .catch((error: unknown) => {
+        corpus = null;
+        throw error;
+      });
     return corpus;
   };
 
   return {
+    async ready(): Promise<void> {
+      const bundled = options.snapshotBytes;
+      if (bundled === undefined) {
+        throw new Error('ready() needs snapshotBytes; snapshotUrl loads on the first request');
+      }
+      await load(await mount(), async () => bundled);
+    },
     async fetch(request: Request, env: LatticeWorkerEnv): Promise<Response | null> {
       const m = await mount();
       if (!m.api.handles(request.url)) return null;
       try {
-        await load(m, request, env);
+        await load(m, () => snapshotSource(options, request, env));
       } catch (error: unknown) {
         const reason = error instanceof Error ? error.message : String(error);
         return m.api.errorResponse(503, `LatticeDB corpus unavailable: ${reason}`);
@@ -112,30 +129,31 @@ interface Mounted {
 }
 
 async function mountHandler(options: LatticeWorkerOptions): Promise<Mounted> {
-  const host = await LatticeHost.create({ readOnly: options.readOnly, wasm: options.wasm });
-  const api = host.fetchHandler({
-    prefix: options.prefix,
-    corsOrigin: options.corsOrigin,
-    embed: options.embed,
+  const host = await LatticeHost.create({
+    readOnly: options.readOnly,
+    wasm: options.wasm,
+    embedders: options.embedders,
   });
+  const api = host.fetchHandler({ prefix: options.prefix, corsOrigin: options.corsOrigin });
   return { host, api };
 }
 
-async function loadCorpus(
+function snapshotSource(
   options: LatticeWorkerOptions,
-  host: LatticeHost,
   request: Request,
   env: LatticeWorkerEnv
-): Promise<void> {
-  const bytes = options.snapshotBytes ?? (await fetchSnapshot(options.snapshotUrl, request, env));
-  host.importSnapshot(bytes, options.collection, 'create');
+): Promise<ByteInput> {
+  const bundled = options.snapshotBytes;
+  return bundled === undefined
+    ? fetchSnapshot(options.snapshotUrl, request, env)
+    : Promise.resolve(bundled);
 }
 
 async function fetchSnapshot(
   url: string | undefined,
   request: Request,
   env: LatticeWorkerEnv
-): Promise<Uint8Array> {
+): Promise<ByteInput> {
   if (url === undefined) throw new Error('snapshotUrl or snapshotBytes is required');
   if (env.ASSETS === undefined) throw new Error('env.ASSETS binding is required for snapshotUrl');
   const response = await env.ASSETS.fetch(new Request(new URL(url, request.url)));

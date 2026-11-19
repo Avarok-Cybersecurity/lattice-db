@@ -232,6 +232,24 @@ impl LayerManager {
     pub fn contains(&self, id: PointId) -> bool {
         self.nodes.contains_key(&id)
     }
+
+    /// All nodes, in no particular order
+    pub fn nodes(&self) -> impl Iterator<Item = &HnswNode> + '_ {
+        self.nodes.values()
+    }
+
+    /// Rebuild a manager from persisted parts (callers validate them first).
+    pub fn restore(nodes: Vec<HnswNode>, entry_point: Option<PointId>, max_layer: u16) -> Self {
+        let mut map = FxHashMap::with_capacity_and_hasher(nodes.len(), Default::default());
+        for node in nodes {
+            map.insert(node.point_id, node);
+        }
+        Self {
+            nodes: map,
+            entry_point,
+            max_layer,
+        }
+    }
 }
 
 #[cfg(test)]

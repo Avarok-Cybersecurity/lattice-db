@@ -14,9 +14,13 @@
 //! Results are ordered by score descending, then point id ascending, so equal
 //! scores never produce run-to-run differences.
 
+#[path = "bm25_parts.rs"]
+mod parts;
+
 use super::sparse::SparseVector;
 use super::tokenizer::tokenize;
 use crate::types::point::PointId;
+pub use parts::{LexicalParts, PostingList};
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 

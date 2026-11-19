@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from '@jest/globals';
 import { createLatticeHandler, type LatticeWorkerEnv } from '../worker';
-import { COLLECTION, SEARCH_BETA, firstId, seededSnapshot, wasmBytes } from './fixtures';
+import { COLLECTION, SEARCH_BETA, firstId, seededSnapshot, textSnapshot, wasmBytes } from './fixtures';
 
 const BASE = 'https://site.example/api/lattice';
 
@@ -92,17 +92,51 @@ describe('createLatticeHandler', () => {
     expect(await res?.text()).toMatch(/ASSETS/);
   });
 
-  it('serves bundled snapshot bytes and refuses text queries without an embedder', async () => {
+  it('serves bundled snapshot bytes; a dense text query without an embedder is 503', async () => {
     const lattice = createLatticeHandler({
       ...common,
       collection: 'bundled',
       wasm: wasmBytes(),
-      snapshotBytes: await seededSnapshot(),
+      snapshotBytes: await textSnapshot(),
     });
     const query = new Request(`${BASE}/collections/bundled/points/query`, {
       method: 'POST',
       body: JSON.stringify({ query: { text: 'hello', model: 'm' } }),
     });
-    expect((await lattice.fetch(query, {}))?.status).toBe(501);
+    expect((await lattice.fetch(query, {}))?.status).toBe(503);
+  });
+
+  it('ready() installs bundled bytes before any request', async () => {
+    const lattice = createLatticeHandler({
+      ...common,
+      collection: 'eager',
+      wasm: wasmBytes(),
+      snapshotBytes: await seededSnapshot(),
+    });
+    await lattice.ready();
+    const res = await lattice.fetch(
+      new Request(`${BASE}/collections/eager/points/search`, { method: 'POST', body: SEARCH_BETA }),
+      {}
+    );
+    expect(firstId(await res?.json())).toBe(2);
+    const lazy = createLatticeHandler({ ...common, wasm: wasmBytes(), snapshotUrl: '/c.lattice' });
+    await expect(lazy.ready()).rejects.toThrow(/snapshotBytes/);
+  });
+
+  it('registers embedders passed in the options', async () => {
+    const lattice = createLatticeHandler({
+      ...common,
+      collection: 'embedded',
+      wasm: wasmBytes(),
+      snapshotBytes: await textSnapshot(),
+      embedders: [{ model: 'm', dim: 3, embed: (texts) => texts.map(() => [0, 0, 1]) }],
+    });
+    const query = new Request(`${BASE}/collections/embedded/points/query`, {
+      method: 'POST',
+      body: JSON.stringify({ query: { text: 'hello', model: 'm' }, limit: 1 }),
+    });
+    const res = await lattice.fetch(query, {});
+    expect(res?.status).toBe(200);
+    expect(firstId(await res?.json())).toBe(3);
   });
 });

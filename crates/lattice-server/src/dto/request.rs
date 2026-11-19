@@ -2,7 +2,7 @@
 //!
 //! These structures match the Qdrant JSON schema for API compatibility.
 
-use lattice_core::{EmbeddingConfig, TextIndexConfig};
+use lattice_core::{EmbeddingConfig, TextIndexConfig, VectorIndexKind, VectorStorage};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,6 +14,28 @@ pub struct VectorParams {
     pub size: usize,
     /// Distance metric: "Cosine", "Euclid", or "Dot"
     pub distance: String,
+    /// Search structure (LatticeDB extension): `"hnsw"` (Qdrant's behaviour,
+    /// used when absent) or `"flat"` (exact scan, no graph to build or load)
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    pub index: VectorIndexKind,
+    /// Stored precision (LatticeDB extension): `"f32"` (used when absent),
+    /// `"f16"` or `"int8"`; vectors are rounded to it on write
+    #[serde(default)]
+    #[cfg_attr(feature = "openapi", schema(value_type = Option<String>))]
+    pub storage: VectorStorage,
+}
+
+impl VectorParams {
+    /// HNSW, f32 vectors of `size` dimensions under `distance`
+    pub fn new(size: usize, distance: &str) -> Self {
+        Self {
+            size,
+            distance: distance.to_string(),
+            index: VectorIndexKind::Hnsw,
+            storage: VectorStorage::F32,
+        }
+    }
 }
 
 /// HNSW configuration (PCND: all fields required)
@@ -45,8 +67,10 @@ pub struct HnswConfigRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CreateCollectionRequest {
-    /// Vector configuration
-    pub vectors: VectorParams,
+    /// Dense vector configuration; omit it for a collection without dense
+    /// vectors (BM25-only with `text_index`, or graph-only)
+    #[serde(default)]
+    pub vectors: Option<VectorParams>,
     /// HNSW index configuration
     #[serde(default)]
     pub hnsw_config: Option<HnswConfigRequest>,
@@ -74,7 +98,8 @@ pub struct CreateCollectionRequest {
 pub struct PointStruct {
     /// Point ID (u64)
     pub id: u64,
-    /// Vector data
+    /// Vector data (omit for a collection without dense vectors)
+    #[serde(default)]
     pub vector: Vec<f32>,
     /// Optional payload (JSON object)
     #[serde(default)]

@@ -37,7 +37,7 @@ pub async fn export_collection(state: &AppState, name: &str) -> LatticeResponse 
     };
 
     let point_count = engine.point_count();
-    let dimension = engine.config().vectors.size;
+    let dimension = engine.config().vector_dim();
 
     info!(
         collection = name,
@@ -143,7 +143,7 @@ where
     };
 
     let point_count = raw_engine.point_count();
-    let dimension = raw_engine.config().vectors.size;
+    let dimension = raw_engine.config().vector_dim();
 
     // Wrap in AnyEngine for native, pass directly for WASM
     #[cfg(feature = "native")]
@@ -194,7 +194,7 @@ where
     let _ = state.remove_collection(name);
 
     let point_count = raw_engine.point_count();
-    let dimension = raw_engine.config().vectors.size;
+    let dimension = raw_engine.config().vector_dim();
 
     #[cfg(feature = "native")]
     let engine = AnyEngine::from_ephemeral(raw_engine);
@@ -254,12 +254,12 @@ where
         Err(response) => return response,
     };
 
-    let import_dimension = import_engine.config().vectors.size;
+    let import_dimension = import_engine.config().vector_dim();
 
     // Get existing dimension for validation
     let existing_dimension = {
         let engine = handle.read().await;
-        engine.config().vectors.size
+        engine.config().vector_dim()
     };
 
     // Validate dimension match
@@ -436,10 +436,7 @@ mod tests {
 
         // Create collection
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
             text_index: None,
@@ -490,10 +487,7 @@ mod tests {
 
         // Create collection
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
             text_index: None,
@@ -515,10 +509,7 @@ mod tests {
 
         // Create collection with 1 point
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
             text_index: None,
@@ -567,10 +558,7 @@ mod tests {
 
         // Create collection with 1 point (id=1)
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
             text_index: None,

@@ -38,9 +38,34 @@ export async function seededHost(): Promise<LatticeHost> {
   return host;
 }
 
+/**
+ * A writable host whose collection also has a BM25 index over `title` and
+ * records embedding model `m` (no embedder registered).
+ */
+export async function textHost(): Promise<LatticeHost> {
+  const host = await LatticeHost.create({ readOnly: false, wasm: wasmBytes() });
+  const created = await host.route(
+    'PUT',
+    `/collections/${COLLECTION}`,
+    JSON.stringify({
+      vectors: { size: 3, distance: 'Cosine' },
+      text_index: { field: 'title' },
+      embedding: { model: 'm' },
+    })
+  );
+  expectStatus(created.status, 200);
+  expectStatus((await host.route('PUT', `/collections/${COLLECTION}/points`, UPSERT)).status, 200);
+  return host;
+}
+
 /** Snapshot bytes of the seeded collection. */
 export async function seededSnapshot(): Promise<Uint8Array> {
   return (await seededHost()).exportSnapshot(COLLECTION);
+}
+
+/** Snapshot bytes of the text-indexed collection (records model `m`). */
+export async function textSnapshot(): Promise<Uint8Array> {
+  return (await textHost()).exportSnapshot(COLLECTION);
 }
 
 export function decodeJson(body: Uint8Array): unknown {

@@ -29,6 +29,8 @@ async-trait.workspace = true
 
 # Collections
 smallvec.workspace = true
+# IEEE 754 half precision for compact (f16) vector storage
+half = { version = "2.4", default-features = false }
 rustc-hash = "2.0"
 
 # Arena allocation for query-scoped temporaries (WASM-compatible)

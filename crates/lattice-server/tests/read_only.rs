@@ -4,12 +4,15 @@
 //! every read endpoint must keep answering 200.
 #![cfg(not(target_arch = "wasm32"))]
 
+use lattice_core::text::{EmbedError, Embedder};
+use lattice_core::{EmbeddingConfig, TextIndexConfig};
 use lattice_server::dto::{
     AddEdgeRequest, CreateCollectionRequest, PointStruct, UpsertPointsRequest, VectorParams,
 };
 use lattice_server::handlers::{collections, export_import, points};
 use lattice_server::router::{new_app_state_with_config, route, AppState, ServerConfig};
 use lattice_server::LatticeRequest;
+use std::sync::Arc;
 
 const C: &str = "docs";
 
@@ -19,14 +22,13 @@ const C: &str = "docs";
 async fn seeded(read_only: bool) -> AppState {
     let state = new_app_state_with_config(ServerConfig::production().with_read_only(read_only));
     let create = CreateCollectionRequest {
-        vectors: VectorParams {
-            size: 4,
-            distance: "Cosine".to_string(),
-        },
+        vectors: Some(VectorParams::new(4, "Cosine")),
         hnsw_config: None,
         durability: None,
-        text_index: None,
-        embedding: None,
+        text_index: Some(TextIndexConfig::bm25("title")),
+        embedding: Some(EmbeddingConfig {
+            model: FIXED_MODEL.into(),
+        }),
     };
     assert_eq!(
         collections::create_collection(&state, C, create)
@@ -38,7 +40,11 @@ async fn seeded(read_only: bool) -> AppState {
         .map(|id| PointStruct {
             id,
             vector: vec![id as f32, 0.5, 0.25, 1.0],
-            payload: None,
+            payload: Some(
+                [("title".to_string(), serde_json::json!(format!("page {id}")))]
+                    .into_iter()
+                    .collect(),
+            ),
         })
         .collect();
     let up = points::upsert_points(&state, C, UpsertPointsRequest { points: pts }).await;
@@ -51,6 +57,29 @@ async fn seeded(read_only: bool) -> AppState {
     };
     assert_eq!(points::add_edge(&state, C, edge).await.status, 200);
     state
+        .embedders
+        .register(Arc::new(FixedEmbedder))
+        .expect("register embedder");
+    state
+}
+
+const FIXED_MODEL: &str = "fixed";
+
+/// Stands in for a network embedding service (the only I/O on the
+/// dense-from-text path); the router, plan and engine run for real.
+struct FixedEmbedder;
+
+#[async_trait::async_trait]
+impl Embedder for FixedEmbedder {
+    fn model(&self) -> &str {
+        FIXED_MODEL
+    }
+    fn dim(&self) -> usize {
+        4
+    }
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
+        Ok(texts.iter().map(|_| vec![1.0, 0.5, 0.25, 1.0]).collect())
+    }
 }
 
 async fn call(state: &AppState, method: &str, path: &str, body: &str) -> u16 {
@@ -157,6 +186,21 @@ async fn every_read_still_answers() {
             "POST",
             format!("{base}/points/query"),
             r#"{"query":[1,0.5,0.25,1],"limit":2}"#,
+        ),
+        (
+            "POST",
+            format!("{base}/points/query"),
+            r#"{"query":{"text":"page","model":"bm25"},"limit":2}"#,
+        ),
+        (
+            "POST",
+            format!("{base}/points/query"),
+            r#"{"query":{"nearest":{"text":"page","model":"fixed"}},"limit":2}"#,
+        ),
+        (
+            "POST",
+            format!("{base}/points/query"),
+            r#"{"prefetch":[{"query":{"text":"page","model":"bm25"}},{"query":{"text":"page","model":"fixed"}},{"query":[1,0.5,0.25,1]}],"query":{"fusion":"rrf"},"limit":2}"#,
         ),
         ("POST", format!("{base}/points/scroll"), r#"{"limit":10}"#),
         (

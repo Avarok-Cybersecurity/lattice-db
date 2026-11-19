@@ -24,7 +24,6 @@ use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, S
 use crate::wal::relations::{define_relation, plan_relation};
 use crate::wal::WalEntry;
 use rayon::prelude::*;
-use rkyv::rancor::Error as RkyvError;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -33,6 +32,7 @@ use std::ops::Bound;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use tokio::sync::Mutex as TokioMutex;
 
+use super::restore::{check_query, check_vector, flat_search, new_hnsw, prepare_vector, restore};
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 
 mod text_search;
@@ -141,14 +141,13 @@ const BACKPRESSURE_POLL_MS: u64 = 10;
 pub struct CollectionEngine<W: LatticeStorage = NoStorage, D: LatticeStorage = W> {
     /// Collection configuration
     config: CollectionConfig,
-    /// HNSW index for vector search
-    index: Arc<RwLock<HnswIndex>>,
+    /// HNSW index and its background indexer (`None` for flat or vector-less
+    /// collections, which have no graph to maintain)
+    hnsw: Option<HnswWorker>,
     /// Point storage: id -> Point
     points: Arc<RwLock<BTreeMap<PointId, Point>>>,
     /// Points pending indexing (not yet in HNSW)
     pending_index: Arc<RwLock<FxHashSet<PointId>>>,
-    /// Background indexer handle
-    indexer: AsyncIndexerHandle,
     /// Label index: label -> set of point IDs (for O(1) label lookups)
     label_index: Arc<RwLock<HashMap<String, FxHashSet<PointId>>>>,
     /// Signal for backpressure coordination with async indexer
@@ -167,6 +166,31 @@ pub struct CollectionEngine<W: LatticeStorage = NoStorage, D: LatticeStorage = W
     _phantom: PhantomData<(W, D)>,
 }
 
+/// An HNSW index plus the background thread that keeps it in step with writes.
+struct HnswWorker {
+    index: Arc<RwLock<HnswIndex>>,
+    indexer: AsyncIndexerHandle,
+}
+
+/// Start the indexer for `index`, sharing the engine's point and pending sets.
+fn spawn_hnsw(
+    index: Option<HnswIndex>,
+    points: &Arc<RwLock<BTreeMap<PointId, Point>>>,
+    pending: &Arc<RwLock<FxHashSet<PointId>>>,
+    signal: &BackpressureSignal,
+) -> Option<HnswWorker> {
+    index.map(|index| {
+        let index = Arc::new(RwLock::new(index));
+        let indexer = AsyncIndexerHandle::spawn(
+            Arc::clone(&index),
+            Arc::clone(points),
+            Arc::clone(pending),
+            Arc::clone(signal),
+        );
+        HnswWorker { index, indexer }
+    })
+}
+
 /// Type aliases for common engine configurations
 pub type EphemeralEngine = CollectionEngine<NoStorage, NoStorage>;
 
@@ -182,31 +206,33 @@ impl CollectionEngine<NoStorage, NoStorage> {
         config.durability = DurabilityMode::Ephemeral;
         config.validate()?;
 
-        let index = Arc::new(RwLock::new(HnswIndex::new(
-            config.hnsw.clone(),
-            config.vectors.distance,
-        )));
-        let points = Arc::new(RwLock::new(BTreeMap::new()));
-        let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
-        // Pre-allocate for typical number of unique labels in a graph
-        let label_index = Arc::new(RwLock::new(HashMap::with_capacity(INITIAL_LABEL_CAPACITY)));
-        let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
-
-        // Spawn background indexer
-        let indexer = AsyncIndexerHandle::spawn(
-            Arc::clone(&index),
-            Arc::clone(&points),
-            Arc::clone(&pending_index),
-            Arc::clone(&backpressure_signal),
-        );
-
         let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
-        Ok(Self {
+        let index = new_hnsw(&config);
+        Ok(Self::assemble(config, index, BTreeMap::new(), text_index))
+    }
+
+    /// Build an ephemeral engine around already-populated state.
+    fn assemble(
+        config: CollectionConfig,
+        index: Option<HnswIndex>,
+        points: BTreeMap<PointId, Point>,
+        text_index: Option<PayloadTextIndex>,
+    ) -> Self {
+        // Pre-allocate for typical number of unique labels in a graph
+        let mut labels = HashMap::with_capacity(INITIAL_LABEL_CAPACITY);
+        for point in points.values() {
+            Self::add_point_labels_to_index(point, &mut labels);
+        }
+        let points = Arc::new(RwLock::new(points));
+        let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
+        let label_index = Arc::new(RwLock::new(labels));
+        let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
+        let hnsw = spawn_hnsw(index, &points, &pending_index, &backpressure_signal);
+        Self {
             config,
-            index,
+            hnsw,
             points,
             pending_index,
-            indexer,
             label_index,
             backpressure_signal,
             text_index,
@@ -214,7 +240,7 @@ impl CollectionEngine<NoStorage, NoStorage> {
             txn_manager: None,
             _data_storage: None,
             _phantom: PhantomData,
-        })
+        }
     }
 
     // --- Public Mutation Methods (Sync, Ephemeral Only) ---
@@ -281,98 +307,20 @@ impl CollectionEngine<NoStorage, NoStorage> {
         }
     }
 
-    /// Deserialize a collection from bytes (creates ephemeral engine)
+    /// Load a snapshot of any supported format (creates an ephemeral engine)
     ///
-    /// This always creates an ephemeral engine. For durable engines, use
+    /// Format-2 snapshots restore the HNSW graph and BM25 postings as stored;
+    /// format-1 snapshots rebuild them. For durable engines, use
     /// `open_durable()` with the appropriate storage backends.
     pub fn from_bytes(bytes: &[u8]) -> LatticeResult<Self> {
-        if bytes.len() < 8 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: too short".to_string(),
-            });
-        }
-
-        // Read config length with overflow check
-        let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let config_end =
-            4usize
-                .checked_add(config_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: config length overflow".to_string(),
-                })?;
-
-        let config_end_plus_4 =
-            config_end
-                .checked_add(4)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: offset overflow".to_string(),
-                })?;
-
-        if bytes.len() < config_end_plus_4 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: config truncated".to_string(),
-            });
-        }
-
-        // Deserialize config (JSON)
-        let config: CollectionConfig =
-            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
-                LatticeError::Serialization {
-                    message: e.to_string(),
-                }
-            })?;
-
-        // Read points length
-        let points_len = u32::from_le_bytes([
-            bytes[config_end],
-            bytes[config_end + 1],
-            bytes[config_end + 2],
-            bytes[config_end + 3],
-        ]) as usize;
-
-        // Calculate padding (same formula as serialization) with overflow checks
-        let header_size = 4usize
-            .checked_add(config_len)
-            .and_then(|v| v.checked_add(4))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: header size overflow".to_string(),
-            })?;
-        let padding = (16 - (header_size % 16)) % 16;
-        let points_start = config_end
-            .checked_add(4)
-            .and_then(|v| v.checked_add(padding))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: points start offset overflow".to_string(),
-            })?;
-
-        let required_len =
-            points_start
-                .checked_add(points_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: total size overflow".to_string(),
-                })?;
-
-        if bytes.len() < required_len {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: points truncated".to_string(),
-            });
-        }
-
-        // Copy to aligned buffer for rkyv deserialization
-        let mut aligned_bytes = rkyv::util::AlignedVec::<16>::new();
-        aligned_bytes.extend_from_slice(&bytes[points_start..points_start + points_len]);
-
-        // Deserialize points with rkyv
-        let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
-            .map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Build ephemeral engine
-        let mut engine = Self::new(config)?;
-        engine.upsert_points(points_vec)?;
-
-        Ok(engine)
+        let mut restored = restore(crate::engine::snapshot::decode(bytes)?)?;
+        restored.config.durability = DurabilityMode::Ephemeral;
+        Ok(Self::assemble(
+            restored.config,
+            restored.index,
+            restored.points,
+            restored.text_index,
+        ))
     }
 }
 
@@ -410,20 +358,15 @@ where
         let txn_manager = TransactionManager::open(wal_storage).await?;
 
         // Create base engine
-        let index = Arc::new(RwLock::new(HnswIndex::new(
-            config.hnsw.clone(),
-            config.vectors.distance,
-        )));
         let points = Arc::new(RwLock::new(BTreeMap::new()));
         let pending_index = Arc::new(RwLock::new(FxHashSet::default()));
         let label_index = Arc::new(RwLock::new(HashMap::with_capacity(INITIAL_LABEL_CAPACITY)));
         let backpressure_signal = Arc::new((Mutex::new(()), Condvar::new()));
-
-        let indexer = AsyncIndexerHandle::spawn(
-            Arc::clone(&index),
-            Arc::clone(&points),
-            Arc::clone(&pending_index),
-            Arc::clone(&backpressure_signal),
+        let hnsw = spawn_hnsw(
+            new_hnsw(&config),
+            &points,
+            &pending_index,
+            &backpressure_signal,
         );
 
         let txn_arc = Arc::new(TokioMutex::new(txn_manager));
@@ -431,10 +374,9 @@ where
         let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
         let mut engine = Self {
             config,
-            index,
+            hnsw,
             points,
             pending_index,
-            indexer,
             label_index,
             backpressure_signal,
             text_index,
@@ -475,12 +417,7 @@ where
     pub async fn upsert_points_async(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
         // Validate all points first
         for point in &points {
-            if point.vector.len() != self.config.vectors.size {
-                return Err(LatticeError::DimensionMismatch {
-                    expected: self.config.vectors.size,
-                    actual: point.vector.len(),
-                });
-            }
+            check_vector(&self.config, point)?;
         }
 
         if let Some(txn_arc) = self.txn_manager.clone() {
@@ -512,12 +449,7 @@ where
         // Validate all points first
         for points in &points_batch {
             for point in points {
-                if point.vector.len() != self.config.vectors.size {
-                    return Err(LatticeError::DimensionMismatch {
-                        expected: self.config.vectors.size,
-                        actual: point.vector.len(),
-                    });
-                }
+                check_vector(&self.config, point)?;
             }
         }
 
@@ -703,7 +635,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
 
     /// Get vector dimension
     pub fn vector_dim(&self) -> usize {
-        self.config.vectors.size
+        self.config.vector_dim()
     }
 
     /// Get number of points pending indexing
@@ -717,18 +649,13 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
     ///
     /// Points are stored immediately and indexed asynchronously in background.
     /// If pending buffer exceeds threshold, blocks until indexer catches up.
-    fn apply_upsert_internal(&mut self, points: Vec<Point>) -> LatticeResult<UpsertResult> {
+    fn apply_upsert_internal(&mut self, mut points: Vec<Point>) -> LatticeResult<UpsertResult> {
         let mut inserted = 0;
         let mut updated = 0;
 
-        // Validate all points first
-        for point in &points {
-            if point.vector.len() != self.config.vectors.size {
-                return Err(LatticeError::DimensionMismatch {
-                    expected: self.config.vectors.size,
-                    actual: point.vector.len(),
-                });
-            }
+        // Validate all points first, rounding vectors to the storage precision
+        for point in &mut points {
+            prepare_vector(&self.config, point)?;
         }
 
         // Check pending threshold - block if too many pending.
@@ -749,7 +676,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
 
                 while self.pending_index.read_safe()?.len() > PENDING_THRESHOLD / 2 {
                     // Check if indexer has crashed before waiting
-                    if !self.indexer.is_running() {
+                    if !self.hnsw.as_ref().is_some_and(|h| h.indexer.is_running()) {
                         // Indexer is dead - proceed anyway since points are still stored
                         // They'll be indexed on restart when index is rebuilt
                         break;
@@ -813,7 +740,9 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                         }
                     }
                     // Delete from HNSW index first (sync to ensure consistency)
-                    self.indexer.queue_delete(point.id);
+                    if let Some(hnsw) = &self.hnsw {
+                        hnsw.indexer.queue_delete(point.id);
+                    }
                     updated += 1;
                 } else {
                     inserted += 1;
@@ -838,12 +767,28 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                 pts.insert(point_id, point);
 
                 // Add to pending and queue for indexing
-                pending.insert(point_id);
-                self.indexer.queue_insert(point_id);
+                if let Some(hnsw) = &self.hnsw {
+                    pending.insert(point_id);
+                    hnsw.indexer.queue_insert(point_id);
+                }
             }
         }
 
         Ok(UpsertResult { inserted, updated })
+    }
+
+    /// Add a point's `_labels` to the label index
+    fn add_point_labels_to_index(
+        point: &Point,
+        label_idx: &mut HashMap<String, FxHashSet<PointId>>,
+    ) {
+        if let Some(labels_bytes) = point.payload.get("_labels") {
+            if let Ok(labels) = serde_json::from_slice::<Vec<String>>(labels_bytes) {
+                for label in labels {
+                    label_idx.entry(label).or_default().insert(point.id);
+                }
+            }
+        }
     }
 
     /// Remove a point's labels from the label index
@@ -1037,7 +982,9 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                     text_index.remove_point(id);
                 }
                 // Queue deletion from HNSW index (background)
-                self.indexer.queue_delete(id);
+                if let Some(hnsw) = &self.hnsw {
+                    hnsw.indexer.queue_delete(id);
+                }
                 // Remove from pending if it was there
                 pending.remove(&id);
                 deleted += 1;
@@ -1078,21 +1025,23 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
     pub fn search(&self, query: SearchQuery) -> LatticeResult<Vec<SearchResult>> {
         use crate::index::distance::DistanceCalculator;
 
-        // Validate query vector dimension
-        if query.vector.len() != self.config.vectors.size {
-            return Err(LatticeError::DimensionMismatch {
-                expected: self.config.vectors.size,
-                actual: query.vector.len(),
-            });
-        }
+        check_query(&self.config, &query.vector)?;
 
         // Use query ef or default from config
         let ef = query.ef.unwrap_or(self.config.hnsw.ef);
 
-        // Search HNSW index
-        let mut results = {
-            let index = self.index.read_safe()?;
-            index.search(&query.vector, query.limit, ef)
+        // Search the HNSW index, or scan every point for a flat collection
+        let mut results = match &self.hnsw {
+            Some(hnsw) => hnsw
+                .index
+                .read_safe()?
+                .search(&query.vector, query.limit, ef),
+            None => flat_search(
+                &self.config,
+                &*self.points.read_safe()?,
+                &query.vector,
+                query.limit,
+            )?,
         };
 
         // Search pending points with parallel brute-force
@@ -1106,7 +1055,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
                 Vec::new()
             } else {
                 let pts = self.points.read_safe()?;
-                let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
+                let distance_calc = DistanceCalculator::new(self.config.dense()?.distance);
 
                 // Parallel brute-force on pending points
                 pending_ids
@@ -1176,13 +1125,15 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
 
         // Validate all query dimensions upfront
         for query in &queries {
-            if query.vector.len() != self.config.vectors.size {
-                return Err(LatticeError::DimensionMismatch {
-                    expected: self.config.vectors.size,
-                    actual: query.vector.len(),
-                });
-            }
+            check_query(&self.config, &query.vector)?;
         }
+        let Some(hnsw) = &self.hnsw else {
+            let pts = self.points.read_safe()?;
+            return queries
+                .iter()
+                .map(|q| flat_search(&self.config, &pts, &q.vector, q.limit))
+                .collect();
+        };
 
         // Extract vector references for batch search (avoids cloning 4MB+ for 1000 queries × 512-dim)
         let query_vectors: Vec<&[f32]> = queries.iter().map(|q| q.vector.as_slice()).collect();
@@ -1192,7 +1143,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
 
         // Batch search on HNSW index
         let batch_results = {
-            let index = self.index.read_safe()?;
+            let index = hnsw.index.read_safe()?;
             index.search_batch(&query_vectors, limit, ef)
         };
 
@@ -1207,7 +1158,7 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
             } else {
                 use crate::index::distance::DistanceCalculator;
                 let pts = self.points.read_safe()?;
-                let distance_calc = DistanceCalculator::new(self.config.vectors.distance);
+                let distance_calc = DistanceCalculator::new(self.config.dense()?.distance);
 
                 // Process each query with pending points
                 let mut results: Vec<Vec<SearchResult>> = batch_results;
@@ -1495,40 +1446,29 @@ impl<W: LatticeStorage, D: LatticeStorage> CollectionEngine<W, D> {
         }
     }
 
-    /// Serialize the collection to bytes (for persistence)
+    /// Serialize the collection as a snapshot (see [`crate::engine::snapshot`])
     ///
-    /// Format: `[config_len:u32][config:JSON][padding][points:rkyv]`
-    /// Padding ensures rkyv data starts at 16-byte alignment.
+    /// Waits for pending inserts to be indexed, then stores the HNSW graph
+    /// when it covers exactly the stored points (a graph still catching up
+    /// on queued deletions is left out, and the loader rebuilds it).
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
-        // Serialize config as JSON (small, schema-flexible)
-        let config_bytes =
-            serde_json::to_vec(&self.config).map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Serialize points with rkyv (zero-copy, fast)
+        self.flush_pending()?;
         let pts = self.points.read_safe()?;
-        let points_vec: Vec<Point> = pts.values().cloned().collect();
-        drop(pts); // Release lock before serialization
-
-        let points_bytes =
-            rkyv::to_bytes::<RkyvError>(&points_vec).map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Calculate padding to align rkyv data to 16 bytes
-        let header_size = 4 + config_bytes.len() + 4; // config_len + config + points_len
-        let padding = (16 - (header_size % 16)) % 16;
-
-        // Build result: [config_len][config][points_len][padding][points]
-        let mut result = Vec::with_capacity(header_size + padding + points_bytes.len());
-        result.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
-        result.extend_from_slice(&config_bytes);
-        result.extend_from_slice(&(points_bytes.len() as u32).to_le_bytes());
-        result.extend(std::iter::repeat(0u8).take(padding)); // Alignment padding
-        result.extend_from_slice(&points_bytes);
-
-        Ok(result)
+        let graph = match &self.hnsw {
+            Some(hnsw) => {
+                let parts = hnsw.index.read_safe()?.to_parts();
+                let covers = parts.nodes.len() == pts.len()
+                    && parts.nodes.iter().all(|n| pts.contains_key(&n.id));
+                covers.then_some(parts)
+            }
+            None => None,
+        };
+        crate::engine::snapshot::encode(
+            &self.config,
+            pts.values(),
+            graph,
+            self.text_index.as_ref().map(PayloadTextIndex::to_parts),
+        )
     }
 
     /// Wait for all pending indexing to complete

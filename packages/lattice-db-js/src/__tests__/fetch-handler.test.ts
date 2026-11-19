@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import type { Embedder } from '../text-query';
-import { COLLECTION, SEARCH_BETA, firstId, seededHost } from './fixtures';
+import type { EmbedFunction } from '../wasm-types';
+import { COLLECTION, SEARCH_BETA, firstId, seededHost, textHost } from './fixtures';
 
 const ORIGIN = 'https://site.example';
 const BASE = `${ORIGIN}/api/lattice`;
@@ -71,43 +71,66 @@ describe('fetchHandler', () => {
   });
 });
 
-describe('text queries', () => {
-  const textQuery = JSON.stringify({ query: { text: 'second', model: 'm' }, limit: 1 });
+describe('text queries are answered by the router', () => {
   const path = `/collections/${COLLECTION}/points/query`;
+  const query = (q: unknown): string => JSON.stringify({ query: q, limit: 1 });
 
-  it('answers 501 when no embedder is configured', async () => {
-    const api = (await seededHost()).fetchHandler({ prefix: '/api/lattice', corsOrigin: '*' });
-    const res = await api.handleFetch(post(path, textQuery));
-    expect(res.status).toBe(501);
-    expect(res.headers.get('access-control-allow-origin')).toBe('*');
-    expect(((await res.json()) as { message: string }).message).toMatch(/embedder/);
-  });
-
-  it('embeds through the configured hook and forwards a vector query', async () => {
-    const calls: Array<[string, string[]]> = [];
-    const embed: Embedder = async (model, texts) => {
-      calls.push([model, texts]);
-      return texts.map(() => new Float32Array([0, 1, 0]));
-    };
-    const api = (await seededHost()).fetchHandler({ prefix: '/api/lattice', embed });
-    const res = await api.handleFetch(post(path, textQuery));
+  it('answers bm25 queries with no embedder at all', async () => {
+    const api = (await textHost()).fetchHandler({ prefix: '/api/lattice' });
+    const res = await api.handleFetch(post(path, query({ text: 'beta', model: 'bm25' })));
     expect(res.status).toBe(200);
     expect(firstId(await res.json())).toBe(2);
-    expect(calls).toEqual([['m', ['second']]]);
-
-    const nested = JSON.stringify({ query: { nearest: { text: 'x', model: 'm' } }, limit: 1 });
-    expect((await api.handleFetch(post(path, nested))).status).toBe(200);
-    const noModel = JSON.stringify({ query: { text: 'x' }, limit: 1 });
-    expect((await api.handleFetch(post(path, noModel))).status).toBe(400);
+    const nested = query({ nearest: { text: 'gamma', model: 'bm25' } });
+    expect(firstId(await (await api.handleFetch(post(path, nested))).json())).toBe(3);
   });
 
-  it('leaves vector queries untouched', async () => {
-    const embed: Embedder = async () => {
-      throw new Error('must not be called');
+  it('refuses a dense text query whose model has no registered embedder', async () => {
+    const api = (await textHost()).fetchHandler({ prefix: '/api/lattice', corsOrigin: '*' });
+    const res = await api.handleFetch(post(path, query({ text: 'beta', model: 'm' })));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(((await res.json()) as { message: string }).message).toMatch(/no embedder/);
+    const noModel = await api.handleFetch(post(path, query({ text: 'beta' })));
+    expect(noModel.status).toBe(400);
+  });
+
+  it('embeds through an embedder registered on the host, for every handler', async () => {
+    const calls: string[][] = [];
+    const embed: EmbedFunction = async (texts) => {
+      calls.push(texts);
+      return texts.map(() => new Float32Array([0, 1, 0]));
     };
-    const api = (await seededHost()).fetchHandler({ prefix: '/api/lattice', embed });
-    const res = await api.handleFetch(post(path, JSON.stringify({ query: [1, 0, 0], limit: 1 })));
+    const host = await textHost();
+    const api = host.fetchHandler({ prefix: '/api/lattice' });
+    host.setEmbedder({ model: 'm', dim: 3, embed });
+    const res = await api.handleFetch(post(path, query({ text: 'anything', model: 'm' })));
     expect(res.status).toBe(200);
-    expect(firstId(await res.json())).toBe(1);
+    expect(firstId(await res.json())).toBe(2);
+    expect(calls).toEqual([['anything']]);
+
+    const hybrid = JSON.stringify({
+      prefetch: [
+        { query: { text: 'gamma', model: 'bm25' }, limit: 3 },
+        { query: { text: 'gamma', model: 'm' }, limit: 3 },
+      ],
+      query: { fusion: 'rrf' },
+      limit: 3,
+    });
+    const fused = await api.handleFetch(post(path, hybrid));
+    expect(fused.status).toBe(200);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('rejects an embedder returning the wrong dimension with 502', async () => {
+    const host = await textHost();
+    host.setEmbedder({ model: 'm', dim: 3, embed: (texts) => texts.map(() => [1, 0]) });
+    const api = host.fetchHandler({ prefix: '/api/lattice' });
+    const res = await api.handleFetch(post(path, query({ text: 'x', model: 'm' })));
+    expect(res.status).toBe(502);
+  });
+
+  it('refuses to register the reserved bm25 model', async () => {
+    const host = await textHost();
+    expect(() => host.setEmbedder({ model: 'bm25', dim: 3, embed: () => [] })).toThrow(/reserved/);
   });
 });

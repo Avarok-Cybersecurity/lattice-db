@@ -16,12 +16,13 @@
 
 import type { ApiResponse } from './types';
 import { loadWasm } from './wasm-loader';
-import { mayCarryTextQuery, resolveTextQuery, type Embedder } from './text-query';
 import type {
   ByteInput,
+  EmbedderRegistration,
   ImportMode,
   ImportResult,
   RawFetchHandler,
+  RawFetchOptions,
   RawLatticeDB,
   RouteResponse,
   WasmInput,
@@ -32,34 +33,36 @@ export interface LatticeHostOptions {
   readOnly: boolean;
   /** WASM binary source; see {@link loadWasm}. */
   wasm?: WasmInput;
+  /**
+   * Text embedders to register with the router (see {@link LatticeHost.setEmbedder}).
+   * Lexical (`"model": "bm25"`) queries need none.
+   */
+  embedders?: readonly EmbedderRegistration[];
 }
 
-export interface FetchHandlerOptions {
-  /** Mount path such as `/api/lattice`, or `''` for every path. */
-  prefix: string;
-  /** `Access-Control-Allow-Origin` value; omit for same-origin use. */
-  corsOrigin?: string;
-  /** Embeds text queries; without it they are answered with 501. */
-  embed?: Embedder;
-}
+/** Options for {@link LatticeHost.fetchHandler}. */
+export type FetchHandlerOptions = RawFetchOptions;
 
 /** A `fetch`-event handler over one database. */
-export interface LatticeFetchHandler {
-  readonly prefix: string;
-  /** Whether an absolute URL is under the prefix. */
-  handles(url: string): boolean;
-  /** Answer a request (HTTP errors are statuses, never rejections). */
-  handleFetch(request: Request): Promise<Response>;
-  /** An error `Response` carrying the same security/CORS headers as routed ones. */
-  errorResponse(status: number, message: string): Response;
-}
+export type LatticeFetchHandler = RawFetchHandler;
 
 export class LatticeHost {
   private constructor(private readonly db: RawLatticeDB) {}
 
   static async create(options: LatticeHostOptions): Promise<LatticeHost> {
     const glue = await loadWasm(options.wasm);
-    return new LatticeHost(new glue.LatticeDB({ readOnly: options.readOnly }));
+    const host = new LatticeHost(new glue.LatticeDB({ readOnly: options.readOnly }));
+    for (const registration of options.embedders ?? []) host.setEmbedder(registration);
+    return host;
+  }
+
+  /**
+   * Register (or replace) the embedder for `registration.model`. Text queries
+   * naming that model are embedded inside the router, on every host (route,
+   * fetch handler, service worker, Worker); an unregistered model answers 503.
+   */
+  setEmbedder(registration: EmbedderRegistration): void {
+    this.db.setEmbedder(registration.model, registration.dim, registration.embed);
   }
 
   /** Import a `lattice-jsonl` dump into the collection its header names. */
@@ -87,37 +90,12 @@ export class LatticeHost {
 
   /** Create a fetch handler mounted at `options.prefix`. */
   fetchHandler(options: FetchHandlerOptions): LatticeFetchHandler {
-    const raw = this.db.fetchHandler(
+    return this.db.fetchHandler(
       options.corsOrigin === undefined
         ? { prefix: options.prefix }
         : { prefix: options.prefix, corsOrigin: options.corsOrigin }
     );
-    return wrapFetchHandler(raw, options.embed);
   }
-}
-
-function wrapFetchHandler(raw: RawFetchHandler, embed: Embedder | undefined): LatticeFetchHandler {
-  return {
-    prefix: raw.prefix,
-    handles: (url: string): boolean => raw.handles(url),
-    errorResponse: (status: number, message: string): Response =>
-      raw.errorResponse(status, message),
-    handleFetch: async (request: Request): Promise<Response> => {
-      const pathname = new URL(request.url).pathname;
-      if (!raw.handles(request.url) || !mayCarryTextQuery(request.method, pathname)) {
-        return raw.handleFetch(request);
-      }
-      const outcome = await resolveTextQuery(await request.clone().text(), embed);
-      switch (outcome.kind) {
-        case 'pass':
-          return raw.handleFetch(request);
-        case 'reject':
-          return raw.errorResponse(outcome.status, outcome.message);
-        case 'rewrite':
-          return raw.handleFetch(new Request(request, { body: outcome.body }));
-      }
-    },
-  };
 }
 
 function unwrap<T>(response: ApiResponse<T>): T {

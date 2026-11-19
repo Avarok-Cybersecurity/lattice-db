@@ -4,10 +4,12 @@
 
 pub mod dense_vectors;
 pub mod distance;
+pub mod flat;
 pub mod hnsw;
 pub mod layer;
 pub mod quantization;
 pub mod scann;
+pub mod vector_codec;
 
 // Memory-mapped vectors (native only with mmap feature)
 #[cfg(all(feature = "mmap", not(target_arch = "wasm32")))]

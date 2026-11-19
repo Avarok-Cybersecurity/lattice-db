@@ -42,7 +42,7 @@ pub async fn query_points(
         let engine = handle.read().await;
         (
             engine.config().embedding.clone(),
-            engine.config().vectors.size,
+            engine.config().vector_dim(),
         )
     };
     let (with_payload, with_vector) = (request.with_payload, request.with_vector);

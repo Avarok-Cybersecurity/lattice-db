@@ -9,6 +9,9 @@
 //! The index stores vectors in memory and uses the LatticeStorage trait
 //! for persistence. Core algorithm is pure computation - no I/O calls.
 
+#[path = "hnsw_parts.rs"]
+mod parts;
+
 use crate::error::{LatticeError, LatticeResult};
 use crate::index::dense_vectors::DenseVectorStore;
 use crate::index::distance::DistanceCalculator;
@@ -18,6 +21,7 @@ use crate::sync::cmp_f32;
 use crate::types::collection::{Distance, HnswConfig};
 use crate::types::point::{Point, PointId, Vector};
 use crate::types::query::SearchResult;
+pub use parts::{HnswGraphParts, HnswNodeParts};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cmp::Reverse;

@@ -676,10 +676,7 @@ mod tests {
     async fn setup_collection_with_points(state: &AppState) {
         // Create collection
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
             text_index: None,

@@ -310,7 +310,7 @@ fn an_empty_collection_roundtrips() {
 #[test]
 fn the_header_carries_enough_config_to_rebuild() {
     let back = import_jsonl(dump(&seeded(), &ExportOptions::inline()).as_bytes()).unwrap();
-    assert_eq!(back.header.config.vectors.size, 4);
+    assert_eq!(back.header.config.vector_dim(), 4);
     assert_eq!(back.header.config.relations.get("invalidates"), Some(&0));
     assert_eq!(back.header.config.relations.get("attests"), Some(&1));
 }
