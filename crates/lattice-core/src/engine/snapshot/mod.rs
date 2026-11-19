@@ -19,6 +19,7 @@
 //! can never start with `LTDB`: that prefix read as `config_len` is over 1 GiB,
 //! larger than any accepted import.
 
+mod canonical;
 mod legacy;
 
 use crate::error::{LatticeError, LatticeResult};
@@ -64,6 +65,11 @@ pub struct Snapshot {
 }
 
 /// Write a format-2 snapshot.
+///
+/// The bytes are a function of the collection's content alone: points in id
+/// order, payload maps archived in key order, relations renumbered in name
+/// order (the `canonical` module) and the configuration's maps written sorted.
+/// Same content, same bytes, in any process and on any platform.
 pub fn encode<'a, I>(
     config: &CollectionConfig,
     points: I,
@@ -73,14 +79,20 @@ pub fn encode<'a, I>(
 where
     I: ExactSizeIterator<Item = &'a Point>,
 {
-    let points: Vec<&Point> = points.collect();
+    let mut points: Vec<&Point> = points.collect();
+    points.sort_by_key(|p| p.id);
+    let (config, relations) = canonical::canonical_relations(config);
+    let config = &config;
     let vectors = EncodedVectors::encode(
         config.vectors.as_ref().map(|v| v.storage),
         config.vector_dim(),
         points.iter().map(|p| p.vector.as_slice()),
     );
     let body = SnapshotBody {
-        points: points.iter().map(|p| without_vector(p)).collect(),
+        points: points
+            .iter()
+            .map(|p| canonical::stored_point(p, &relations))
+            .collect(),
         vectors,
         hnsw,
         text,
@@ -170,16 +182,6 @@ fn attach_vectors(
         point.vector = vector;
     }
     Ok(points)
-}
-
-fn without_vector(point: &Point) -> Point {
-    Point {
-        id: point.id,
-        vector: Vec::new(),
-        payload: point.payload.clone(),
-        outgoing_edges: point.outgoing_edges.clone(),
-        label_bitmap: point.label_bitmap,
-    }
 }
 
 /// Validate and deserialize rkyv bytes that may not be 16-byte aligned.

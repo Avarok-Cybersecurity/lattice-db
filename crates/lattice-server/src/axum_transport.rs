@@ -205,9 +205,9 @@ where
 /// mount prefix before the request reaches here, so LatticeDB always sees
 /// paths relative to its mount point.
 async fn to_lattice_request(request: Request<Body>) -> Result<LatticeRequest, Box<Response>> {
-    // Extract method and path - HTTP methods are already uppercase
+    // HTTP methods are already uppercase
     let method = request.method().to_string();
-    let path = request.uri().path().to_owned();
+    let path = crate::hyper_transport::request_target(request.uri());
 
     // Skip header parsing entirely - we don't use headers in the API
     // This saves ~20-40µs of allocations per request

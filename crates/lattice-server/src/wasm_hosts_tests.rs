@@ -162,3 +162,31 @@ async fn fetch_handler_maps_requests_under_its_prefix() {
     let ctype = resp.headers().get("content-type").expect("header");
     assert_eq!(ctype.as_deref(), Some("application/json"));
 }
+
+#[wasm_bindgen_test]
+async fn fetch_handler_keeps_the_query_string() {
+    let db = LatticeDB::default();
+    seeded(&db).await;
+    let snapshot = db.export_snapshot("c").expect("export");
+    let o = Object::new();
+    Reflect::set(&o, &"prefix".into(), &"/api/lattice".into()).expect("set");
+    let api = db.fetch_handler(o.into()).expect("handler");
+    let init = web_sys::RequestInit::new();
+    init.set_method("POST");
+    init.set_body(&snapshot.into());
+    let req = web_sys::Request::new_with_str_and_init(
+        "https://site.example/api/lattice/collections/copy/import?mode=create",
+        &init,
+    )
+    .expect("request");
+    let resp: web_sys::Response = JsFuture::from(api.handle_fetch(req))
+        .await
+        .expect("response")
+        .unchecked_into();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(call(&db, "GET", "/collections/copy", "").await.0, 200);
+    // route() passes the path through verbatim, query included.
+    let (status, body) = call(&db, "POST", "/collections/x/import?mode=bogus", "x").await;
+    assert_eq!(status, 400);
+    assert!(!String::from_utf8_lossy(&body).contains("Missing required"));
+}

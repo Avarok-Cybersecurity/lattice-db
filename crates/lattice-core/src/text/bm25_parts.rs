@@ -32,7 +32,11 @@ pub struct LexicalParts {
 }
 
 impl LexicalIndex {
-    /// Capture the live documents (compacted, deterministic order).
+    /// Capture the live documents in canonical form: documents by ascending
+    /// point id, terms in ascending order, and only terms some live document
+    /// still holds. Term ids are assigned in first-seen order and survive
+    /// deletions, so this keeps the parts a function of the indexed content,
+    /// not of the order it was indexed in.
     pub fn to_parts(&self) -> LexicalParts {
         let mut live: Vec<(PointId, u32)> = self.by_id.iter().map(|(&id, &o)| (id, o)).collect();
         live.sort_unstable();
@@ -40,24 +44,28 @@ impl LexicalIndex {
         for (new, (_, old)) in live.iter().enumerate() {
             remap[*old as usize] = new as u32;
         }
-        let mut terms = vec![String::new(); self.vocab.len()];
-        for (term, &id) in &self.vocab {
-            terms[id as usize] = term.clone();
-        }
+        let mut by_term: Vec<(&str, Vec<(u32, u32)>)> = self
+            .vocab
+            .iter()
+            .filter_map(|(term, &id)| {
+                let mut entries: Vec<(u32, u32)> = self.postings[id as usize]
+                    .iter()
+                    .map(|p| (remap[p.ord as usize], p.tf))
+                    .filter(|(ord, _)| *ord != u32::MAX)
+                    .collect();
+                entries.sort_unstable();
+                (!entries.is_empty()).then_some((term.as_str(), entries))
+            })
+            .collect();
+        by_term.sort_unstable_by(|a, b| a.0.cmp(b.0));
         let (mut offsets, mut ords, mut tfs) = (vec![0u32], Vec::new(), Vec::new());
-        for list in &self.postings {
-            let mut entries: Vec<(u32, u32)> = list
-                .iter()
-                .map(|p| (remap[p.ord as usize], p.tf))
-                .filter(|(ord, _)| *ord != u32::MAX)
-                .collect();
-            entries.sort_unstable();
+        for (_, entries) in &by_term {
             ords.extend(entries.iter().map(|e| e.0));
             tfs.extend(entries.iter().map(|e| e.1));
             offsets.push(ords.len() as u32);
         }
         LexicalParts {
-            terms,
+            terms: by_term.iter().map(|(t, _)| (*t).to_string()).collect(),
             offsets,
             ords,
             tfs,

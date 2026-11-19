@@ -91,7 +91,9 @@ pub struct Point {
     /// JSON-like payload for filtering
     ///
     /// Stored as raw bytes (serialized JSON) to delay parsing until needed.
-    /// Keys are field names, values are JSON-encoded bytes.
+    /// Keys are field names, values are JSON-encoded bytes. Archived in key
+    /// order so a point's bytes do not depend on the map's hasher seed.
+    #[rkyv(with = crate::types::sorted_map::SortedKeys)]
     pub payload: HashMap<String, Vec<u8>>,
 
     /// Optional graph connectivity
