@@ -44,6 +44,7 @@ pub mod interchange;
 pub mod parallel;
 pub mod storage;
 pub mod sync;
+pub mod text;
 pub mod transaction;
 pub mod transport;
 pub mod types;
@@ -57,8 +58,12 @@ pub use index::hnsw::HnswIndex;
 pub use index::quantization::QuantizedVector;
 pub use interchange::{export_jsonl, import_jsonl, Dump, ExportOptions, VectorMode};
 pub use storage::{LatticeStorage, Page, StorageError, StorageResult};
+pub use text::{EmbeddingConfig, TextIndexConfig, TextSearchQuery};
 pub use transport::{LatticeRequest, LatticeResponse, LatticeTransport};
-pub use types::collection::{CollectionConfig, Distance, DurabilityMode, HnswConfig, VectorConfig};
+pub use types::collection::{
+    CollectionConfig, Distance, DurabilityMode, HnswConfig, VectorConfig, VectorIndexKind,
+    VectorStorage,
+};
 pub use types::point::{Edge, Point, PointId, Vector};
 pub use types::query::{ScrollQuery, ScrollResult, SearchQuery, SearchResult};
 pub use types::value::CypherValue;

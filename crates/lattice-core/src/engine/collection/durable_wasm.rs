@@ -141,11 +141,14 @@ fn engine_from_snapshot(
 ) -> LatticeResult<CollectionEngine> {
     let mut engine = CollectionEngine::from_bytes(bytes)?;
     let stored = engine.config();
-    if stored.name != config.name || stored.vectors.size != config.vectors.size {
+    if stored.name != config.name || stored.vector_dim() != config.vector_dim() {
         return Err(LatticeError::InvalidOperation {
             message: format!(
                 "storage holds collection '{}' ({} dims), not '{}' ({} dims)",
-                stored.name, stored.vectors.size, config.name, config.vectors.size
+                stored.name,
+                stored.vector_dim(),
+                config.name,
+                config.vector_dim()
             ),
         });
     }

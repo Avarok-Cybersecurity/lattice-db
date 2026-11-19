@@ -58,7 +58,14 @@ pub async fn upsert_points(
     let mut engine = handle.write().await;
 
     // Validate vector dimensions match collection (crash/DoS protection)
-    let expected_dim = engine.config().vectors.size;
+    let expected_dim = engine.config().vector_dim();
+    if expected_dim == 0 {
+        if let Some(i) = request.points.iter().position(|p| !p.vector.is_empty()) {
+            return LatticeResponse::bad_request(&format!(
+                "Point {i} carries a vector, but collection '{collection_name}' has no dense vectors (it was created without 'vectors')"
+            ));
+        }
+    }
     for (i, p) in request.points.iter().enumerate() {
         if p.vector.len() != expected_dim {
             return LatticeResponse::bad_request(&format!(
@@ -411,12 +418,11 @@ mod tests {
 
     async fn setup_collection(state: &AppState) {
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(state, "test", request).await;
     }

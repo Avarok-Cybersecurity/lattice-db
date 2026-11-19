@@ -202,7 +202,9 @@ pub struct CollectionConfigResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct CollectionParamsResponse {
-    pub vectors: VectorParamsResponse,
+    /// Absent for a collection without dense vectors
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vectors: Option<VectorParamsResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shard_number: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,6 +225,10 @@ pub struct VectorParamsResponse {
     pub distance: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_disk: Option<bool>,
+    /// `"hnsw"` or `"flat"` (LatticeDB extension)
+    pub index: String,
+    /// `"f32"`, `"f16"` or `"int8"` (LatticeDB extension)
+    pub storage: String,
 }
 
 /// HNSW config in response (Qdrant-compatible)

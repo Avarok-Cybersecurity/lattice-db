@@ -7,19 +7,21 @@
 
 use crate::error::{LatticeError, LatticeResult};
 use crate::index::hnsw::HnswIndex;
+use crate::text::PayloadTextIndex;
 use crate::types::collection::CollectionConfig;
 use crate::types::point::{Edge, Point, PointId};
 use crate::types::query::{ScrollPoint, ScrollQuery, ScrollResult, SearchQuery, SearchResult};
-use rkyv::rancor::Error as RkyvError;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::Bound;
 
+use super::restore::{check_query, flat_search, new_hnsw, prepare_vector, restore};
 use super::types::{EdgeInfo, TraversalPath, TraversalResult, UpsertResult};
 use super::PAGE_POINTS_START;
 
 mod apply;
+mod text_search;
 
 /// Collection engine - manages a single collection (WASM implementation)
 ///
@@ -27,12 +29,14 @@ mod apply;
 pub struct CollectionEngine {
     /// Collection configuration
     config: CollectionConfig,
-    /// HNSW index for vector search
-    index: HnswIndex,
+    /// HNSW index for vector search (`None` for flat or vector-less collections)
+    index: Option<HnswIndex>,
     /// Point storage: id -> Point (BTreeMap for O(log n) sorted iteration)
     points: BTreeMap<PointId, Point>,
     /// Label index: label -> set of point IDs (for O(1) label lookups)
     label_index: HashMap<String, FxHashSet<PointId>>,
+    /// BM25 index over the configured payload text field (None = not configured)
+    text_index: Option<PayloadTextIndex>,
     /// Next available page ID for storage (reserved for Phase 2: point-level persistence)
     _next_page_id: u64,
 }
@@ -42,7 +46,8 @@ impl CollectionEngine {
     pub fn new(config: CollectionConfig) -> LatticeResult<Self> {
         config.validate()?;
 
-        let index = HnswIndex::new(config.hnsw.clone(), config.vectors.distance);
+        let index = new_hnsw(&config);
+        let text_index = PayloadTextIndex::for_config(config.text_index.as_ref());
 
         Ok(Self {
             config,
@@ -50,6 +55,7 @@ impl CollectionEngine {
             points: BTreeMap::new(),
             // Pre-allocate for typical number of unique labels in a graph
             label_index: HashMap::with_capacity(64),
+            text_index,
             _next_page_id: PAGE_POINTS_START,
         })
     }
@@ -76,7 +82,7 @@ impl CollectionEngine {
 
     /// Get vector dimension
     pub fn vector_dim(&self) -> usize {
-        self.config.vectors.size
+        self.config.vector_dim()
     }
 
     // --- Point Operations ---
@@ -89,13 +95,7 @@ impl CollectionEngine {
         let mut updated = 0;
 
         for mut point in points {
-            // Validate vector dimension
-            if point.vector.len() != self.config.vectors.size {
-                return Err(LatticeError::DimensionMismatch {
-                    expected: self.config.vectors.size,
-                    actual: point.vector.len(),
-                });
-            }
+            prepare_vector(&self.config, &mut point)?;
 
             let is_update = self.points.contains_key(&point.id);
 
@@ -112,7 +112,9 @@ impl CollectionEngine {
                     }
                 }
                 // Remove old entry from HNSW index
-                self.index.delete(point.id);
+                if let Some(index) = &mut self.index {
+                    index.delete(point.id);
+                }
                 updated += 1;
             } else {
                 inserted += 1;
@@ -122,7 +124,13 @@ impl CollectionEngine {
             Self::add_point_labels_to_index(&point, &mut self.label_index);
 
             // Insert into HNSW index
-            self.index.insert(&point)?;
+            if let Some(index) = &mut self.index {
+                index.insert(&point)?;
+            }
+
+            if let Some(text_index) = &mut self.text_index {
+                text_index.upsert_point(&point)?;
+            }
 
             // Store point
             self.points.insert(point.id, point);
@@ -272,7 +280,12 @@ impl CollectionEngine {
             if let Some(point) = self.points.remove(&id) {
                 // Remove from label index
                 Self::remove_point_labels_from_index(&point, &mut self.label_index);
-                self.index.delete(id);
+                if let Some(index) = &mut self.index {
+                    index.delete(id);
+                }
+                if let Some(text_index) = &mut self.text_index {
+                    text_index.remove_point(id);
+                }
                 deleted += 1;
             }
         }
@@ -303,19 +316,16 @@ impl CollectionEngine {
 
     /// Search for nearest neighbors
     pub fn search(&self, query: SearchQuery) -> LatticeResult<Vec<SearchResult>> {
-        // Validate query vector dimension
-        if query.vector.len() != self.config.vectors.size {
-            return Err(LatticeError::DimensionMismatch {
-                expected: self.config.vectors.size,
-                actual: query.vector.len(),
-            });
-        }
+        check_query(&self.config, &query.vector)?;
 
-        // Use query ef or default from config
-        let ef = query.ef.unwrap_or(self.config.hnsw.ef);
-
-        // Perform HNSW search
-        let mut results = self.index.search(&query.vector, query.limit, ef);
+        let mut results = match &self.index {
+            Some(index) => {
+                // Use query ef or default from config
+                let ef = query.ef.unwrap_or(self.config.hnsw.ef);
+                index.search(&query.vector, query.limit, ef)
+            }
+            None => flat_search(&self.config, &self.points, &query.vector, query.limit)?,
+        };
 
         // Apply score threshold if specified
         if let Some(threshold) = query.score_threshold {
@@ -637,128 +647,32 @@ impl CollectionEngine {
         }
     }
 
-    /// Serialize the collection to bytes (for persistence)
-    ///
-    /// Format: `[config_len:u32][config:JSON][padding][points:rkyv]`
-    /// Padding ensures rkyv data starts at 16-byte alignment.
+    /// Serialize the collection as a snapshot (see [`crate::engine::snapshot`]),
+    /// including its HNSW graph and BM25 postings so a load restores them.
     pub fn to_bytes(&self) -> LatticeResult<Vec<u8>> {
-        // Serialize config as JSON (small, schema-flexible)
-        let config_bytes =
-            serde_json::to_vec(&self.config).map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Serialize points with rkyv (zero-copy, fast)
-        let points_vec: Vec<Point> = self.points.values().cloned().collect();
-        let points_bytes =
-            rkyv::to_bytes::<RkyvError>(&points_vec).map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Calculate padding to align rkyv data to 16 bytes
-        let header_size = 4 + config_bytes.len() + 4; // config_len + config + points_len
-        let padding = (16 - (header_size % 16)) % 16;
-
-        // Build result: [config_len][config][points_len][padding][points]
-        let mut result = Vec::with_capacity(header_size + padding + points_bytes.len());
-        result.extend_from_slice(&(config_bytes.len() as u32).to_le_bytes());
-        result.extend_from_slice(&config_bytes);
-        result.extend_from_slice(&(points_bytes.len() as u32).to_le_bytes());
-        result.extend(std::iter::repeat(0u8).take(padding)); // Alignment padding
-        result.extend_from_slice(&points_bytes);
-
-        Ok(result)
+        crate::engine::snapshot::encode(
+            &self.config,
+            self.points.values(),
+            self.index.as_ref().map(HnswIndex::to_parts),
+            self.text_index.as_ref().map(PayloadTextIndex::to_parts),
+        )
     }
 
-    /// Deserialize a collection from bytes
+    /// Load a snapshot of any supported format.
     pub fn from_bytes(bytes: &[u8]) -> LatticeResult<Self> {
-        if bytes.len() < 8 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: too short".to_string(),
-            });
+        let restored = restore(crate::engine::snapshot::decode(bytes)?)?;
+        let mut label_index = HashMap::with_capacity(64);
+        for point in restored.points.values() {
+            Self::add_point_labels_to_index(point, &mut label_index);
         }
-
-        // Read config length with overflow check
-        let config_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let config_end =
-            4usize
-                .checked_add(config_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: config length overflow".to_string(),
-                })?;
-
-        let config_end_plus_4 =
-            config_end
-                .checked_add(4)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: offset overflow".to_string(),
-                })?;
-
-        if bytes.len() < config_end_plus_4 {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: config truncated".to_string(),
-            });
-        }
-
-        // Deserialize config (JSON)
-        let config: CollectionConfig =
-            serde_json::from_slice(&bytes[4..config_end]).map_err(|e| {
-                LatticeError::Serialization {
-                    message: e.to_string(),
-                }
-            })?;
-
-        // Read points length
-        let points_len = u32::from_le_bytes([
-            bytes[config_end],
-            bytes[config_end + 1],
-            bytes[config_end + 2],
-            bytes[config_end + 3],
-        ]) as usize;
-
-        // Calculate padding (same formula as serialization) with overflow checks
-        let header_size = 4usize
-            .checked_add(config_len)
-            .and_then(|v| v.checked_add(4))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: header size overflow".to_string(),
-            })?;
-        let padding = (16 - (header_size % 16)) % 16;
-        let points_start = config_end
-            .checked_add(4)
-            .and_then(|v| v.checked_add(padding))
-            .ok_or_else(|| LatticeError::Serialization {
-                message: "Invalid data: points start offset overflow".to_string(),
-            })?;
-
-        let required_len =
-            points_start
-                .checked_add(points_len)
-                .ok_or_else(|| LatticeError::Serialization {
-                    message: "Invalid data: total size overflow".to_string(),
-                })?;
-
-        if bytes.len() < required_len {
-            return Err(LatticeError::Serialization {
-                message: "Invalid data: points truncated".to_string(),
-            });
-        }
-
-        // Copy to aligned buffer for rkyv deserialization
-        let mut aligned_bytes = rkyv::util::AlignedVec::<16>::new();
-        aligned_bytes.extend_from_slice(&bytes[points_start..points_start + points_len]);
-
-        // Deserialize points with rkyv
-        let points_vec: Vec<Point> = rkyv::from_bytes::<Vec<Point>, RkyvError>(&aligned_bytes)
-            .map_err(|e| LatticeError::Serialization {
-                message: e.to_string(),
-            })?;
-
-        // Build engine
-        let mut engine = Self::new(config)?;
-        engine.upsert_points(points_vec)?;
-
-        Ok(engine)
+        Ok(Self {
+            config: restored.config,
+            index: restored.index,
+            points: restored.points,
+            label_index,
+            text_index: restored.text_index,
+            _next_page_id: PAGE_POINTS_START,
+        })
     }
 }
 

@@ -5,7 +5,8 @@
 use crate::dto::{
     ApiResponse, CollectionConfigResponse, CollectionDescription, CollectionInfo,
     CollectionParamsResponse, CollectionStatus, CollectionsResponse, CreateCollectionRequest,
-    HnswConfigResponse, OptimizersConfigResponse, OptimizersStatus, VectorParamsResponse,
+    HnswConfigResponse, OptimizersConfigResponse, OptimizersStatus, VectorParams,
+    VectorParamsResponse,
 };
 #[cfg(feature = "openapi")]
 use crate::dto::{
@@ -61,6 +62,36 @@ fn validate_collection_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Translate the request's vector parameters (distance name, dimension
+/// bounds) into the core configuration.
+fn vector_config(params: &VectorParams) -> Result<VectorConfig, String> {
+    let distance = match params.distance.to_lowercase().as_str() {
+        "cosine" => Distance::Cosine,
+        "euclid" | "euclidean" | "l2" => Distance::Euclid,
+        "dot" | "dotproduct" => Distance::Dot,
+        other => {
+            return Err(format!(
+                "Unknown distance metric: '{}'. Use 'Cosine', 'Euclid', or 'Dot'",
+                other
+            ));
+        }
+    };
+    // DoS protection: bound the per-point allocation
+    const MAX_VECTOR_DIM: usize = 65536;
+    if params.size == 0 {
+        return Err("Vector dimension must be at least 1 (omit 'vectors' for a collection without dense vectors)".to_string());
+    }
+    if params.size > MAX_VECTOR_DIM {
+        return Err(format!(
+            "Vector dimension {} exceeds maximum of {}",
+            params.size, MAX_VECTOR_DIM
+        ));
+    }
+    Ok(VectorConfig::new(params.size, distance)
+        .with_index(params.index)
+        .with_storage(params.storage))
+}
+
 /// List all collections
 #[cfg_attr(feature = "openapi", utoipa::path(
     get,
@@ -106,17 +137,9 @@ pub async fn create_collection(
         return LatticeResponse::bad_request(e);
     }
 
-    // Parse distance metric
-    let distance = match request.vectors.distance.to_lowercase().as_str() {
-        "cosine" => Distance::Cosine,
-        "euclid" | "euclidean" | "l2" => Distance::Euclid,
-        "dot" | "dotproduct" => Distance::Dot,
-        other => {
-            return LatticeResponse::bad_request(&format!(
-                "Unknown distance metric: '{}'. Use 'Cosine', 'Euclid', or 'Dot'",
-                other
-            ));
-        }
+    let vectors = match request.vectors.as_ref().map(vector_config).transpose() {
+        Ok(v) => v,
+        Err(message) => return LatticeResponse::bad_request(&message),
     };
 
     // Build HNSW config (PCND: require explicit values or use recommended)
@@ -189,18 +212,6 @@ pub async fn create_collection(
         }
     };
 
-    // Validate vector dimension bounds (DoS protection: prevent memory exhaustion)
-    const MAX_VECTOR_DIM: usize = 65536;
-    if request.vectors.size == 0 {
-        return LatticeResponse::bad_request("Vector dimension must be at least 1");
-    }
-    if request.vectors.size > MAX_VECTOR_DIM {
-        return LatticeResponse::bad_request(&format!(
-            "Vector dimension {} exceeds maximum of {}",
-            request.vectors.size, MAX_VECTOR_DIM
-        ));
-    }
-
     // Parse durability mode
     let durability = match request.durability.as_deref() {
         Some("durable") => DurabilityMode::Durable,
@@ -214,12 +225,17 @@ pub async fn create_collection(
     };
 
     // Create collection config
-    let config = CollectionConfig::new(
-        name,
-        VectorConfig::new(request.vectors.size, distance),
-        hnsw_config,
-    )
-    .with_durability(durability);
+    let mut config = CollectionConfig::with_optional_vectors(name, vectors, hnsw_config)
+        .with_durability(durability);
+    if let Some(text_index) = request.text_index {
+        config = config.with_text_index(text_index);
+    }
+    if let Some(embedding) = request.embedding {
+        config = config.with_embedding(embedding);
+    }
+    if let Err(e) = config.validate() {
+        return LatticeResponse::bad_request(&format!("Invalid collection config: {}", e));
+    }
 
     // Create engine: durable if data_dir is set and durability=durable, else ephemeral
     #[cfg(feature = "native")]
@@ -327,8 +343,11 @@ pub async fn create_collection(
 
     info!(
         collection = name,
-        vector_dim = request.vectors.size,
-        distance = %request.vectors.distance,
+        vector_dim = request.vectors.as_ref().map_or(0, |v| v.size),
+        index = request
+            .vectors
+            .as_ref()
+            .map_or("none", |v| v.index.as_str()),
         "Collection created"
     );
 
@@ -369,11 +388,13 @@ pub async fn get_collection(state: &AppState, name: &str) -> LatticeResponse {
         segments_count: 1,
         config: CollectionConfigResponse {
             params: CollectionParamsResponse {
-                vectors: VectorParamsResponse {
-                    size: config.vectors.size,
-                    distance: format!("{:?}", config.vectors.distance),
+                vectors: config.vectors.as_ref().map(|v| VectorParamsResponse {
+                    size: v.size,
+                    distance: format!("{:?}", v.distance),
                     on_disk: None,
-                },
+                    index: v.index.as_str().to_string(),
+                    storage: v.storage.as_str().to_string(),
+                }),
                 shard_number: Some(1),
                 sharding_method: None,
                 replication_factor: Some(1),
@@ -451,12 +472,11 @@ mod tests {
 
         // Create
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 128,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(128, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         let response = create_collection(&state, "test", request).await;
@@ -475,12 +495,11 @@ mod tests {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 128,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(128, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         // First create succeeds
@@ -503,12 +522,11 @@ mod tests {
 
         // Create
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 128,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(128, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(&state, "test", request).await;
 
@@ -525,12 +543,11 @@ mod tests {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 128,
-                distance: "InvalidMetric".to_string(),
-            },
+            vectors: Some(VectorParams::new(128, "InvalidMetric")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         let response = create_collection(&state, "test", request).await;
@@ -567,12 +584,11 @@ mod tests {
         let state = new_app_state();
 
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 128,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(128, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
 
         // Path traversal attempt

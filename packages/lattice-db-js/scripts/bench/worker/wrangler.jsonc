@@ -1,0 +1,11 @@
+// Local-only benchmark configuration for `wrangler dev` (never deployed).
+// scripts/bench/workerd.mjs picks the entry with `wrangler dev <entry>`.
+{
+  "name": "lattice-cold-load-bench",
+  "main": "entry-request.ts",
+  "compatibility_date": "2025-09-01",
+  "rules": [
+    { "type": "Data", "globs": ["**/*.lattice"], "fallthrough": false },
+    { "type": "Text", "globs": ["**/warmup.txt"], "fallthrough": false }
+  ]
+}

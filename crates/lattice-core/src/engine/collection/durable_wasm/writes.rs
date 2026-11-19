@@ -143,7 +143,7 @@ impl<W: LatticeStorage, D: LatticeStorage> DurableEngine<W, D> {
     }
 
     fn check_dimensions(&self, points: &[Point]) -> LatticeResult<()> {
-        let expected = self.engine.config().vectors.size;
+        let expected = self.engine.config().vector_dim();
         match points.iter().find(|p| p.vector.len() != expected) {
             Some(p) => Err(LatticeError::DimensionMismatch {
                 expected,

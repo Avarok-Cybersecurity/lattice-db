@@ -11,6 +11,7 @@
 //!
 //! On WASM builds, indexing is synchronous (existing behavior).
 
+mod restore;
 mod types;
 
 /// Starting page ID for collection data: checkpoint snapshots
@@ -46,6 +47,9 @@ pub use wasm::CollectionEngine;
 
 #[cfg(target_arch = "wasm32")]
 pub use durable_wasm::DurableEngine;
+
+#[cfg(test)]
+mod kinds_tests;
 
 #[cfg(test)]
 mod tests {

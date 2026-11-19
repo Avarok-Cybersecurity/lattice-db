@@ -41,6 +41,9 @@ tokio-rustls = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
 
+# OpenAI-compatible /embeddings client (optional, feature `openai-embedder`)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+
 # OpenAPI documentation (optional)
 utoipa = { workspace = true, optional = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
@@ -64,6 +67,10 @@ features = [
     "Headers",
     "ServiceWorkerGlobalScope",
     "ExtendableEvent",
+    "EventTarget",
+    "WorkerGlobalScope",
+    "Url",
+    "RequestInit",
 ]
 
 # WASM builds use tokio's runtime-agnostic sync primitives (async RwLock) so
@@ -94,6 +101,9 @@ openapi = ["native", "utoipa", "utoipa-swagger-ui"]
 simd = ["lattice-core/simd"]
 mmap = ["lattice-core/mmap"]
 tls = ["native", "tokio-rustls", "rustls", "rustls-pemfile"]
+# Text queries embedded by an OpenAI-compatible HTTP endpoint (configured via
+# LATTICE_EMBEDDER_* env vars; see src/embedders/openai.rs).
+openai-embedder = ["native", "reqwest"]
 
 [[bin]]
 # Pinned: the release workflow packages target/<triple>/release/lattice-server

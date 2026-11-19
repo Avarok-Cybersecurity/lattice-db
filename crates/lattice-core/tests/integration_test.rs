@@ -66,7 +66,7 @@ fn test_full_workflow_vector_operations() {
 
     // Verify config was stored correctly
     assert_eq!(engine.config().name, "integration_test");
-    assert_eq!(engine.config().vectors.size, 4);
+    assert_eq!(engine.config().vector_dim(), 4);
     assert_eq!(engine.config().hnsw.m, 16);
 
     // Step 2: Upsert points
@@ -195,7 +195,7 @@ fn test_full_workflow_serialization_roundtrip() {
 
     // Verify config preserved
     assert_eq!(restored.config().name, "integration_test");
-    assert_eq!(restored.config().vectors.size, 4);
+    assert_eq!(restored.config().vector_dim(), 4);
     assert_eq!(restored.config().hnsw.m, 16);
     assert_eq!(restored.config().hnsw.ef_construction, 200);
 

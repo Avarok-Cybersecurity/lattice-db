@@ -4,8 +4,8 @@
 
 use crate::dto::{
     ApiResponse, BatchSearchRequest, CypherQueryRequest, CypherQueryResponse, CypherQueryStats,
-    EdgeRecord, PointRecord, QueryResponse, ScoredPoint, ScrollRequest, ScrollResult,
-    SearchRequest, TraversalResult, TraverseRequest,
+    EdgeRecord, PointRecord, ScoredPoint, ScrollRequest, ScrollResult, SearchRequest,
+    TraversalResult, TraverseRequest,
 };
 #[cfg(feature = "openapi")]
 use crate::dto::{
@@ -218,88 +218,6 @@ pub async fn search_batch(
             json_response(&ApiResponse::ok(batch_results))
         }
         Err(e) => LatticeResponse::bad_request(&format!("Batch search failed: {}", e)),
-    }
-}
-
-/// Query points (Qdrant v1.16+ unified search endpoint)
-///
-/// This is the newer unified search endpoint. It wraps results in a QueryResponse.
-pub async fn query_points(
-    state: &AppState,
-    collection_name: &str,
-    request: SearchRequest,
-) -> LatticeResponse {
-    // Validate score_threshold (NaN/Infinity protection)
-    if let Some(threshold) = request.score_threshold {
-        if !threshold.is_finite() {
-            return LatticeResponse::bad_request(
-                "score_threshold must be a finite number (not NaN or Infinity)",
-            );
-        }
-    }
-
-    // Validate ef parameter bounds (CPU exhaustion protection)
-    const MAX_EF: usize = 10_000;
-    if let Some(ref params) = request.params {
-        if let Some(ef) = params.ef {
-            if ef == 0 || ef > MAX_EF {
-                return LatticeResponse::bad_request(&format!(
-                    "ef must be between 1 and {}",
-                    MAX_EF
-                ));
-            }
-        }
-    }
-
-    let handle = match state.get_collection(collection_name) {
-        Some(h) => h,
-        None => {
-            return LatticeResponse::not_found(&format!(
-                "Collection '{}' not found",
-                collection_name
-            ))
-        }
-    };
-    let engine = handle.read().await;
-
-    // Build search query
-    let mut query = SearchQuery::new(request.vector, request.limit);
-
-    if request.with_payload {
-        query = query.include_payload();
-    }
-    if request.with_vector {
-        query = query.include_vector();
-    }
-    if let Some(threshold) = request.score_threshold {
-        query = query.with_score_threshold(threshold);
-    }
-    if let Some(params) = request.params {
-        if let Some(ef) = params.ef {
-            query = query.with_ef(ef);
-        }
-    }
-
-    // Execute search
-    match engine.search(query) {
-        Ok(results) => {
-            let scored_points: Vec<ScoredPoint> = results
-                .into_iter()
-                .map(|r| ScoredPoint {
-                    id: r.id,
-                    version: 0, // LatticeDB doesn't track versions
-                    score: r.score,
-                    payload: r.payload.map(json_value_to_map),
-                    vector: r.vector,
-                })
-                .collect();
-
-            // Wrap in QueryResponse for v1.16+ compatibility
-            json_response(&ApiResponse::ok(QueryResponse {
-                points: scored_points,
-            }))
-        }
-        Err(e) => LatticeResponse::bad_request(&format!("Search failed: {}", e)),
     }
 }
 
@@ -725,7 +643,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 /// Convert serde_json::Value to HashMap
-fn json_value_to_map(value: serde_json::Value) -> HashMap<String, serde_json::Value> {
+pub(crate) fn json_value_to_map(value: serde_json::Value) -> HashMap<String, serde_json::Value> {
     match value {
         serde_json::Value::Object(map) => map.into_iter().collect(),
         _ => HashMap::new(),
@@ -758,12 +676,11 @@ mod tests {
     async fn setup_collection_with_points(state: &AppState) {
         // Create collection
         let request = CreateCollectionRequest {
-            vectors: VectorParams {
-                size: 4,
-                distance: "Cosine".to_string(),
-            },
+            vectors: Some(VectorParams::new(4, "Cosine")),
             hnsw_config: None,
             durability: None,
+            text_index: None,
+            embedding: None,
         };
         create_collection(state, "test", request).await;
 

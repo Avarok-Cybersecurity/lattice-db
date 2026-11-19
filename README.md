@@ -322,7 +322,7 @@ The only embedded database that combines:
 
 - 🔌 **Qdrant REST API** - Drop-in replacement, use existing SDKs
 - 📊 **Cypher Query Language** - Neo4j-compatible graph queries
-- 📴 **Service Worker** - Offline-first browser operation *(coming soon)*
+- 📴 **Service Worker & Cloudflare Workers** - Serve the REST API from a snapshot in a service worker or a Worker ([edge search guide](docs/edge-search.md))
 
 ---
 
@@ -632,6 +632,42 @@ const db = await LatticeDB.init();
 await db.createCollection('vectors', { dimension: 128 });
 await db.upsert('vectors', [{ id: 1, vector: new Float32Array(128) }]);
 const results = await db.search('vectors', queryVector, 10);
+```
+
+### Site Search at the Edge (BM25, Hybrid, Workers)
+
+Ship a snapshot with a static site and answer search from a page, a service
+worker or a Cloudflare Worker. Collections without `vectors` are lexical-only
+(BM25); `"index": "flat"` and `"storage": "f16" | "int8"` keep vector
+snapshots small and fast to load. A 2K-chunk, 768-d corpus loads and answers
+its first hybrid query in ~2-4 ms (see [docs/edge-search.md](docs/edge-search.md)).
+
+```typescript
+// Cloudflare Worker: snapshot bundled as a Data module, loaded at startup
+import wasm from 'lattice-db/wasm/lattice_server_bg.wasm';
+import corpus from './corpus.lattice';
+import { createLatticeHandler } from 'lattice-db';
+
+const lattice = createLatticeHandler({
+  wasm, snapshotBytes: new Uint8Array(corpus), collection: 'docs',
+  prefix: '/api/lattice', readOnly: true,
+});
+await lattice.ready({ warmup: { query: '{"query":{"text":"warm","model":"bm25"}}', runs: 8 } });
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return (await lattice.fetch(request, env)) ?? env.ASSETS.fetch(request);
+  },
+};
+```
+
+```jsonc
+// POST /api/lattice/collections/docs/points/query
+{ "query": { "text": "free plan limits", "model": "bm25" }, "limit": 10 }
+// hybrid: BM25 + dense (needs an embedder for the collection's embedding.model)
+{ "prefetch": [ { "query": { "text": "free plan limits", "model": "bm25" }, "limit": 20 },
+                { "query": { "text": "free plan limits", "model": "bge-base" }, "limit": 20 } ],
+  "query": { "fusion": "rrf" }, "limit": 10 }
 ```
 
 ### Cypher Query Language

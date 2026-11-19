@@ -6,6 +6,7 @@
 //! - `EngineOps`: Trait for engine operations used by the Cypher executor
 
 pub mod collection;
+pub mod snapshot;
 
 // Native-only: Async indexer for background HNSW updates
 #[cfg(not(target_arch = "wasm32"))]

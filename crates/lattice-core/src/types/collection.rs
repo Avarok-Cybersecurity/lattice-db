@@ -6,6 +6,8 @@
 //! This prevents production surprises from unexpected default values.
 
 use crate::error::ConfigError;
+use crate::text::{EmbeddingConfig, TextIndexConfig};
+pub use crate::types::vector_index::{VectorIndexKind, VectorStorage};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -183,12 +185,37 @@ pub struct VectorConfig {
 
     /// Distance metric for similarity calculation
     pub distance: Distance,
+
+    /// Search structure (absent in pre-0.6 configs, which were all HNSW)
+    #[serde(default)]
+    pub index: VectorIndexKind,
+
+    /// Stored precision (absent in pre-0.6 configs, which were all f32)
+    #[serde(default)]
+    pub storage: VectorStorage,
 }
 
 impl VectorConfig {
-    /// Create a new vector configuration
+    /// Create an HNSW, f32 vector configuration
     pub fn new(size: usize, distance: Distance) -> Self {
-        Self { size, distance }
+        Self {
+            size,
+            distance,
+            index: VectorIndexKind::Hnsw,
+            storage: VectorStorage::F32,
+        }
+    }
+
+    /// Use `index` as the search structure
+    pub fn with_index(mut self, index: VectorIndexKind) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Keep vectors at `storage` precision
+    pub fn with_storage(mut self, storage: VectorStorage) -> Self {
+        self.storage = storage;
+        self
     }
 
     /// Validate configuration
@@ -209,10 +236,13 @@ pub struct CollectionConfig {
     /// Collection name (unique identifier)
     pub name: String,
 
-    /// Vector configuration
-    pub vectors: VectorConfig,
+    /// Dense vector configuration; `None` for a collection without dense
+    /// vectors (lexical-only or graph-only): points carry no vector and
+    /// vector search is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vectors: Option<VectorConfig>,
 
-    /// HNSW index configuration
+    /// HNSW index configuration (used only when `vectors.index` is HNSW)
     pub hnsw: HnswConfig,
 
     /// Relation name -> relation_id mapping for graph edges
@@ -228,18 +258,56 @@ pub struct CollectionConfig {
     /// - `Durable`: ACID mode with WAL, crash recovery, fsync
     #[serde(default)]
     pub durability: DurabilityMode,
+
+    /// BM25 lexical index over a payload text field (None = no lexical index)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_index: Option<TextIndexConfig>,
+
+    /// Embedding model that produced this collection's vectors (None = text
+    /// queries may only use the lexical model)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<EmbeddingConfig>,
 }
 
 impl CollectionConfig {
     /// Create a new collection configuration (ephemeral by default)
     pub fn new(name: impl Into<String>, vectors: VectorConfig, hnsw: HnswConfig) -> Self {
+        Self::with_optional_vectors(name, Some(vectors), hnsw)
+    }
+
+    /// A collection without dense vectors; give it a text index with
+    /// [`CollectionConfig::with_text_index`] for BM25 search.
+    pub fn without_vectors(name: impl Into<String>, hnsw: HnswConfig) -> Self {
+        Self::with_optional_vectors(name, None, hnsw)
+    }
+
+    /// Create a configuration whose dense vectors are optional.
+    pub fn with_optional_vectors(
+        name: impl Into<String>,
+        vectors: Option<VectorConfig>,
+        hnsw: HnswConfig,
+    ) -> Self {
         Self {
             name: name.into(),
             vectors,
             hnsw,
             relations: HashMap::new(),
             durability: DurabilityMode::default(),
+            text_index: None,
+            embedding: None,
         }
+    }
+
+    /// Maintain a BM25 index over a payload text field
+    pub fn with_text_index(mut self, text_index: TextIndexConfig) -> Self {
+        self.text_index = Some(text_index);
+        self
+    }
+
+    /// Record the embedding model that produces this collection's vectors
+    pub fn with_embedding(mut self, embedding: EmbeddingConfig) -> Self {
+        self.embedding = Some(embedding);
+        self
     }
 
     /// Add a relation type
@@ -268,10 +336,45 @@ impl CollectionConfig {
             });
         }
 
-        self.vectors.validate()?;
+        if let Some(vectors) = &self.vectors {
+            vectors.validate()?;
+        }
         self.hnsw.validate()?;
+        if let Some(text_index) = &self.text_index {
+            text_index.validate()?;
+        }
+        if let Some(embedding) = &self.embedding {
+            embedding.validate()?;
+            if self.vectors.is_none() {
+                return Err(ConfigError::InvalidParameter {
+                    name: "embedding",
+                    message:
+                        "needs dense vectors: a collection without 'vectors' cannot hold embeddings"
+                            .into(),
+                });
+            }
+        }
 
         Ok(())
+    }
+
+    /// Dense vector dimension; 0 when the collection has no dense vectors
+    /// (its points then carry empty vectors).
+    pub fn vector_dim(&self) -> usize {
+        self.vectors.as_ref().map_or(0, |v| v.size)
+    }
+
+    /// The dense vector configuration, or the error to return for a vector
+    /// operation on a collection that has none.
+    pub fn dense(&self) -> Result<&VectorConfig, crate::error::LatticeError> {
+        self.vectors
+            .as_ref()
+            .ok_or_else(|| crate::error::LatticeError::InvalidOperation {
+                message: format!(
+                    "collection '{}' has no dense vectors (it was created without 'vectors'); use a text query: {{\"query\": {{\"text\": \"...\", \"model\": \"bm25\"}}}}",
+                    self.name
+                ),
+            })
     }
 
     /// Get relation ID by name

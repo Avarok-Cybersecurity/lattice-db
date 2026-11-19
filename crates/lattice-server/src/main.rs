@@ -8,16 +8,20 @@
 //! - `RUST_LOG` - Log level (default: info)
 //! - `LATTICE_DATA_DIR` - Data directory for durable collections (enables persistence)
 //! - `LATTICE_RATE_LIMIT` - Enable rate limiting (any value)
+//! - `LATTICE_READ_ONLY` - `true` refuses every mutating endpoint with 403 (`true`/`false`; unset = writable)
 //! - `LATTICE_API_KEYS` - Comma-separated API keys for authentication
 //! - `LATTICE_BEARER_TOKENS` - Comma-separated Bearer tokens for authentication
 //! - `LATTICE_TLS_CERT` - Path to TLS certificate PEM (requires `tls` feature)
 //! - `LATTICE_TLS_KEY` - Path to TLS private key PEM (requires `tls` feature)
+//! - `LATTICE_EMBEDDER_*` - OpenAI-compatible text embedder (requires the
+//!   `openai-embedder` feature; all five or none, see `embedders::openai`)
 
 use lattice_server::{
     auth::{AuthConfig, Authenticator},
     engine_wrapper::AnyEngine,
     hyper_transport::HyperTransport,
     rate_limit::RateLimitConfig,
+    read_only::{parse_read_only_flag, READ_ONLY_ENV},
     router::{new_app_state_with_config, route, AppState, ServerConfig},
     LatticeTransport,
 };
@@ -129,6 +133,43 @@ async fn load_collections_from_disk(data_dir: &Path, state: &AppState) -> usize 
     loaded
 }
 
+/// Register the configured text embedder, if any (fails fast on partial config).
+#[cfg(feature = "openai-embedder")]
+fn register_embedder(state: &AppState) -> Result<(), String> {
+    use lattice_server::embedders::openai::{OpenAiEmbedder, OpenAiEmbedderConfig};
+    let Some(config) =
+        OpenAiEmbedderConfig::from_lookup(|k| env::var(k).ok()).map_err(|e| e.to_string())?
+    else {
+        info!("No text embedder configured (text queries support model 'bm25' only)");
+        return Ok(());
+    };
+    let (model, dim) = (config.model.clone(), config.dim);
+    let embedder = OpenAiEmbedder::new(config).map_err(|e| e.to_string())?;
+    state
+        .embedders
+        .register(std::sync::Arc::new(embedder))
+        .map_err(|e| e.to_string())?;
+    info!(model = %model, dim, "Text embedder registered");
+    Ok(())
+}
+
+/// Without the `openai-embedder` feature, embedder settings cannot be honoured.
+#[cfg(not(feature = "openai-embedder"))]
+fn register_embedder(_state: &AppState) -> Result<(), String> {
+    let set: Vec<&str> = lattice_server::embedders::ENV_VARS
+        .into_iter()
+        .filter(|k| env::var(k).is_ok())
+        .collect();
+    if set.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} set, but this binary was built without the `openai-embedder` feature",
+            set.join(", ")
+        ))
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize structured logging
@@ -170,8 +211,24 @@ async fn main() {
         info!("Ephemeral mode (no LATTICE_DATA_DIR set)");
     }
 
+    let read_only = match parse_read_only_flag(env::var(READ_ONLY_ENV).ok().as_deref()) {
+        Ok(flag) => flag,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    config = config.with_read_only(read_only);
+    if read_only {
+        info!("Read-only mode: mutating endpoints return 403");
+    }
+
     // Create shared application state
     let state = new_app_state_with_config(config);
+    if let Err(e) = register_embedder(&state) {
+        eprintln!("Embedder configuration error: {}", e);
+        std::process::exit(1);
+    }
 
     // Load existing collections from disk (WAL replay for crash recovery)
     if let Some(ref dir) = data_dir {
